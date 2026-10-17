@@ -73,6 +73,11 @@
        before it. -->
   <script src="app/image-attach.js"></script>
 
+  <!-- Dropped/copied OS file-path helpers (image vs text split, path
+       quoting). Dependency-free IIFE; composer.jsx destructures
+       window.OMP_DROPPED at top level, so this must load before it. -->
+  <script src="app/dropped-paths.js"></script>
+
   <!-- Slash-command palette: local desktop list + RPC merge/filter helpers.
        Dependency-free IIFE; composer.jsx destructures window.OMP_SLASH at
        top level, so this must load before it. live.js also reads

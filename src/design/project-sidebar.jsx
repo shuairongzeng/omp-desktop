@@ -10,7 +10,19 @@
    ═════════════════════════════════════════════════════════════════════ */
 
 const { Icon, TabRunDot, TabLabel, RenameField } = window;
-const { groupTabs, groupRunState, groupTarget, membersNewestFirst, basename, parentName } = window.OMP_PROJECT_NAV;
+const { groupTabs, groupRunState, groupTarget, membersNewestFirst, basename, parentName, savedForProject } = window.OMP_PROJECT_NAV;
+const { relativeTime } = window.OMP_WIDGETS;
+
+// Saved sessions shown per expanded group; past that an "all …" row opens
+// the history modal preselected on the project.
+const MAX_HISTORY_ROWS = 3;
+
+// A saved session's age label: `updated_at` (last activity) else the
+// creation `timestamp`, through the widgets' epoch-ms relativeTime.
+function historyAge(s) {
+  const ts = Date.parse(s.updated_at || s.timestamp || "");
+  return isNaN(ts) ? "" : relativeTime(ts, Date.now());
+}
 
 // Same guard as chrome.jsx's copy: the registry may not be loaded.
 function sidebarHint(actionId, fallback) {
@@ -18,8 +30,9 @@ function sidebarHint(actionId, fallback) {
 }
 
 function ProjectSidebar({
-  tabs, activeId, recents, profileLabel,
+  tabs, activeId, recents, savedSessions = [], historyProfile, profileLabel,
   onSelectTab, onCloseTab, onRenameTab, onNewInProject, onOpenRecent, onForgetRecent, onOpenFolder, onHide, onReorder,
+  onResumeSession, onShowAllHistory,
 }) {
   // Group keys the user folded. Not persisted: tab ids (and so pathless
   // groups' keys) don't survive a restart anyway.
@@ -59,7 +72,14 @@ function ProjectSidebar({
         {groups.length === 0 && <div className="psb-empty">no open tabs</div>}
         {groups.map(group => {
           const multi = group.tabs.length > 1;
-          const expanded = multi && !collapsed[group.key];
+          // This folder's saved sessions not already open, listed only for
+          // the profile the history scan ran under.
+          const historyRows = savedForProject(savedSessions, tabs, group, historyProfile);
+          // A single-tab project with saved sessions is expandable too:
+          // its chevron reveals the history rows (a member list would just
+          // duplicate the project's own row).
+          const expandable = multi || historyRows.length > 0;
+          const expanded = expandable && !collapsed[group.key];
           const containsActive = group.tabs.some(t => t.id === activeId);
           const profile = profileLabel(group.profile);
           const editing = !multi && renaming === group.tabs[0].id;
@@ -78,7 +98,7 @@ function ProjectSidebar({
                   active member row, as in the mockup; a single-tab one is
                   that tab. */}
               <div className={`psb-row psb-project ${containsActive && !expanded ? "active" : ""}`}>
-                {multi ? (
+                {expandable ? (
                   <button className={`psb-chev ${expanded ? "open" : ""}`}
                     title={expanded ? "collapse" : "expand"} aria-expanded={expanded}
                     onClick={e => { e.stopPropagation(); toggle(group.key); }}>
@@ -120,7 +140,7 @@ function ProjectSidebar({
                   )}
                 </span>
               </div>
-              {expanded && membersNewestFirst(group).map(t => (
+              {expanded && multi && membersNewestFirst(group).map(t => (
                 <div key={t.id} {...reorder.itemProps(members, t.id, "y")}
                   className={`psb-row psb-tab ${t.id === activeId ? "active" : ""}${reorder.dropClass(members, t.id)}`}>
                   {renaming === t.id ? (
@@ -140,6 +160,26 @@ function ProjectSidebar({
                   </span>
                 </div>
               ))}
+              {/* Saved conversations of this folder, resuming on click. */}
+              {expanded && historyRows.slice(0, MAX_HISTORY_ROWS).map(s => (
+                <div key={s.path || s.id} className="psb-row psb-tab psb-history">
+                  <button className="psb-main" title={`${s.title}\n${s.path}`}
+                    onClick={() => onResumeSession?.(s)}>
+                    <Icon name="context" size={10} color="var(--fg-5)" />
+                    <span className="psb-name">{s.title}</span>
+                    <span className="psb-time">{historyAge(s)}</span>
+                  </button>
+                </div>
+              ))}
+              {expanded && historyRows.length > MAX_HISTORY_ROWS && (
+                <div className="psb-row psb-tab psb-history">
+                  <button className="psb-main psb-more"
+                    title={`show all in history (${group.path})`}
+                    onClick={() => onShowAllHistory?.(group.path)}>
+                    <span className="psb-name">all {historyRows.length} conversations…</span>
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}

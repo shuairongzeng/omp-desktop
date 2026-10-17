@@ -4,7 +4,7 @@
    ═════════════════════════════════════════════════════════════════════ */
 
 const { Icon } = window;
-const { sessionProjects } = window.OMP_PROJECT_NAV;
+const { sessionProjects, normPath } = window.OMP_PROJECT_NAV;
 
 function formatRelativeTime(ts) {
   if (!ts) return "—";
@@ -19,10 +19,13 @@ function formatRelativeTime(ts) {
   return date.toLocaleDateString();
 }
 
-function HistoryModal({ open, onClose, onResume, activeCwd }) {
+function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
   const [sessions, setSessions]       = React.useState([]);
   const [loading, setLoading]         = React.useState(false);
-  const [filterKey, setFilterKey]     = React.useState(null); // null = all, else a project key
+  // null = all, else a project key. `initialCwd` preselects that project's
+  // chip (the modal remounts per open); a key with no chip falls back to
+  // "all" via `activeProject` below.
+  const [filterKey, setFilterKey]     = React.useState(() => initialCwd ? normPath(initialCwd) || null : null);
   const [query, setQuery]             = React.useState("");
   const [activeIdx, setActiveIdx]     = React.useState(0);
   const inputRef                      = React.useRef(null);

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Chat messages now carry a role glyph. The agent's replies keep their left rail, with the generic sparkle replaced by a purpose-drawn speech-bubble-and-spark mark (accent-coloured, rose when the request failed); your messages get a bust mark in a new right rail, drawn in the neutral text colour. Both are new `assistant`/`user` icons in the OMP Icon Pack, following the pack's single accent-dot convention.
+- Files and folders can be dropped onto the prompt box, and files copied in the file manager paste into it with Ctrl+V: their paths are inserted as text, and the agent reads them with its own tools. Dropped images are still attached as images; pasting an image *file* inserts its path, while pasting a screenshot (no file behind it) still attaches the image.
+- The project sidebar lists a project's saved conversations: expand a project (a single-conversation project with saved history has a chevron now too) to see up to three, newest first with each conversation's age. Clicking one resumes it in place, and an "all N conversations…" row opens the history panel already filtered to that project. Conversations already open in a tab are not listed again. The history panel itself now opens filtered to the active tab's project; the "All Projects" chip still shows everything.
+
 ### Fixed
 
 - Typography on Windows: interface text now uses Segoe UI Variable (Segoe UI on Windows 10) and code uses Cascadia Mono, Cascadia Code or Consolas, instead of falling through the macOS-only fonts to Arial and Consolas. Chinese and Japanese characters still take Windows' fallback font for the display language.

@@ -1,4 +1,4 @@
-/* ui/icons.jsx — OMP Icon Pack v1 (59 icons) + Icon component +
+/* ui/icons.jsx — OMP Icon Pack v1 (61 icons) + Icon component +
    TOOL_META map (tool name → colour, icon, label). */
 
 // Each icon has a single accent dot. Props: name, size, color, dotColor.
@@ -26,6 +26,8 @@ const _ICON_PATHS = {
   plan:    { p: ['<rect x="2" y="3" width="3" height="10"/><rect x="6.5" y="3" width="3" height="6"/><rect x="11" y="3" width="3" height="8"/>'],                                                                                             d: [12.5,3]  },
   thinking:{ p: ['<path d="M5 3a3 3 0 0 1 6 0c0 1.5-1.5 2-1.5 3.5h-3C6.5 5 5 4.5 5 3z"/><path d="M6.5 9.5h3M7 12h2"/>'],                                                                                                                   d: [8,3]     },
   agent:   { p: ['<rect x="3" y="5" width="10" height="8" rx="2"/><path d="M8 2v3"/><circle cx="6" cy="9" r=".7" fill="currentColor"/><circle cx="10" cy="9" r=".7" fill="currentColor"/>'],                                                  d: [8,2]     },
+  user:    { p: ['<circle cx="8" cy="5.5" r="2.75"/>', '<path d="M2.5 13.5c0-3 2.46-4.75 5.5-4.75s5.5 1.75 5.5 4.75"/>'],                                                                                                             d: [13.5,3.5]},
+  assistant:{ p: ['<path d="M4 3h8a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H7.5L5 13.5V11H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>', '<path d="M8.5 4.9l.7 1.5 1.5.7-1.5.7-.7 1.5-.7-1.5-1.5-.7 1.5-.7z"/>'],                                     d: [5,13.5]  },
   sparkle: { p: ['<path d="M8 2l1.2 3.2L13 6l-3.8 0.8L8 10l-1.2-3.2L3 6l3.8-0.8z"/>'],                                                                                                                                                      d: [12,12]   },
   bolt:    { p: ['<path d="M9 1L3 9h4l-1 6 6-8H8z"/>'],                                                                                                                                                                                       d: [12,3]    },
   radar:   { p: ['<circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="3"/><path d="M8 8l4-3"/>'],                                                                                                                                           d: [12,5]    },

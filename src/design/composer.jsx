@@ -5,6 +5,7 @@
 const { Icon } = window;
 const { parseMentionQuery, applyMention } = window.OMP_MENTIONS;
 const { prepareImage, carriesFiles, dropHoverAfter, imageFilesFromTransfer, imageFilesFromClipboardAsync, toDataUrl, MAX_ATTACHMENTS } = window.OMP_IMAGES;
+const { splitDroppedPaths, pathsInsertText } = window.OMP_DROPPED;
 const { isDesktop, slashMenu, midPromptSlashToken, skillMenu, matchesQuery, insertText: slashInsertText } = window.OMP_SLASH;
 const {
   entryOf: draftEntryOf, updateEntry: updateDraftEntry, pruneEntries: pruneDrafts, DRAFT_IDLE, recallInDraft,
@@ -72,11 +73,17 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   const listRef = React.useRef(null);
   const attachCounterRef = React.useRef(0);
   const fileInputRef     = React.useRef(null);
-  // Image drop from the OS file manager (#50): the element the drag is over
-  // (`dropHoverAfter`) lives in a ref, so crossing children re-renders only
-  // when the highlight itself flips.
+  // File/folder drop from the OS (#50): with `dragDropEnabled` the drop
+  // arrives as Tauri's drag-drop event carrying full paths (the effect by
+  // `onTauriDrop`); in demo mode (no Tauri) the webview's own HTML5 drop
+  // handles images. `dropActive` drives the highlight either way; the
+  // HTML5 path's hover element lives in `dropHoverRef`, so crossing
+  // children re-renders only when the highlight itself flips.
   const [dropActive, setDropActive] = React.useState(false);
   const dropHoverRef = React.useRef(null);
+  // The .composer root: the Tauri drop event is window-global, so the
+  // highlight and the drop hit-test its rect.
+  const rootRef = React.useRef(null);
 
   const cmds = window.OMP_DATA?.commands || [];
 
@@ -430,10 +437,83 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   const removeAttachment = (attId) =>
     updateDraft(sessionId, d => ({ ...d, attachments: d.attachments.filter(a => a.id !== attId) }));
 
-  // Image files dropped from the OS file manager (#50) go the paste/pick
-  // way (`addFiles`: same preparation, limits and tab); non-images are
-  // ignored. One handler for all four drag events (dragleave is not
-  // cancelable, so its preventDefault is a no-op).
+  // Insert OS file/folder paths as draft text at the caret (OMP_DROPPED's
+  // quoting and padding), for the agent to read with its own tools.
+  const insertPaths = (paths) => {
+    const ta = taRef.current;
+    const start = ta ? ta.selectionStart : text.length;
+    const end   = ta ? ta.selectionEnd   : text.length;
+    const r = pathsInsertText(text, start, end, paths);
+    if (r) spliceDraft(r.range, r.insert);
+  };
+
+  // A drop delivered by Tauri (`dragDropEnabled`): `paths` carries files
+  // and folders alike. Images keep the byte-attachment pipeline — their
+  // bytes come back over IPC (`read_dropped_file`) as a File for
+  // `addFiles` — everything else is inserted as text. A read failure (a
+  // folder named like an image, a file gone between drag and drop) falls
+  // back to inserting its path.
+  const onTauriDrop = async (paths) => {
+    const { images, others } = splitDroppedPaths(paths);
+    const files = [];
+    const failed = [];
+    for (const img of images) {
+      try {
+        const r = await window.__TAURI__.core.invoke("read_dropped_file", { path: img.path });
+        const bytes = Uint8Array.from(atob(r.data), c => c.charCodeAt(0));
+        files.push(new File([bytes], r.name || img.name, { type: img.mime }));
+      } catch (err) {
+        console.error("[composer] read_dropped_file failed:", err);
+        failed.push(img.path);
+      }
+    }
+    if (files.length) await addFiles(files);
+    const asText = [...others, ...failed];
+    if (asText.length) insertPaths(asText);
+    taRef.current?.focus();
+  };
+
+  // The drop event is window-global, so the highlight and the drop both
+  // hit-test the composer rect; positions are physical pixels. The handler
+  // goes through a ref: the listener registers once, and a stale `text`
+  // closure must not misplace an insert.
+  const tauriDropRef = React.useRef(null);
+  tauriDropRef.current = onTauriDrop;
+  React.useEffect(() => {
+    if (!window.__TAURI__?.webview) return undefined;
+    const inside = (pos) => {
+      const el = rootRef.current;
+      if (!el || !pos) return false;
+      const r = el.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const x = pos.x / dpr;
+      const y = pos.y / dpr;
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    let off = null;
+    let dead = false;
+    window.__TAURI__.webview.getCurrentWebview().onDragDropEvent((ev) => {
+      const { type, paths, position } = ev.payload;
+      if (type === "drop") {
+        setDropActive(false);
+        if (inside(position)) void tauriDropRef.current?.(paths);
+      } else if (type === "leave") {
+        setDropActive(false);
+      } else {
+        setDropActive(inside(position)); // enter / over
+      }
+    }).then(
+      (u) => { if (dead) u(); else off = u; },
+      (err) => console.error("[composer] drag-drop listener failed:", err),
+    );
+    return () => { dead = true; off?.(); };
+  }, []);
+
+  // Demo mode only (no __TAURI__ — index.html in a plain browser): the
+  // webview's own HTML5 drop handles images the paste/pick way (`addFiles`);
+  // non-images are ignored. In the app, Tauri's native file drop claims
+  // these events before the page sees them. One handler for all four drag
+  // events (dragleave is not cancelable, so its preventDefault is a no-op).
   const onFileDrag = (e) => {
     if (!carriesFiles(e.dataTransfer)) return;
     // On dragover, accepting the drop is what makes the drop event fire at all.
@@ -456,6 +536,26 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   // only short-circuits the text handling below when there's no
   // accompanying text to preserve.
   const onPaste = (e) => {
+    // A file-manager copy shows in the paste event's DataTransfer only as a
+    // "Files" type — file bytes without usable paths, folders not at all;
+    // the real path list lives on the OS clipboard (`copied_file_paths`). A
+    // screenshot arrives as "Files" too but leaves that list empty, which
+    // is the discriminator between inserting paths and attaching image
+    // bytes. clipboardData dies with the event, so the images are
+    // snapshotted before the await.
+    if (window.__TAURI__ && carriesFiles(e.clipboardData)) {
+      e.preventDefault();
+      const copied = imageFilesFromTransfer(e.clipboardData);
+      window.__TAURI__.core.invoke("copied_file_paths").then((paths) => {
+        if (paths?.length > 0) insertPaths(paths);
+        else if (copied.length > 0) addFiles(copied);
+        else imageFilesFromClipboardAsync().then((files) => { if (files.length > 0) addFiles(files); });
+      }).catch((err) => {
+        console.error("[composer] copied_file_paths failed:", err);
+        if (copied.length > 0) addFiles(copied);
+      });
+      return;
+    }
     const imageFiles = imageFilesFromTransfer(e.clipboardData);
     const raw = normalizePaste(e.clipboardData?.getData("text/plain") ?? "");
     if (imageFiles.length > 0) {
@@ -546,7 +646,8 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
 
   return (
     <div className={`composer${planMode ? " plan-on" : ""}${goalTint ? " goal-on" : ""}${goalMode ? " goal-draft" : ""}${dropActive ? " drop-on" : ""}`}
-      onDragEnter={onFileDrag} onDragOver={onFileDrag} onDragLeave={onFileDrag} onDrop={onFileDrag}>
+      ref={rootRef}
+      {...(window.__TAURI__ ? {} : { onDragEnter: onFileDrag, onDragOver: onFileDrag, onDragLeave: onFileDrag, onDrop: onFileDrag })}>
       {planMode && (
         <div className="plan-strip">
           <Icon name="plan" size={12} color="var(--amber)" />

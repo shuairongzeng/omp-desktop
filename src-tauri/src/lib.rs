@@ -10,6 +10,7 @@ mod approval_mode;
 mod browser;
 mod child_path;
 mod conversation_tree;
+mod dropped_files;
 mod external_open;
 mod files;
 mod git;
@@ -296,6 +297,23 @@ async fn list_saved_sessions(
     let profile = store.resolve_owned(profile)?;
     off_ipc(move || saved_sessions::scan_saved_sessions(&app, cwd.as_deref(), profile.as_deref()))
         .await?
+}
+
+/// A dropped file's bytes for the composer's image pipeline
+/// (`dropped_files`): name + base64 contents, size-capped, files only.
+///
+/// `spawn_blocking`: up to 64 MiB of file read plus base64.
+#[tauri::command]
+async fn read_dropped_file(path: String) -> Result<dropped_files::DroppedFile, String> {
+    off_ipc(move || dropped_files::read(path)).await?
+}
+
+/// Paths of the files/folders a file manager has on the clipboard
+/// (`dropped_files`), or an empty list for any other clipboard content —
+/// the composer's "paste paths" vs "attach image" discriminator.
+#[tauri::command]
+fn copied_file_paths() -> Vec<String> {
+    dropped_files::copied_file_paths()
 }
 
 /// The conversation family of one saved session file (`session_file`, under
@@ -1430,6 +1448,8 @@ pub fn run() {
             stop_git_watch,
             open_url_external,
             list_saved_sessions,
+            read_dropped_file,
+            copied_file_paths,
             conversation_tree,
             approval_rules_list,
             approval_rules_grant,

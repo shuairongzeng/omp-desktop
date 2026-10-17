@@ -28,7 +28,7 @@
         "decorations": false,
         "shadow": true,
         "center": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": true
       }
     ]
   },

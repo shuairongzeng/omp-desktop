@@ -49,6 +49,10 @@ function App() {
   const [bridgeOpen,  setBridgeOpen]  = React.useState(false);
   const [bridgeView,  setBridgeView]  = React.useState("commands");
   const [historyOpen, setHistoryOpen] = React.useState(false);
+  // Project folder the history modal preselects: the active tab's folder
+  // from the tab bar, a sidebar group's folder from its "all …" row; null
+  // (no tab) shows every project.
+  const [historyCwd,  setHistoryCwd]  = React.useState(null);
   // Git browser: null, or { path, project } — the file it opens on (null =
   // the first changed file) and the project that path belongs to.
   const [gitOpen,     setGitOpen]     = React.useState(null);
@@ -121,6 +125,9 @@ function App() {
   const [startupProfileId, setStartupProfileId] = React.useState(DEFAULT_PROFILE_ID);
   // Recently opened folders of the active tab's profile (project sidebar).
   const [recentProjects, setRecentProjects] = React.useState([]);
+  // Saved sessions of the active profile, for the sidebar's per-project
+  // history rows; refetched by the effect below near the sidebar wiring.
+  const [savedSessions, setSavedSessions] = React.useState([]);
   // With no tab open: the profile the next tab opens under (the menu's pick,
   // else the startup default — resolved by the bridge), and notes filed
   // while there was no transcript to hold them.
@@ -144,8 +151,10 @@ function App() {
     bridge?.setPromptHistoryLimit(t.promptHistoryLimit ?? window.OMP_PROMPT_HISTORY.DEFAULT_LIMIT);
   }, [bridge, t.promptHistoryLimit]);
   // Refuse a file or link drop no handler took (`refusesStrayDrop`), so the
-  // webview never navigates to it now that Tauri's native file drop is off
-  // (#50). The composer's handlers run first and accept their own drops.
+  // webview never navigates to it. In the app, file drops never reach the
+  // page — Tauri's native file drop claims them (composer.jsx) — so this
+  // guards links here and files in demo mode, where the composer's own
+  // HTML5 handlers run first and accept their drops.
   React.useEffect(() => {
     const { refusesStrayDrop } = window.OMP_IMAGES;
     const { isTypingTarget } = window.OMP_KEYMAP;
@@ -496,7 +505,7 @@ function App() {
     else if (c.name === "model")     { openBridge("models"); }
     else if (c.name === "login")     { openBridge("login"); }
     else if (c.name === "new")       { bridge?.newSession(); }
-    else if (c.name === "history")   { setHistoryOpen(true); }
+    else if (c.name === "history")   { openHistory(activeProject?.path); }
     else if (c.name === "shortcuts") { setShortcutsOpen(true); }
     else if (c.name === "check-updates") { updater.check(); }
     else if (c.name === "collapse-all")  { handleCollapseAll(true); }
@@ -557,6 +566,24 @@ function App() {
   // ── Project navigation (#27) ──────────────────────────────────────────────
   const showSidebar   = t.sidebar ?? true;
   const toggleSidebar = () => setTweak("sidebar", !showSidebar);
+
+  // The history modal opens preselected on a project's chip: the active
+  // tab's folder from the tab bar /command, a group's folder from the
+  // sidebar's "all …" row.
+  const openHistory = path => { setHistoryCwd(path || null); setHistoryOpen(true); };
+
+  // Saved sessions for the sidebar's per-project history rows, scanned from
+  // the active profile's on-disk tree (`listSavedSessions`). Refetched when
+  // the sidebar shows, the profile or tab count changes, or a turn starts
+  // or ends — the .jsonl the agent just touched joins or leaves the list.
+  React.useEffect(() => {
+    if (!showSidebar || !bridge?.listSavedSessions) return;
+    let cancelled = false;
+    bridge.listSavedSessions()
+      .then(list => { if (!cancelled) setSavedSessions(list || []); })
+      .catch(err => console.error("[app] failed to list saved sessions:", err));
+    return () => { cancelled = true; };
+  }, [bridge, showSidebar, activeProfileId, streaming, sessions.length]);
 
   // A recent project: focus its open tab in the active profile, else spawn.
   const handleOpenRecent = async path => {
@@ -726,7 +753,7 @@ function App() {
             onReorder={handleReorder}
             sidebarOpen={showSidebar}
             onToggleSidebar={toggleSidebar}
-            onHistory={() => setHistoryOpen(true)}
+            onHistory={() => openHistory(activeProject?.path)}
             appVersion={updater.version}
             updateVersion={updater.pillVersion}
             onUpdate={updater.openModal}
@@ -739,6 +766,10 @@ function App() {
                 tabs={sessions}
                 activeId={activeSessionId}
                 recents={recentRows(recentProjects, sessions, activeProfileId)}
+                savedSessions={savedSessions}
+                historyProfile={activeProfileId}
+                onResumeSession={handleResumeSession}
+                onShowAllHistory={openHistory}
                 profileLabel={profileLabel}
                 onSelectTab={handleSelectTab}
                 onCloseTab={handleCloseTab}
@@ -934,6 +965,7 @@ function App() {
           onClose={() => setHistoryOpen(false)}
           onResume={handleResumeSession}
           activeCwd={activeProject?.path}
+          initialCwd={historyCwd}
         />
       )}
 

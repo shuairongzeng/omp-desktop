@@ -286,6 +286,47 @@ check("only same-named chips carry their parent folder", () => {
   assert.deepEqual(chips.map(c => c.parent), ["w", "v", ""]);
 });
 
+// ── savedForProject (sidebar history rows) ───────────────────────────────
+
+// A saved-session row as list_saved_sessions returns it; `path` is the
+// session's .jsonl file, distinct per row.
+const srow = (cwd, file) => ({ cwd, path: `/sessions/${file}.jsonl`, title: file });
+const grp = (path, profile = "default") => ({ path, profile });
+
+check("savedForProject keeps the group's folder, newest first, and drops other folders", () => {
+  const sessions = [srow("/p", "new"), srow("/q", "other"), srow("/p", "old")];
+  assert.deepEqual(
+    N.savedForProject(sessions, [], grp("/p"), "default").map(s => s.title),
+    ["new", "old"]);
+});
+
+check("savedForProject matches folders with normPath semantics", () => {
+  assert.equal(N.savedForProject([srow("C:\\Repo\\", "a")], [], grp("c:/repo"), "default").length, 1);
+  assert.equal(N.savedForProject([srow("/Home/x", "a")], [], grp("/home/x"), "default").length, 0);
+});
+
+check("savedForProject drops sessions already open in a tab, by session file", () => {
+  const sessions = [srow("/p", "open"), srow("/p", "closed")];
+  const tabs = [tab("t1", "/p", { sessionFile: "/sessions/open.jsonl" })];
+  assert.deepEqual(
+    N.savedForProject(sessions, tabs, grp("/p"), "default").map(s => s.title),
+    ["closed"]);
+});
+
+check("savedForProject is empty for a pathless group or another profile", () => {
+  const sessions = [srow("/p", "a")];
+  assert.deepEqual(N.savedForProject(sessions, [], grp(null), "default"), []);
+  assert.deepEqual(N.savedForProject(sessions, [], grp("/p", "work"), "default"), []);
+  assert.deepEqual(N.savedForProject(sessions, [], null, "default"), []);
+});
+
+check("savedForProject ignores sessions without a cwd or file path", () => {
+  const sessions = [{ cwd: "", path: "/sessions/a.jsonl" }, { cwd: "/p", path: "" }, srow("/p", "b")];
+  assert.deepEqual(
+    N.savedForProject(sessions, [], grp("/p"), "default").map(s => s.title),
+    ["b"]);
+});
+
 // ── tabLayout / restoreSpec (reopen tabs on relaunch, #17) ───────────────
 
 check("tabLayout keeps tab order and points at the active tab", () => {

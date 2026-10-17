@@ -1,6 +1,6 @@
 /* chat/user-bubble.jsx — user-side bubble, right-aligned. */
 const { toDataUrl } = window.OMP_IMAGES;
-const { ImageLightbox: _UB_ImageLightbox } = window;
+const { ImageLightbox: _UB_ImageLightbox, Icon: _UB_Icon } = window;
 
 function UserBubble({ msg, idx, highlighted }) {
   // Index of the attached image shown enlarged, or null (issue #25).
@@ -39,6 +39,13 @@ function UserBubble({ msg, idx, highlighted }) {
           </div>
         )}
         {msg.text && <div className="user-text">{msg.text}</div>}
+      </div>
+      {/* Right rail mirrors the assistant's left one, minus the thread:
+          user messages are not chained together. */}
+      <div className="user-rail">
+        <div className="user-glyph">
+          <_UB_Icon name="user" size={11} color="var(--fg-2)" />
+        </div>
       </div>
       {openIdx != null && openIdx < srcs.length && (
         <_UB_ImageLightbox

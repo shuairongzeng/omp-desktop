@@ -174,6 +174,21 @@
     return hit ? hit.id : null;
   }
 
+  /** Saved sessions belonging to one project group in the sidebar: the
+   *  rows of `sessions` (one profile's `listSavedSessions` result, newest
+   *  first — order kept) whose folder is the group's, minus conversations
+   *  already open in a tab (matched by `sessionFile`; a fresh tab whose
+   *  omp has not reported its file yet cannot exclude it). `[]` for a
+   *  pathless group or a group of another profile: the list only covers
+   *  `profile`. */
+  function savedForProject(sessions, tabs, group, profile) {
+    if (!group || !group.path || group.profile !== profile) return [];
+    const want = normPath(group.path);
+    const open = new Set(tabs.filter(t => t.sessionFile).map(t => normPath(t.sessionFile)));
+    return sessions.filter(s =>
+      s.path && s.cwd && normPath(s.cwd) === want && !open.has(normPath(s.path)));
+  }
+
   /** `recents` minus projects already open under `profile`. */
   function recentRows(recents, tabs, profile) {
     return recents.filter(r => findProjectTab(tabs, r.path, profile, null) === null);
@@ -259,6 +274,7 @@
     tabLabel,
     findProjectTab,
     findConversationTab,
+    savedForProject,
     recentRows,
     sessionProjects,
     tabLayout,

@@ -91,7 +91,7 @@ function AssistantBubble({ msg, idx, highlighted, annotable, annotations, onAnno
     <div className={`row assistant fade-up${highlighted ? " mm-hot" : ""}`} data-msg-idx={idx}>
       <div className="ass-rail">
         <div className={`ass-glyph${msg.failure ? " failed" : ""}`}>
-          <_ChatIcon name="sparkle" size={11} color={msg.failure ? "var(--rose)" : "var(--accent)"} />
+          <_ChatIcon name="assistant" size={11} color={msg.failure ? "var(--rose)" : "var(--accent)"} />
         </div>
         <div className="ass-thread" />
       </div>
