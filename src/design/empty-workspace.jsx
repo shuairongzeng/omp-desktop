@@ -17,7 +17,8 @@ const RAIN_FONT = 14;          // px per rain cell
 const RAIN_STEP_MS = 55;       // ~18 steps/s: reads as rain, costs little
 const TRAIL_FADE = 0.09;       // background alpha laid over each step
 
-/** Theme colours, re-read every step so a theme switch applies live. */
+/** Theme colours, read into the MatrixBackdrop cache and re-read only when
+ *  <html>'s class/style mutate (theme switch, accent override). */
 function readTheme(el) {
   const cs = getComputedStyle(el);
   const v = name => cs.getPropertyValue(name).trim();
@@ -58,7 +59,17 @@ function MatrixBackdrop() {
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     let width = 0, height = 0, dpr = 1;
     let drops = [], rows = 0, logo = null, fit = null;
-    let themeKey = "", raf = 0, last = 0;
+    let theme = null, raf = 0, last = 0;
+
+    // Theme reads go through this cache: a getComputedStyle per step
+    // (~18Hz) just to catch a theme switch was the frame's fixed cost.
+    // The MutationObserver that already fed the reduced-motion path now
+    // refreshes the cache for the animated path too. Same size, new
+    // colours — the logo re-renders with the current fit.
+    const refreshTheme = () => {
+      theme = readTheme(canvas);
+      if (fit) logo = renderLogo(fit, theme, dpr);
+    };
 
     const layout = () => {
       const rect = canvas.getBoundingClientRect();
@@ -66,7 +77,7 @@ function MatrixBackdrop() {
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const theme = readTheme(canvas);
+      theme = readTheme(canvas);
       // Monospace: one measurement per 1px of font size covers every cell.
       ctx.font = `100px ${theme.mono}`;
       const m = ctx.measureText("█");
@@ -75,7 +86,7 @@ function MatrixBackdrop() {
       fit = fitLogo(width, height, { cellW, cellH });
       rows = Math.ceil(height / RAIN_FONT);
       drops = initDrops(Math.ceil(width / RAIN_FONT), rows, Math.random);
-      themeKey = "";  // force a logo re-render below
+      logo = renderLogo(fit, theme, dpr);
       ctx.fillStyle = theme.bg;
       ctx.fillRect(0, 0, width, height);
     };
@@ -84,12 +95,7 @@ function MatrixBackdrop() {
       // A move to a monitor with another scale factor changes the ratio but
       // not the CSS size, so the ResizeObserver never fires for it.
       if ((window.devicePixelRatio || 1) !== dpr) layout();
-      const theme = readTheme(canvas);
-      const key = `${theme.accent}|${theme.glow}|${theme.mono}`;
-      if (key !== themeKey) {
-        themeKey = key;
-        logo = fit ? renderLogo(fit, theme, dpr) : null;
-      }
+      // Theme comes from the observer-refreshed cache.
       // Fade the previous steps into the background, leaving trails. With no
       // rain there are no trails to keep: a full clear, or a theme switch
       // would leave the old background and logo ghosting underneath.
@@ -126,15 +132,21 @@ function MatrixBackdrop() {
     const onResize = () => { layout(); frame(); };
     const observer = new ResizeObserver(onResize);
     observer.observe(canvas);
+    // Theme/accent switches rewrite <html>'s class or style: one observer
+    // refreshes the cached colours for both motion paths (the static path
+    // still redraws immediately; the animated one picks the colours up on
+    // its next tick, ≤55ms away).
+    const themeObserver = new MutationObserver(() => {
+      refreshTheme();
+      if (reduceMotion) frame();
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
     onResize();
-    // Reduced motion: the static logo only, redrawn on resize/theme change.
     if (reduceMotion) {
-      const themeObserver = new MutationObserver(() => frame());
-      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
       return () => { observer.disconnect(); themeObserver.disconnect(); };
     }
     raf = requestAnimationFrame(loop);
-    return () => { cancelAnimationFrame(raf); observer.disconnect(); };
+    return () => { cancelAnimationFrame(raf); observer.disconnect(); themeObserver.disconnect(); };
   }, []);
 
   return <canvas ref={canvasRef} className="empty-ws-canvas" aria-hidden="true" />;

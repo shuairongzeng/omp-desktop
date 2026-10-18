@@ -205,7 +205,20 @@ function App() {
       .catch(() => setLoginProviders([]));
   }, [bridgeOpen, bridgeView]);
 
-  const openBridge = view => { setBridgeView(view); setBridgeOpen(true); };
+  // Stable identities (round 3): these flow into memoised children —
+  // StatusBar (React.memo) and ChatView's memoised AssistantBubbles — so
+  // an inline closure would defeat the memo on every App re-render, which
+  // streaming deltas trigger per frame. setStab/setBridgeView/setPlanOpen
+  // are setState functions (stable); the window globals are frozen.
+  const openSettings = React.useCallback(
+    section => setStab(s => window.OMP_SETTINGS_TAB.open(s, section)), []);
+  const openBridge = React.useCallback(
+    view => { setBridgeView(view); setBridgeOpen(true); }, []);
+  // ChatView's onOpenKanban: every AssistantBubble is React.memo'd, and an
+  // inline `() => setPlanOpen(true)` here re-rendered all of them per
+  // streaming delta. StatusBar's todo button shares it.
+  const handleOpenKanban = React.useCallback(() => setPlanOpen(true), []);
+  const closeSettings = React.useCallback(() => setStab(window.OMP_SETTINGS_TAB.close), []);
 
   // ── Derived values ────────────────────────────────────────────────────────
   const activeProject = sessions.find(s => s.id === activeSessionId) ?? sessions[0] ?? EMPTY_PROJECT;
@@ -235,7 +248,14 @@ React.useEffect(() => {
   // Status-bar approvals cell: the mode the rendered tab's omp runs, or
   // `running ⇢ target` while a change waits for its turn to end. Read
   // late-bound: app/approval-mode.js is a plain module like the others.
-  const approvalCell = window.OMP_APPROVAL_MODE.statusCell(approvalModes, activeProject.id ? activeProject : null);
+  // Memoised on its real inputs — the view plus the active tab's id/path/
+  // running mode, everything statusCell reads — so a new object per render
+  // doesn't defeat StatusBar's React.memo (round 3). `sessions` is rebuilt
+  // per snapshot, so `activeProject`'s identity churns on every delta; the
+  // deps below hold stable through them.
+  const approvalCell = React.useMemo(
+    () => window.OMP_APPROVAL_MODE.statusCell(approvalModes, activeProject.id ? activeProject : null),
+    [approvalModes, activeProject.id, activeProject.path, activeProject.approvalMode]);
   // The tab being rendered owns the plan state: keyed on `activeProject.id`
   // for the same reason as `handleSelectProfile` below, and "" with no tab
   // open, which `updateEntry` ignores.
@@ -249,7 +269,14 @@ React.useEffect(() => {
   const side = entryOf(sides, planKey, "rail");
   const setSide = React.useCallback(
     next => setSides(m => updateEntry(m, planKey, "rail", () => next)), [planKey]);
-  const toggleSide = kind => setSide(side === kind ? "rail" : kind);
+  // `side` read through a ref so the two StatusBar toggles below stay
+  // reference-stable (their identity feeds StatusBar's React.memo) without
+  // re-creating them whenever the side column changes.
+  const sideRef = React.useRef(side);
+  sideRef.current = side;
+  const toggleSide = React.useCallback(
+    kind => setSide(sideRef.current === kind ? "rail" : kind), [setSide]);
+  const handleOpenTree = React.useCallback(() => setSide("tree"), [setSide]);
   const setBrowserOpen = React.useCallback(
     on => setSides(m => updateEntry(m, planKey, "rail", s => (on ? "browser" : s === "browser" ? "rail" : s))), [planKey]);
   const tabCollapseOverrides = entryOf(collapseOverrides, planKey, NO_COLLAPSE_OVERRIDES);
@@ -278,8 +305,6 @@ React.useEffect(() => {
   // the tab's earlier ones; later blocks follow the modes again.
   const handleCollapseAll = (collapsed) => setCollapseOverrides(m => updateEntry(m, planKey, NO_COLLAPSE_OVERRIDES,
     () => _collapseOverridesForAll(messages, collapsed, { hidden: window.OMP_TURN_STATUS.isHidden })));
-  const openSettings = section => setStab(s => window.OMP_SETTINGS_TAB.open(s, section));
-  const closeSettings = () => setStab(window.OMP_SETTINGS_TAB.close);
   // Another omp tab shown (opened, picked, restored) leaves the settings tab.
   React.useEffect(() => { setStab(window.OMP_SETTINGS_TAB.selectProject); }, [activeSessionId]);
   // Tab ids, for dropping the per-tab state of closed tabs (here and in
@@ -320,6 +345,25 @@ React.useEffect(() => {
   const terminal = useTerminal({
     bridge, activeSessionId: planKey, sessionIds, tweaks: t, setTweak,
   });
+
+  // StatusBar's button handlers (round 3): the bar is React.memo'd, so
+  // each of its eight closures must hold a stable identity across App
+  // re-renders or the memo never bails out. planKey/terminal.toggle/
+  // setGitOpen/setRulesOpen/setStatsOpen/toggleSide are stable; the
+  // terminal one reads the tab id through a ref so a tab switch doesn't
+  // leave the closure stale (it's recreated per planKey anyway, which the
+  // bar already re-renders on — keying on the ref is for the tree toggle
+  // sharing below).
+  const planKeyRef = React.useRef(planKey);
+  planKeyRef.current = planKey;
+  const handleOpenChanges  = React.useCallback(() => setGitOpen({ path: null }), []);
+  const handleOpenRules    = React.useCallback(() => setRulesOpen(true), []);
+  const handleOpenStats    = React.useCallback(() => setStatsOpen(true), []);
+  const handleToggleTree   = React.useCallback(() => toggleSide("tree"), [toggleSide]);
+  const handleToggleBrowser = React.useCallback(() => toggleSide("browser"), [toggleSide]);
+  const handleToggleTerminal = React.useCallback(
+    () => terminal.toggle(planKeyRef.current), [terminal.toggle]);
+  const openSettingsNoSection = React.useCallback(() => openSettings(), [openSettings]);
 
   const subagentUi = useSubagentManager({
     bridge, layout: t.layout, setTweak, activeSessionId, subagents, messages, setHoveredMsgIdx,
@@ -369,7 +413,7 @@ React.useEffect(() => {
   // rail is on screen — not in focus layout, not under the tree or browser,
   // not under the Settings tab, which covers the stage (`.st-host`).
   const widgets = useWidgets({
-    bridge, activeSessionId: activeProject.id, railVisible: t.layout !== "focus" && side === "rail" && !stab.active, tweaks: t,
+    bridge, activeSessionId: activeProject.id, sessionIds, railVisible: t.layout !== "focus" && side === "rail" && !stab.active, tweaks: t,
   });
   // Pushed by omp, not run by the desktop: nothing to schedule, only a
   // Settings → Rail toggle per card (`widget:ext-status`, `widget:ext:<key>`).
@@ -975,7 +1019,7 @@ React.useEffect(() => {
                     onToggleCollapse={handleToggleCollapse}
                     followOutput={t.followOutput}
                     submitKey={t.submitKey}
-                    onOpenKanban={() => setPlanOpen(true)}
+                    onOpenKanban={handleOpenKanban}
                   />
                   <TerminalPanels sessions={sessions} activeId={planKey} terminal={terminal} />
                   <Composer
@@ -1058,12 +1102,10 @@ React.useEffect(() => {
                   subagentPaneOpen={showSplit}
                   onOpenSubagent={subagentUi.open}
                   onToggleSubagentPane={subagentUi.togglePane}
-                  onOpenTree={() => setSide("tree")}
+                  onOpenTree={handleOpenTree}
                   onClose={toggleRail}
                   messages={messages}
                   microcopy={data.microcopy}
-                  hoveredMsgIdx={hoveredMsgIdx}
-                  onMinimapHover={setHoveredMsgIdx}
                   onMinimapClick={handleMinimapClick}
                   trimmedCount={trimmedCount}
                   show={{ context: t.showContext ?? true, radar: t.showRadar ?? true, subagents: t.showSubagents ?? true, minimap: t.showMinimap ?? true }}
@@ -1109,17 +1151,17 @@ React.useEffect(() => {
             ctx={liveCtx}
             todoDone={todoCounts.done}
             todoTotal={todoCounts.total}
-            onTodo={() => setPlanOpen(true)}
-            onChanges={() => setGitOpen({ path: null })}
-            onRules={() => setRulesOpen(true)}
+            onTodo={handleOpenKanban}
+            onChanges={handleOpenChanges}
+            onRules={handleOpenRules}
             approvalMode={approvalCell}
-            onStats={() => setStatsOpen(true)}
-            onTree={() => toggleSide("tree")}
-            onTerminal={() => terminal.toggle(planKey)}
+            onStats={handleOpenStats}
+            onTree={handleToggleTree}
+            onTerminal={handleToggleTerminal}
             terminalOpen={_TERM_entryOf(terminal.state, planKey).open}
-            onBrowser={() => toggleSide("browser")}
+            onBrowser={handleToggleBrowser}
             browserOpen={side === "browser"}
-            onSettings={() => openSettings()}
+            onSettings={openSettingsNoSection}
             settingsActive={stab.active}
             busy={streaming}
             connected={bridge?.isConnected ?? null}

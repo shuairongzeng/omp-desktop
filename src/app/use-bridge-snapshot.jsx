@@ -81,10 +81,12 @@ function useThemeEffect(t) {
       }
     }
 
-    // Frosted glass: floating surfaces go translucent (styles.css .glass).
-    // Phosphor keeps its crisp CRT look — blur under scanlines is mud.
+    // Frosted glass: floating surfaces go translucent. The <html> hook is
+    // `glass-root` (styles.css) — a bare `.glass` here would also match the
+    // card-surface rule and put a permanent backdrop-filter on the viewport
+    // root. Phosphor keeps its crisp CRT look — blur under scanlines is mud.
     const glass = !!t.glassEffect && t.theme !== "phosphor";
-    root.classList.toggle("glass", glass);
+    root.classList.toggle("glass-root", glass);
     root.style.setProperty("--glass-alpha", `${t.glassOpacity ?? 85}%`);
     root.style.setProperty("--glass-blur", `${t.glassBlur ?? 12}px`);
   }, [t.theme, t.density, t.accent, t.monoChat, t.fontSize,

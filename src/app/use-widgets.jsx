@@ -14,9 +14,11 @@ function _uwVisible() {
 }
 
 /** `activeSessionId` must be the tab the app renders (`activeProject.id`,
- *  "" when none) — never a closed tab's id. `railVisible`: the rail is on
- *  screen (layout not focus, conversation tree closed); hidden = nothing runs. */
-function useWidgets({ bridge, activeSessionId, railVisible, tweaks }) {
+ *  "" when none) — never a closed tab's id. `sessionIds` are the open
+ *  tabs' ids (prunes the per-session caches when a tab closes).
+ *  `railVisible`: the rail is on screen (layout not focus, conversation
+ *  tree closed); hidden = nothing runs. */
+function useWidgets({ bridge, activeSessionId, sessionIds, railVisible, tweaks }) {
   const [config, setConfig] = React.useState(_UW_EMPTY_CONFIG);
   // sessionId ("" for none) → plugin ids applicable to it, latest per
   // session, so a late payload for another tab never blanks this one.
@@ -88,10 +90,46 @@ function useWidgets({ bridge, activeSessionId, railVisible, tweaks }) {
     return () => document.removeEventListener("visibilitychange", onChange);
   }, []);
 
+  // A closed tab leaves nothing behind: its `applicable` entry, its runs
+  // and their parse-cache entries go with it. Rust purges the runs and
+  // emits `widgets://removed` for them, but the applicable map is only
+  // ever written, never pruned — without this each closed tab leaks one
+  // entry for the app's lifetime.
+  const idsKey = Array.isArray(sessionIds) ? sessionIds.join("\0") : "";
+  React.useEffect(() => {
+    if (idsKey === "") return;
+    const live = new Set(idsKey.split("\0"));
+    setApplicable(m => {
+      let out = null;
+      for (const sid of Object.keys(m)) {
+        if (sid === "" || live.has(sid)) continue;
+        if (!out) out = { ...m };
+        delete out[sid];
+      }
+      return out ?? m;
+    });
+    let pruned = false;
+    for (const k of [...runsRef.current.keys()]) {
+      const scope = k.slice(0, k.indexOf("\0"));
+      if (scope === _UW_GLOBAL_KEY || live.has(scope)) continue;
+      parseCacheRef.current.delete(k);
+      runsRef.current.delete(k);
+      pruned = true;
+    }
+    if (pruned) setRunsVersion(v => v + 1);
+  }, [idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Plugins whose Settings toggle is off: they neither run nor render. Taken
   // from the tweak keys, not the config, so a plugin the config lacks right
   // now stays hidden when a reload brings it back (see hiddenPluginIds).
-  const hiddenKey = _UW.hiddenPluginIds(tweaks, config.plugins.map(p => p.id)).join("\0");
+  // The id list is derived (not state): keyed by its own content so a
+  // re-render with the same tweaks and plugin ids skips both the join and
+  // the split, and the view effect below sends nothing.
+  const pluginIds = React.useMemo(() => config.plugins.map(p => p.id), [config.plugins]);
+  const hiddenKey = React.useMemo(
+    () => _UW.hiddenPluginIds(tweaks, pluginIds).join("\0"),
+    [tweaks, pluginIds],
+  );
   const hiddenIds = React.useMemo(() => (hiddenKey ? hiddenKey.split("\0") : _UW_NO_IDS), [hiddenKey]);
   const sessionId = activeSessionId || null;
   // Sent only when a field changes: the deps are the view's own values.

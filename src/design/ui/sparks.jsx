@@ -65,8 +65,15 @@ const TokenGauge = ({ used, total, pct, label, sub }) => {
 // the strip reads left→right as old→new (−60s … now), so cell `i` holds the
 // sample at `59 - i`. A `t` can exceed 59 (a boundary sample just outside
 // the window); it simply matches no cell, same as one that was never there.
-const ActivityRadar = ({ activity, tps }) => {
-  const cells = Array.from({ length: 60 }, (_, i) => activity.find((a) => a.t === 59 - i));
+// Memoised: the rail re-renders per streaming delta while `activity` is
+// reference-stable between tool calls, so this only recomputes (one O(n)
+// bucket pass) when the samples actually change.
+const ActivityRadar = React.memo(function ActivityRadar({ activity, tps }) {
+  // One O(n) pass: bucket the samples by their `t` so each of the 60 cells
+  // is a Map lookup, not a 60 × activity.find scan over the array.
+  const byT = new Map();
+  for (const a of activity) byT.set(a.t, a);
+  const cells = Array.from({ length: 60 }, (_, i) => byT.get(59 - i));
   return (
     <div className="radar">
       <div className="radar-row">
@@ -91,7 +98,7 @@ const ActivityRadar = ({ activity, tps }) => {
       </div>
     </div>
   );
-};
+});
 
 
 Object.assign(window, { Sparkline, TokenGauge, ActivityRadar });

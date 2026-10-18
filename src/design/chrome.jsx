@@ -268,7 +268,12 @@ function TabBar({
 // pills below the prompt box show (and change) both. It spans the window
 // under the workspace; the st-ctx meter, st-cost and st-tps cells (each
 // with its separator) drop out when the window is narrow (layout/rail.css).
-function StatusBar({
+// Memoised (round 3): every streaming delta re-renders App, and the bar
+// only depends on ctx/todo counts/panel flags — app-live.jsx keeps every
+// prop reference-stable across those deltas (its approvalMode cell is
+// useMemo'd, its handlers useCallback'd), so the bar stops diffing 12+
+// buttons per frame.
+const StatusBar = React.memo(function StatusBar({
   ctx, todoDone, todoTotal, onTodo, onSettings, settingsActive = false, onChanges, onRules,
   approvalMode, onStats, onTree, onTerminal, terminalOpen, onBrowser, browserOpen = false,
   busy = false, connected = true, showRailToggle = false, onToggleRail,
@@ -356,7 +361,7 @@ function StatusBar({
       )}
     </div>
   );
-}
+});
 
 // The approvals button: names the tab's running tool approval mode
 // (`OMP_APPROVAL_MODE.statusCell`). Yolo as the target turns the glyph to
@@ -379,9 +384,48 @@ function ApprovalModeCell({ cell, onClick }) {
 // ── Minimap of the session: dense grid, one cell per message ─────────
 // Hue encodes role/tool color (same palette as the chat). For assistant
 // messages, opacity is log-scaled by tokens used so expensive turns pop
-// against cheap ones. Click scrolls the chat to that message; hover
-// highlights it via shared hoveredIdx state.
-function SessionMinimap({ messages, hoveredIdx, onHover, onClick, trimmedCount = 0 }) {
+// against cheap ones. Click scrolls the chat to that message.
+//
+// Hover highlight (round 3): the `.hot` cell state lives here as component
+// state, and the matching chat row gets `.mm-hot` imperatively via the
+// `[data-msg-idx]` DOM handle both sides already share — no `setHovered`
+// round-trip through App (a full re-render per hovered cell, on a
+// mousemove-driven path). The imperative seam is the smaller one: the
+// rows' `data-msg-idx` attribute already exists for the click-scroll
+// (`onMinimapClick` in app-live.jsx) and the subagent jump-to-call, so no
+// new prop or context has to cross the chat/minimap boundary; a React
+// state round-trip would also re-render every memoised bubble that has
+// `highlighted` in its props. Rows the mouse skips without lingering
+// (a fast sweep) cost one no-op classList call each.
+//
+// Memoised on a stable signal, not the `messages` array's identity: the
+// live layer rebuilds that array on every streaming delta, but the grid
+// only changes when a message is added or removed. The comparator below
+// keys on `messages.length` + the last message's `_id` / `streaming` /
+// `tokens` — that signal skips the per-delta rebuild (a streaming bubble
+// keeps its `_id` across `message_update` rewrites) while still catching
+// `message_end`'s in-place tail rewrite, which would otherwise leave the
+// last cell's `live` pulse running after the turn ends. Mid-array
+// rewrites that move no cell (a compact row settling, a tool card
+// finalizing) are skipped until the next add/remove — the grid is a
+// coarse overview; the tooltips catch up on the next message.
+const _mmSignals = (messages, trimmedCount) => {
+  const last = messages[messages.length - 1];
+  return `${messages.length}\0${last?._id ?? ""}\0${last?.streaming ? 1 : 0}\0${last?.tokens ?? 0}\0${trimmedCount}`;
+};
+const SessionMinimap = React.memo(function SessionMinimap({ messages, onClick, trimmedCount = 0 }) {
+  // The cell the mouse is on — local, so hovering repaints only this grid.
+  const [hot, setHot] = React.useState(null);
+  // Mirror `hot` onto the chat row (rail.css `.row.mm-hot`): `data-msg-idx`
+  // is the row handle the click-scroll and subagent jump already use, so
+  // this stays a one-line query per hover — far cheaper than lifting the
+  // hover into App state, which re-rendered the whole tree per cell.
+  React.useEffect(() => {
+    const row = hot == null ? null : document.querySelector(`[data-msg-idx="${hot}"]`);
+    if (!row) return undefined;
+    row.classList.add("mm-hot");
+    return () => row.classList.remove("mm-hot");
+  }, [hot]);
   // Log-scaled max across assistant messages so heatmap variance is
   // visible even when one compaction turn dwarfs the rest.
   const { maxTokens, shown } = React.useMemo(() => {
@@ -467,15 +511,15 @@ function SessionMinimap({ messages, hoveredIdx, onHover, onClick, trimmedCount =
           } else {
             title = m.kind;
           }
-          const cls = `minimap-cell ${m.kind} ${m.streaming ? "live" : ""} ${hoveredIdx === i ? "hot" : ""}`.trim();
+          const cls = `minimap-cell ${m.kind} ${m.streaming ? "live" : ""} ${hot === i ? "hot" : ""}`.trim();
 
           return (
             <div key={m._id ?? i}
               className={cls}
               style={{ background: hue, opacity }}
               title={title}
-              onMouseEnter={() => onHover?.(i)}
-              onMouseLeave={() => onHover?.(null)}
+              onMouseEnter={() => setHot(i)}
+              onMouseLeave={() => setHot(h => (h === i ? null : h))}
               onClick={() => onClick?.(i)} />
           );
         })}
@@ -483,7 +527,7 @@ function SessionMinimap({ messages, hoveredIdx, onHover, onClick, trimmedCount =
       <MinimapLegend messages={messages} />
     </div>
   );
-}
+}, (prev, next) => _mmSignals(prev.messages, prev.trimmedCount) === _mmSignals(next.messages, next.trimmedCount));
 
 // #24: legend entries for the kinds actually present in this session, in a
 // fixed order — a session with no asks shows no ask swatch.
@@ -526,8 +570,58 @@ function MinimapLegend({ messages }) {
 // `show`: { context, radar, subagents, minimap } — false hides that card
 // (Settings → Rail, keys showContext/showRadar/showSubagents/showMinimap);
 // `children` (widget plugin cards) sit between subagents and the minimap.
+// The context / radar cards below are memoised (round 3): App re-renders
+// on every streaming delta, and each re-render would re-run their SVG
+// point math and diff their subtrees even though ctx/activity/sparkline
+// are reference-stable between updates that don't change them. Hoisting
+// them as named components (rather than memoising AmbientRail itself)
+// keeps the non-memoised parts — the widget/plugin `children`, whose cards
+// carry per-render closures — on their own update path.
+
+// Legend rows of the radar card: the four tool kinds the strip colours.
+// Hoisted to module scope so a rail re-render doesn't rebuild the
+// Object.entries list and its filter (fixed data, computed once).
+const RADAR_LEGEND_KEYS = ["read", "search", "edit", "bash"];
+const RADAR_LEGEND = Object.entries(TOOL_META).filter(([k]) => RADAR_LEGEND_KEYS.includes(k));
+
+const RailContextCard = React.memo(function RailContextCard({ ctx, sparkVals }) {
+  return (
+    <div className="rail-card glass">
+      <TokenGauge used={ctx.used} total={ctx.total} pct={ctx.pct}
+        label={ctx.label} sub={`cost ${ctx.cost} · ${ctx.tokensPerSec} t/s`} />
+      <div className="rail-spark">
+        <Sparkline values={sparkVals} width={210} height={28} />
+        <div className="rail-spark-foot mono">
+          <span style={{ color: "var(--fg-4)" }}>throughput</span>
+          <span style={{ color: "var(--accent)" }}>{ctx.tokensPerSec} t/s</span>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const RailRadarCard = React.memo(function RailRadarCard({ ctx, activity }) {
+  return (
+    <div className="rail-card glass">
+      <div className="rail-card-head">
+        <Icon name="radar" size={11} color="var(--accent)" />
+        <span className="mono" style={{ color: "var(--fg-2)" }}>agent radar</span>
+        <span className="chip muted mono" style={{ marginLeft: "auto" }}>last 60s</span>
+      </div>
+      <ActivityRadar activity={activity} tps={ctx.tokensPerSec} />
+      <div className="legend">
+        {RADAR_LEGEND.map(([k, m]) => (
+          <span key={k} className="legend-item">
+            <span style={{ background: m.color }} /> {m.label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+});
+
 function AmbientRail({
-  ctx, activity, messages, microcopy, onClose, sparklineValues, hoveredMsgIdx, onMinimapHover, onMinimapClick,
+  ctx, activity, messages, microcopy, onClose, sparklineValues, onMinimapClick,
   subagents, subagentPaneOpen, onOpenSubagent, onToggleSubagentPane, onOpenTree,
   trimmedCount = 0, show = {}, children,
 }) {
@@ -550,37 +644,9 @@ function AmbientRail({
         </span>
       </div>
 
-      {(show.context ?? true) && (
-        <div className="rail-card glass">
-          <TokenGauge used={ctx.used} total={ctx.total} pct={ctx.pct}
-            label={ctx.label} sub={`cost ${ctx.cost} · ${ctx.tokensPerSec} t/s`} />
-          <div className="rail-spark">
-            <Sparkline values={sparkVals} width={210} height={28} />
-            <div className="rail-spark-foot mono">
-              <span style={{ color: "var(--fg-4)" }}>throughput</span>
-              <span style={{ color: "var(--accent)" }}>{ctx.tokensPerSec} t/s</span>
-            </div>
-          </div>
-        </div>
-      )}
+      {(show.context ?? true) && <RailContextCard ctx={ctx} sparkVals={sparkVals} />}
 
-      {(show.radar ?? true) && (
-        <div className="rail-card glass">
-          <div className="rail-card-head">
-            <Icon name="radar" size={11} color="var(--accent)" />
-            <span className="mono" style={{ color: "var(--fg-2)" }}>agent radar</span>
-            <span className="chip muted mono" style={{ marginLeft: "auto" }}>last 60s</span>
-          </div>
-          <ActivityRadar activity={activity} tps={ctx.tokensPerSec} />
-          <div className="legend">
-            {Object.entries(TOOL_META).filter(([k]) => ["read","search","edit","bash"].includes(k)).map(([k, m]) => (
-              <span key={k} className="legend-item">
-                <span style={{ background: m.color }} /> {m.label}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      {(show.radar ?? true) && <RailRadarCard ctx={ctx} activity={activity} />}
 
       {(show.subagents ?? true) && (
         <SubagentRailCard agents={subagents} paneOpen={subagentPaneOpen}
@@ -594,7 +660,7 @@ function AmbientRail({
             <Icon name="minimap" size={11} color="var(--fg-3)" />
             <span className="mono" style={{ color: "var(--fg-2)" }}>minimap</span>
           </div>
-          <SessionMinimap messages={messages} hoveredIdx={hoveredMsgIdx} onHover={onMinimapHover} onClick={onMinimapClick} trimmedCount={trimmedCount} />
+          <SessionMinimap messages={messages} onClick={onMinimapClick} trimmedCount={trimmedCount} />
         </div>
       )}
 

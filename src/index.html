@@ -32,14 +32,12 @@
   <script src="babel.min.js"></script>
 
   <!-- xterm.js for the terminal panel, vendored from npm by
-       scripts/vendor-xterm.mjs (never edit by hand). Both are UMD builds that
-       attach to window: xterm.js → window.Terminal (use `new Terminal(opts)`),
-       xterm-addon-fit.js → window.FitAddon, an object whose class is
-       FitAddon.FitAddon (use `new FitAddon.FitAddon()`). Their stylesheet is
-       linked in <head>. Read lazily (inside function bodies) by
-       app/terminal-xterm.js, so the position only has to precede it. -->
-  <script src="xterm.js"></script>
-  <script src="xterm-addon-fit.js"></script>
+       scripts/vendor-xterm.mjs (never edit by hand). Both UMD builds attach to
+       window: xterm.js → window.Terminal, xterm-addon-fit.js → window.FitAddon.
+       They are NOT loaded here: 478 KB of parse at every startup for a panel
+       most sessions never open — app/terminal-xterm.js's ensureXterm() injects
+       both scripts on first terminal mount (shared promise, no-op when present).
+       The stylesheet stays eager (linked in <head>) — tiny, and avoids FOUC. -->
 
   <!-- Markdown + syntax highlighting — must load before design components.
        marked-setup.js wires marked to hljs and escapes raw HTML / unsafe

@@ -534,12 +534,21 @@
 .diff-tick.k-rem { background: var(--diff-rm-fg); }
 .diff-tick.k-ctx { background: var(--fg-5); top: 5px; height: 4px; }
 .diff-track-cursor {
-  position: absolute; top: -2px; bottom: -2px; width: 2px;
+  position: absolute; top: -2px; bottom: -2px; left: 0;
+  width: 100%;
+  pointer-events: none;
+  will-change: transform;
+  transition: transform 80ms var(--ease-out);
+}
+/* The 2px thumb rides at the head of the full-width cursor rail
+   (translateX % of that width = the track fraction); the old `left`
+   transition was a layout property and re-ran layout on every tick. */
+.diff-track-cursor::after {
+  content: "";
+  position: absolute; top: 0; bottom: 0; left: 0;
+  width: 2px;
   background: var(--accent);
   box-shadow: 0 0 8px var(--accent-glow);
-  transform: translateX(-1px);
-  pointer-events: none;
-  transition: left 80ms var(--ease-out);
 }
 
 

@@ -1,3 +1,5 @@
+use memchr::memchr;
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::path::PathBuf;
@@ -76,19 +78,26 @@ fn sanitize_frame(value: &mut serde_json::Value) -> bool {
 /// one) with `None` in place of the parsed frame, since a non-JSON line
 /// cannot carry a *named* credential field — or an approval prompt — for
 /// us to find in the first place.
-fn sanitize_line(raw: &[u8]) -> (String, Option<serde_json::Value>) {
+///
+/// The text is a [`Cow<'_, str>`]: the overwhelmingly common untouched
+/// frame borrows `raw` and pays no allocation at all, and only a
+/// redacted (re-serialized) or invalid-UTF-8 line owns its buffer. The
+/// caller turns it into the journal's `Arc<str>` with one copy.
+fn sanitize_line(raw: &[u8]) -> (Cow<'_, str>, Option<serde_json::Value>) {
     serde_json::from_slice::<serde_json::Value>(raw).map_or_else(
-        |_| (String::from_utf8_lossy(raw).into_owned(), None),
+        |_| (String::from_utf8_lossy(raw), None),
         |mut value| {
             // Re-serializing costs a second full pass (escaping, number
             // formatting, map ordering) over the whole frame. Only pay it
             // when something was actually redacted; otherwise `raw` already
             // *is* the correct text.
             let text = if sanitize_frame(&mut value) {
-                serde_json::to_string(&value)
-                    .unwrap_or_else(|_| String::from_utf8_lossy(raw).into_owned())
+                Cow::Owned(
+                    serde_json::to_string(&value)
+                        .unwrap_or_else(|_| String::from_utf8_lossy(raw).into_owned()),
+                )
             } else {
-                String::from_utf8_lossy(raw).into_owned()
+                String::from_utf8_lossy(raw)
             };
             (text, Some(value))
         },
@@ -265,6 +274,78 @@ fn decide_exit_reason(
     child_exit_reason(status.as_ref(), tail, saw_frame)
 }
 
+/// Grouped arguments for [`retire_and_announce`] — bundled into one struct
+/// rather than eight positional parameters, mirroring
+/// [`StdoutReaderConfig`].
+struct ExitAnnounce<'a> {
+    sessions: &'a Arc<Mutex<HashMap<String, BridgeInner>>>,
+    sid: String,
+    gen: u64,
+    alive: &'a Arc<AtomicBool>,
+    last_errors: &'a Arc<Mutex<HashMap<String, String>>>,
+    app: &'a AppHandle,
+    exit_event: String,
+    exit_reason: String,
+}
+
+/// At stdout-EOF: give up this incarnation's map entry (inside the same
+/// critical section that decides whether to announce — deciding separately
+/// left a window where a self-removed entry stayed `alive` forever, since
+/// nothing else clears the flag for an incarnation that retires on its own)
+/// and, if ours to announce, record the reason and emit `agent://exit`.
+/// `sid` moves (no later use in the caller); `exit_reason` is cloned because
+/// the emit below still needs the original.
+fn retire_and_announce(ctx: ExitAnnounce<'_>) {
+    let ExitAnnounce {
+        sessions,
+        sid,
+        gen,
+        alive,
+        last_errors,
+        app,
+        exit_event,
+        exit_reason,
+    } = ctx;
+    let mut announce = false;
+    if let Ok(mut s) = sessions.lock() {
+        match s.get(&sid).map(|inner| inner.gen) {
+            Some(g) if g == gen => {
+                // Still ours — we're the last stop for this id. Clear
+                // `alive` ourselves before giving up the entry.
+                s.remove(&sid);
+                alive.store(false, Ordering::Release);
+                announce = true;
+            }
+            // A fresher incarnation already owns the id — stay mute,
+            // its own reader speaks for it now.
+            Some(_) => {}
+            // Entry already gone: a racing `stop_session` or a
+            // superseding `start_session` removed it and cleared
+            // `alive` inside that same critical section before
+            // releasing the `sessions` lock (see `agent/mod.rs`), so
+            // `should_emit` is guaranteed to already read `false`
+            // here — kept as an explicit defensive check rather than
+            // hard-coding `false`, in case a future removal path ever
+            // forgets to clear it under the lock.
+            None => announce = should_emit(alive),
+        }
+    }
+    // Empty payload = clean exit; non-empty = error reason. See the
+    // AgentBridge doc-comment for the full event contract.
+    if announce {
+        if !exit_reason.is_empty() {
+            // Recorded before the emit so a `session_status` query that
+            // races the event still finds it. Only for the incarnation
+            // that still owned the id: a superseded reader must not
+            // stamp its reason onto its replacement.
+            if let Ok(mut e) = last_errors.lock() {
+                e.insert(sid, exit_reason.clone());
+            }
+        }
+        let _ = app.emit(&exit_event, exit_reason);
+    }
+}
+
 pub(super) fn spawn_stdout_reader(config: StdoutReaderConfig) {
     let StdoutReaderConfig {
         sessions,
@@ -284,10 +365,10 @@ pub(super) fn spawn_stdout_reader(config: StdoutReaderConfig) {
         last_errors,
     } = config;
     thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
+        let mut reader = BufReader::with_capacity(64 * 1024, stdout);
         let line_event = format!("agent://line/{sid}");
         let exit_event = format!("agent://exit/{sid}");
-        let mut buf: Vec<u8> = Vec::with_capacity(8192);
+        let mut buf: Vec<u8> = Vec::with_capacity(8 * 1024);
         let mut exit_reason = String::new();
         // omp announces itself with a `ready` frame, so "not one frame all
         // run" means it died during startup. That is the only case where
@@ -331,8 +412,11 @@ pub(super) fn spawn_stdout_reader(config: StdoutReaderConfig) {
                     // A rule-covered approval prompt is answered directly on
                     // stdin and replaced with a synthetic notice — the human
                     // never sees the original ask, but does see that it was
-                    // auto-approved.
-                    let text = parsed
+                    // auto-approved. Every other frame forwards as sanitized:
+                    // `Cow::Borrowed` (untouched frame) copies once straight
+                    // out of `buf` into the `Arc`; `Owned` moves through
+                    // `as_str` — same single copy.
+                    let shared: Arc<str> = parsed
                         .as_ref()
                         .and_then(|frame| {
                             auto_approve_or_track(
@@ -345,11 +429,15 @@ pub(super) fn spawn_stdout_reader(config: StdoutReaderConfig) {
                                 &approvals,
                             )
                         })
-                        .unwrap_or(sanitized);
+                        .map_or_else(
+                            || Arc::from(sanitized.as_ref()),
+                            |notice| Arc::from(notice.as_str()),
+                        );
                     // One allocation for the line, shared with the journal
                     // by refcount rather than copied into it.
-                    let shared: std::sync::Arc<str> = std::sync::Arc::from(text);
-                    let seq = journal.lock().map_or(0, |mut j| j.push(shared.clone()));
+                    let seq = journal
+                        .lock()
+                        .map_or(0, |mut j| j.push(Arc::clone(&shared)));
                     // After the push, stamped with its seq: a snapshot taken
                     // in between names an older seq, so the frontend still
                     // applies this frame from the replay.
@@ -385,52 +473,16 @@ pub(super) fn spawn_stdout_reader(config: StdoutReaderConfig) {
             exit_reason =
                 decide_exit_reason(&sessions, &sid, gen, stderr_reader, &stderr_tail, saw_frame);
         }
-        // Process exited. Decide whether to announce inside the same
-        // critical section that gives up our map entry — deciding it
-        // separately (as before) left a window where a self-removed entry
-        // stayed `alive` forever: nothing else ever clears the flag for an
-        // incarnation that retires on its own, since `reap_and_clear_grants`
-        // only runs when *something else* supersedes or reaps this entry.
-        let mut announce = false;
-        if let Ok(mut s) = sessions.lock() {
-            match s.get(&sid).map(|inner| inner.gen) {
-                Some(g) if g == gen => {
-                    // Still ours — we're the last stop for this id. Clear
-                    // `alive` ourselves before giving up the entry.
-                    s.remove(&sid);
-                    alive.store(false, Ordering::Release);
-                    announce = true;
-                }
-                // A fresher incarnation already owns the id — stay mute,
-                // its own reader speaks for it now.
-                Some(_) => {}
-                // Entry already gone: a racing `stop_session` or a
-                // superseding `start_session` removed it and cleared
-                // `alive` inside that same critical section before
-                // releasing the `sessions` lock (see `agent/mod.rs`), so
-                // `should_emit` is guaranteed to already read `false`
-                // here — kept as an explicit defensive check rather than
-                // hard-coding `false`, in case a future removal path ever
-                // forgets to clear it under the lock.
-                None => announce = should_emit(&alive),
-            }
-        }
-        // Empty payload = clean exit; non-empty = error reason. See the
-        // AgentBridge doc-comment for the full event contract.
-        if announce {
-            if !exit_reason.is_empty() {
-                // Recorded before the emit so a `session_status` query that
-                // races the event still finds it. Only for the incarnation
-                // that still owned the id: a superseded reader must not
-                // stamp its reason onto its replacement. `exit_reason`
-                // is cloned (not moved) because the emit below still needs
-                // the original — `sid` has no such later use, so it moves.
-                if let Ok(mut e) = last_errors.lock() {
-                    e.insert(sid, exit_reason.clone());
-                }
-            }
-            let _ = app.emit(&exit_event, exit_reason);
-        }
+        retire_and_announce(ExitAnnounce {
+            sessions: &sessions,
+            sid,
+            gen,
+            alive: &alive,
+            last_errors: &last_errors,
+            app: &app,
+            exit_event,
+            exit_reason,
+        });
     });
 }
 
@@ -619,7 +671,7 @@ fn read_until_capped<R: BufRead>(
             return Ok((total, truncated));
         }
         let room = max.saturating_sub(out.len());
-        let used = if let Some(i) = avail.iter().position(|&b| b == delim) {
+        let used = if let Some(i) = memchr(delim, avail) {
             // Found the delimiter — frame the line and return.
             let take = (i + 1).min(room);
             if take < i + 1 {

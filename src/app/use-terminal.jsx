@@ -39,7 +39,7 @@ const { pruneEntries: _UT_pruneEntries } = window.OMP_SESSION_UI;
 const {
   SKIPPED_LINE: _UT_SKIPPED, exitLine: _UT_exitLine, failLine: _UT_failLine, theme: _UT_theme,
   applyWindowsPty: _UT_applyWindowsPty, createXterm: _UT_createXterm, copySelection: _UT_copySelection,
-  paste: _UT_pasteTerm, scrollbackLines: _UT_scrollbackLines,
+  paste: _UT_pasteTerm, scrollbackLines: _UT_scrollbackLines, ensureXterm: _UT_ensureXterm,
 } = window.OMP_TERMINAL_XTERM;
 const {
   EMPTY: _UT_STREAM, beginSync: _UT_beginSync, onEvent: _UT_onEvent, replayCursor: _UT_replayCursor,
@@ -213,7 +213,16 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
     spawn(sid);
   }, [spawn]);
 
-  const create = React.useCallback((sid) => {
+  // Builds the tab's xterm once the vendored xterm.js is on the page
+  // (ensureXterm injects it on first use; index.html still loads it
+  // eagerly, so the await is normally a microtask). A second call for a
+  // tab whose xterm landed meanwhile (or went with its tab) is a no-op.
+  const create = React.useCallback(async (sid) => {
+    const xterm = recs.current.get(sid);
+    if (xterm) return xterm;
+    await _UT_ensureXterm();
+    const existing = recs.current.get(sid);
+    if (existing) return existing;
     // `rec` (declared below) exists by the time any of these callbacks runs.
     const { term, fit: fitAddon } = _UT_createXterm({
       fontSize: fontSizeRef.current,
@@ -259,22 +268,27 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
     if (!mountRefs.current.has(sid)) {
       mountRefs.current.set(sid, (node) => {
         if (!node || !bridge) return;
-        const rec = recs.current.get(sid) ?? create(sid);
-        if (rec.mounted) return;
-        rec.term.open(node);
-        rec.mounted = true;
-        // Layout changes that resize the body without a window resize
-        // (sidebar, tree, subagent pane) still refit. A hidden panel reports
-        // 0×0: nothing to fit, the reveal observes the real size.
-        rec.observer = new ResizeObserver((entries) => {
-          const { width, height: h } = entries[entries.length - 1].contentRect;
-          if (width === 0 || h === 0) return;
-          clearTimeout(rec.fitTimer);
-          // Past the panel's height transition (140ms, terminal.css): a
-          // mid-transition fit locks the transition's size in.
-          rec.fitTimer = setTimeout(() => fit(sid), 160);
+        // create() awaits the vendored xterm.js (normally already loaded);
+        // by the time it lands, a re-render may have unmounted the node or
+        // closed the tab — both leave the node alone.
+        void Promise.resolve(create(sid)).then((rec) => {
+          if (!rec || rec.disposed || !node.isConnected) return;
+          if (rec.mounted) return;
+          rec.term.open(node);
+          rec.mounted = true;
+          // Layout changes that resize the body without a window resize
+          // (sidebar, tree, subagent pane) still refit. A hidden panel reports
+          // 0×0: nothing to fit, the reveal observes the real size.
+          rec.observer = new ResizeObserver((entries) => {
+            const { width, height: h } = entries[entries.length - 1].contentRect;
+            if (width === 0 || h === 0) return;
+            clearTimeout(rec.fitTimer);
+            // Past the panel's height transition (140ms, terminal.css): a
+            // mid-transition fit locks the transition's size in.
+            rec.fitTimer = setTimeout(() => fit(sid), 160);
+          });
+          rec.observer.observe(node);
         });
-        rec.observer.observe(node);
       });
     }
     return mountRefs.current.get(sid);
@@ -313,10 +327,14 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
   // A visible panel: size the xterm to it, start the shell of a tab that has
   // none (once its initial sync settled), and focus the terminal that was
   // just opened. Runs on every open/close, tab switch, height change and
-  // settled sync. Becoming visible clears the tab's dirty mark.
+  // settled sync. Becoming visible clears the tab's dirty mark. The deps
+  // pin the ACTIVE tab's entry, not the whole panel-state map: a background
+  // tab's state change must not refit (and repaint) the terminal the user
+  // is looking at.
   const prevOpen = React.useRef(null);
+  const activeEntry = _UT_entryOf(state, activeSessionId);
   React.useEffect(() => {
-    const entry = _UT_entryOf(state, activeSessionId);
+    const entry = activeEntry;
     const rec = recs.current.get(activeSessionId);
     if (entry.open && rec?.mounted) {
       setState((s) => _UT_clearDirty(s, activeSessionId));
@@ -333,7 +351,7 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
       }
     }
     prevOpen.current = entry.open ? activeSessionId : null;
-  }, [state, activeSessionId, height, syncTick, fit, spawn, focus]);
+  }, [activeEntry, activeSessionId, height, syncTick, fit, spawn, focus]);
 
   // Tab list changes: drop the panel state and the instance of closed tabs
   // (`closeSession` in live.js already had Rust end the tab and its shell),

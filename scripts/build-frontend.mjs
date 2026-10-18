@@ -31,7 +31,7 @@
 // release, so the stamped URL always misses.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -53,11 +53,24 @@ const DROPPED = new Set(["babel.min.js", "react.development.js", "react-dom.deve
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out);
-// The filter only skips `.jsx`: on Windows, Node < 22.4 hands it `\\?\`-
-// prefixed paths, so matching dropped files by relative name there silently
-// fails. Delete them explicitly instead — without `force`, so a renamed
-// vendored file fails the build.
-cpSync(src, out, { recursive: true, filter: (path) => !path.endsWith(".jsx") });
+// The filter skips `.jsx` and the `design/icons/` source pack (61 svg
+// files, manifest.json, icons.tsx, README.md — the drawing source the
+// in-app `ui/icons.jsx` was generated from; nothing in the app references
+// the folder, so shipping it only bloats the release asset). The check is
+// `p === dir || p.startsWith(dir + sep)`, normalised first: the Windows
+// `\\?\` prefix the filter may receive would otherwise defeat the
+// comparison, and a bare startsWith would swallow a sibling like
+// `icons-foo`.
+const ICONS_PACK = normalize(join(src, "design", "icons"));
+const inIconsPack = (p) => {
+  const n = normalize(p);
+  return n === ICONS_PACK || n.startsWith(ICONS_PACK + sep);
+};
+cpSync(src, out, { recursive: true, filter: (path) => !path.endsWith(".jsx") && !inIconsPack(path) });
+// On Windows, Node < 22.4 hands the filter `\\?\`-prefixed paths, so
+// matching dropped files by relative name there silently fails. Delete
+// them explicitly instead — without `force`, so a renamed vendored file
+// fails the build.
 for (const name of DROPPED) rmSync(join(out, name));
 
 let html = readFileSync(join(src, "index.html"), "utf8");

@@ -24,9 +24,23 @@ const MarkdownContent = ({ text, streaming }) => {
       return '<p>' + escapeText(text)
         .replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
     }
-    try { return window.marked.parse(text); }
-    catch (_) { return '<pre>' + escapeText(text) + '</pre>'; }
-  }, [text]);
+    // While the bubble streams, fences render as plain escaped <code>
+    // (marked-setup.js's skipHighlight): a partial fence highlighted
+    // mid-stream yields malformed spans — eval-cell.jsx refuses to
+    // highlight a running cell for the same reason — and hljs per delta
+    // is the parse path's dominant cost while streaming. The settle
+    // flips the memo key (a new text), which highlights once, final.
+    const md = window.OMP_MARKDOWN;
+    const prev = md?.skipHighlight;
+    if (md) md.skipHighlight = !!streaming;
+    let out;
+    try { out = window.marked.parse(text); }
+    catch (_) { out = '<pre>' + escapeText(text) + '</pre>'; }
+    finally { if (md) md.skipHighlight = prev; }
+    return out;
+    // `streaming` in the key: the settled parse (highlighted) must not
+    // reuse the streaming parse (escaped) of the same final text.
+  }, [text, streaming]);
 
   const onClick = useMarkdownClick();
   return (

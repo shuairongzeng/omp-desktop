@@ -36,6 +36,21 @@
 
   const done = (stream, actions = []) => ({ stream, actions });
 
+  /** `st.pending` with the event appended. The queue is one mutable
+   *  buffer pushed onto and drained at `endSync` (live.js's
+   *  `_replayBuffer` pattern): a replay that queues N events costs N
+   *  pushes on one array, where re-spreading the queue per event was
+   *  O(n²) on a busy replay. A foreign array — EMPTY's frozen singleton,
+   *  or a test's frozen input — is copied with the event appended (once;
+   *  the copy is ours); the buffer of a record already in this sync's
+   *  chain (every `{...st}` spread keeps it) is pushed onto in place.
+   *  Only `endSync` reads it, at drain time, through the newest record. */
+  const withQueued = (st, ev) => {
+    const base = st.pending;
+    const pending = Object.isFrozen(base) ? [...base, ev] : (base.push(ev), base);
+    return { ...st, pending };
+  };
+
   /** Start a replay: queued events wait until it ends. */
   function beginSync(st) {
     return { ...st, syncing: st.syncing + 1 };
@@ -63,13 +78,13 @@
    *   and acked.
    */
   function onEvent(st, ev) {
-    if (st.syncing > 0) return done({ ...st, pending: [...st.pending, ev] });
+    if (st.syncing > 0) return done(withQueued(st, ev));
     if (ev.instance < st.instance) return done(st);
     const actions = [];
     if (ev.instance > st.instance) {
       st = { ...st, instance: ev.instance, lastSeq: 0 };
       actions.push({ type: "status" });
-      if (ev.kind === "exit") return withReplay({ ...st, pending: [...st.pending, ev] }, actions);
+      if (ev.kind === "exit") return withReplay(withQueued(st, ev), actions);
     }
     if (ev.kind === "exit") {
       actions.push({ type: "exit", instance: ev.instance, code: ev.code });
@@ -77,7 +92,7 @@
     }
     if (ev.seq <= st.lastSeq) return done(st, actions);
     if (ev.seq > st.lastSeq + 1 && !ev.replayed) {
-      return withReplay({ ...st, pending: [...st.pending, { ...ev, replayed: true }] }, actions);
+      return withReplay(withQueued(st, { ...ev, replayed: true }), actions);
     }
     actions.push({ type: "write", bytes: ev.bytes, ack: { instance: ev.instance, n: ev.bytes.length } });
     return done({ ...st, lastSeq: ev.seq }, actions);

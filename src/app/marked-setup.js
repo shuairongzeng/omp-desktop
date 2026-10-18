@@ -105,11 +105,24 @@
         const code     = text ?? '';
         const language = (lang ?? '').split(/\s/)[0];
         let highlighted;
-        try {
-          highlighted = language && hljs.getLanguage(language)
-            ? hljs.highlight(code, { language }).value
-            : hljs.highlightAuto(code).value;
-        } catch (_) {
+        // `skipHighlight` (set by ui/markdown.jsx while a bubble streams):
+        // a partial fence highlighted mid-stream yields malformed spans —
+        // the same reason chat/eval-cell.jsx refuses to highlight a
+        // running cell — and re-running hljs per delta is the single
+        // largest parse cost while streaming. Plain escaped <code>
+        // instead; the fence is highlighted once the bubble settles (the
+        // memo key flips on the settled text). Read per render, not a
+        // second parser registration: every other renderer below behaves
+        // identically with it on.
+        if (!window.OMP_MARKDOWN.skipHighlight) {
+          try {
+            highlighted = language && hljs.getLanguage(language)
+              ? hljs.highlight(code, { language }).value
+              : hljs.highlightAuto(code).value;
+          } catch (_) {
+            highlighted = escapeHtml(code);
+          }
+        } else {
           highlighted = escapeHtml(code);
         }
         const cls = language ? ' language-' + escapeHtml(language) : '';

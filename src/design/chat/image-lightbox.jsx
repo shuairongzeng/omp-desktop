@@ -144,6 +144,10 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
     return { scale, tx: point.x - base.left - ax * scale, ty: point.y - base.top - ay * scale };
   };
 
+  // Zoom on wheel. Registered as a native non-passive listener on the
+  // scrim (useEffect below): React 19 attaches onWheel passively, where
+  // preventDefault is a no-op the browser logs as an intervention while
+  // the page behind scrolls under the viewer.
   const onWheel = (e) => {
     if (closingRef.current) return;
     e.preventDefault();
@@ -155,6 +159,16 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
     const factor = Math.exp(-e.deltaY * 0.0015);
     setZoom(zoomAt((z?.scale ?? 1) * factor, { x: e.clientX, y: e.clientY }));
   };
+
+  // The scrim takes the wheel: non-passive so preventDefault actually
+  // blocks the page behind, and on the scrim (capture) so the zoom works
+  // before any child could scroll.
+  React.useEffect(() => {
+    const scrim = scrimRef.current;
+    if (!scrim) return undefined;
+    scrim.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => scrim.removeEventListener("wheel", onWheel, { capture: true });
+  }, [onWheel]);
 
   // Drag pans while the pointer is down; a click that didn't move (and
   // isn't part of a double-click) still closes via the scrim's onClick.
@@ -231,7 +245,6 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
       aria-modal="true"
       aria-label="Attached image"
       tabIndex={-1}
-      onWheel={onWheel}
       onClick={close}
     >
       <img

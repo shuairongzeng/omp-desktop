@@ -171,10 +171,15 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
   };
 
   // Re-syncs prevTopRef after every programmatic scroll, or the next
-  // nextPinned call would misread it as a user scroll-up.
+  // nextPinned call would misread it as a user scroll-up. scrollTop =
+  // scrollHeight reads layout, the assignment dirties it, and reading
+  // scrollTop back would force a second layout — so the max is computed
+  // from the one measurement instead (round 3: this runs per streaming
+  // delta, twice with the ResizeObserver path).
   const stickToBottom = (el) => {
-    el.scrollTop = el.scrollHeight;
-    prevTopRef.current = el.scrollTop;
+    const max = el.scrollHeight - el.clientHeight;
+    el.scrollTop = max;
+    prevTopRef.current = max;
   };
 
   // Only a real user scroll — up and away from the bottom — unpins.

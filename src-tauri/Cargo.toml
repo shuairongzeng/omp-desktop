@@ -34,6 +34,9 @@ base64 = "0.22"
 # Agent-facing CDP endpoint (`browser/proxy/ws.rs`): the server side of the
 # agent's plain `ws://` loopback connection, so `handshake` only - no TLS.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+# SIMD-accelerated delimiter scan in `agent/reader.rs`'s
+# `read_until_capped`. Already in the tree via gix → regex.
+memchr = "2.8"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

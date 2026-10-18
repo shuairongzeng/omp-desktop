@@ -2,6 +2,11 @@
 // the hook writes into it, for app/use-terminal.jsx (which owns the
 // instances and their sync with Rust).
 //
+// - `ensureXterm()`: injects the vendored xterm.js / fit-addon <script>s on
+//   the first terminal mount and resolves once both have loaded; a no-op
+//   (resolved promise) when `window.Terminal` is already there (index.html
+//   still carries the eager tags; the integrator removes them next). A
+//   module-level promise means concurrent mounts share one injection.
 // - `createXterm(opts)`: a `window.Terminal` with the fit addon, OSC 8
 //   swallowed and the key routing (restart on Enter, copy / paste chords,
 //   chords handed back to the global keymap — the decisions themselves are
@@ -15,7 +20,7 @@
 //   `scrollback` option.
 // - `exitLine(code)`, `failLine(error)`, `SKIPPED_LINE`: what the xterm shows
 //   for an exited shell, a failed start, and output Rust's ring dropped.
-//
+
 // Exposes `window.OMP_TERMINAL_XTERM`; an IIFE (AGENTS.md "IIFE rule").
 // `window.Terminal`, `window.FitAddon` (vendored xterm),
 // `window.OMP_TERMINAL` and `window.OMP_KEYMAP` are looked up at call time,
@@ -90,6 +95,37 @@
     return true;
   }
 
+  // The vendored xterm.js builds (478 KB) are needed only once a terminal
+  // actually mounts; index.html still carries eager tags for them (they are
+  // next to go — the integrator's change), so this is a no-op while
+  // `window.Terminal` is already there. Injecting both <script>s on first
+  // use and resolving once they have loaded is the shape that replaces them;
+  // a module-level promise means concurrent mounts share one injection.
+  // xterm.css stays eager in index.html: tiny, and no first-paint flash.
+  let xtermReady = null;
+  function ensureXterm() {
+    if (window.Terminal && window.FitAddon) return Promise.resolve();
+    if (!xtermReady) {
+      const load = (src) => new Promise((resolve, reject) => {
+        // `window.document`, like `window.navigator` below: the module
+        // only touches what it is handed, so the tests can stub it.
+        const el = window.document.createElement("script");
+        el.src = src;
+        el.onload = () => resolve();
+        el.onerror = () => { el.remove(); reject(new Error(`could not load ${src}`)); };
+        window.document.head.appendChild(el);
+      });
+      xtermReady = Promise.all([load("xterm.js"), load("xterm-addon-fit.js")]).then(() => {
+        if (!window.Terminal || !window.FitAddon) {
+          throw new Error("xterm loaded but window.Terminal / window.FitAddon are missing");
+        }
+      });
+      // A failed load must not cache the failure: the next mount retries.
+      xtermReady = xtermReady.catch((err) => { xtermReady = null; throw err; });
+    }
+    return xtermReady;
+  }
+
   /**
    * A new xterm and its fit addon. `tryRestart()` is asked on an Enter
    * keydown: true when it restarted the shell (that Enter then never reaches
@@ -149,6 +185,7 @@
     theme,
     scrollbackLines,
     applyWindowsPty,
+    ensureXterm,
     createXterm,
     copySelection,
   };

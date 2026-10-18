@@ -3861,6 +3861,7 @@ dependencies = [
  "base64 0.22.1",
  "gix",
  "libc",
+ "memchr",
  "notify",
  "open",
  "png 0.18.1",

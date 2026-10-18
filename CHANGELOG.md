@@ -6,8 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Performance pass: streaming no longer re-parses/re-highlights the whole bubble per token (highlight once on settle), `notify()` coalesces to one snapshot per animation frame, memoized chat bubbles/rail cards/StatusBar stay memoized (stable callbacks and props), xterm.js (478 KB) loads on first terminal open instead of at startup, and the reader thread scans with memchr + a 64 KiB buffer with a zero-copy fast path
+
 ### Fixed
 
+- The frosted-glass tweak no longer styles the whole window root as a glass card (`.glass` class collision — the root was also becoming the containing block for every fixed overlay); rail cards blur only while the tweak is on
+- Diff cards no longer flash the full diff then replay it line-by-line (chunked reveal, no playback beyond 60 lines, composited cursor)
+- Terminal refit/repaint no longer fires on unrelated tabs' state changes; drag-reorder no longer layout-thrashes per pointermove; the lightbox wheel handler is non-passive (no console interventions)
+- bash output tails no longer re-split the whole accumulated output per update (O(L²) → tail window)
 - Deep-interaction pass: a prompt refused by a busy omp now becomes a visible note instead of a ghost bubble (and busy sends route through the queue); a dead omp process settles the tab's run state, streaming bubble and tool cards instead of claiming "running" forever; a mid-session death now reports its real exit reason instead of a "clean exit"
 - Focus traps closed: the terminal and composer no longer grab focus while the Settings page, plan kanban or git browser covers them (typed text could invisibly run/send); IME composition (CJK input) is respected by the composer's popup keys, rename fields and Settings search
 - The plan kanban and prompt-history/confirm-close/git-browser overlays joined the shared Escape stack, and the command bridge renders above same-z overlays

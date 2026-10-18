@@ -478,20 +478,33 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
 .has-bg-image .status { background: color-mix(in oklab, var(--bg-window) 30%, transparent); }
 
 /* ── Frosted glass (tweak) ────────────────────────────────────────────── */
-/* Floating surfaces go translucent and the backdrop blurs behind them;
+/* useThemeEffect puts `glass-root` on <html> (NOT `.glass`, which is the
+   rail/widget card surface): a bare `.glass` on the root would apply the
+   card-surface rule to the viewport itself — a permanent backdrop-filter
+   pass and a containing block for every position:fixed overlay.
+   Floating surfaces go translucent and the backdrop blurs behind them;
    the window itself softens a little so there is something behind them to
    blur. Not offered under phosphor: scanlines over blur is visual mud.
    Ordered after the background-image block so glass wins ties on
    .project-sidebar when both tweaks are on. */
-.glass .window { background: color-mix(in oklab, var(--bg-window) 82%, transparent); }
+.glass-root .window { background: color-mix(in oklab, var(--bg-window) 82%, transparent); }
 /* Both tweaks on: the image needs the window's deeper transparency, glass
    alone is the subtler one — three classes outrank the pairs above. */
-.has-bg-image.glass .window { background: color-mix(in oklab, var(--bg-window) 45%, transparent); }
-.glass .project-sidebar,
-.glass .bridge,
-.glass .settings {
+.has-bg-image.glass-root .window { background: color-mix(in oklab, var(--bg-window) 45%, transparent); }
+.glass-root .project-sidebar,
+.glass-root .bridge,
+.glass-root .settings {
   background-color: color-mix(in oklab, var(--bg-surface) var(--glass-alpha, 85%), transparent);
   backdrop-filter: blur(var(--glass-blur, 12px));
+}
+
+/* Rail cards (`.rail-card.glass`, chrome.jsx / widget-card.jsx /
+   subagent-rail-card.jsx) keep their surface gradient, border and radius
+   from the base `.glass` rule; the backdrop blur costs a pass per card, so
+   it only runs when the tweak is on. */
+.glass-root .rail-card {
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
 }
 
 /* ── Phosphor scan-line treatment ─────────────────────────────────────── */
@@ -616,15 +629,16 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
   box-shadow: var(--shadow-card);
 }
 
-/* glass surface for ambient peripherals */
+/* glass surface for ambient peripherals (rail cards). Border, gradient
+   and radius only: the backdrop-filter that used to live here ran a blur
+   pass per card even with the tweak off — it is gated behind
+   `.glass-root .rail-card` above now. */
 .glass {
   background: linear-gradient(
     180deg,
     color-mix(in oklab, var(--bg-elevated) 80%, transparent),
     color-mix(in oklab, var(--bg-surface) 90%, transparent)
   );
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
   border: 1px solid var(--line);
   border-radius: var(--r-2);
 }

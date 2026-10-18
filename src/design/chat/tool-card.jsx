@@ -48,16 +48,24 @@ function _TC_ReadBody({ msg, projectRoot, onPreviewFile }) {
 
 function ScrubbableDiff({ msg, onOpenFile }) {
   const total = msg.diff.length;
-  const [pos, setPos]     = React.useState(total);
+  // Long diffs (>60 lines) skip the playback: the full diff renders from
+  // the first frame (lazy initial state — no total-then-0 flash). Short
+  // ones start at 0 and reveal in chunks.
+  const [pos, setPos]     = React.useState(() => (total > 60 ? total : 0));
   const [hover, setHover] = React.useState(null);
   const trackRef          = React.useRef(null);
 
-  // Auto-play: lines land in sequence on first mount
+  // Auto-play: lines land in chunks on first mount. One line per 70ms tick
+  // re-rendered slice(0, n) per step — O(n²) mounts for a long diff and an
+  // interval that restarts on every chat remount; chunks of 8 with a 60-line
+  // cutoff (beyond that the playback is noise: no interval, straight to the
+  // end) and a hidden-tab pause keep it cheap.
   React.useEffect(() => {
+    if (total > 60) return undefined;
     let i = 0;
-    setPos(0);
     const id = setInterval(() => {
-      i += 1;
+      if (document.hidden) return;  // hold position, don't bank work
+      i = Math.min(total, i + 8);
       setPos(i);
       if (i >= total) clearInterval(id);
     }, 70);
@@ -109,8 +117,12 @@ function ScrubbableDiff({ msg, onOpenFile }) {
               className={`diff-tick k-${l.kind}`}
               style={{ left: `${(i / total) * 100}%`, width: `${100 / total}%` }} />
           ))}
+          {/* Full-width rail moved by transform (chat.css): a `left`
+              transition is a layout property — it re-runs layout every
+              scrub tick; translateX composites on the GPU. The thumb is
+              its ::after, drawn at the rail's head. */}
           <div className="diff-track-cursor"
-            style={{ left: `${(visiblePos / total) * 100}%` }} />
+            style={{ transform: `translateX(${(visiblePos / total) * 100}%)` }} />
         </div>
         <span className="mono" style={{ color: "var(--fg-4)", fontSize: "var(--d-text-xs)" }}>
           {visiblePos}/{total}

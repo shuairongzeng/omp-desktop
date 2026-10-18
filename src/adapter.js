@@ -183,9 +183,30 @@
     return prev.concat(next);
   }
   // Bash output → the card's colored display lines: the last 20, the same
-  // tail while streaming and once finished.
+  // tail while streaming and once finished. Only the last ~20 lines are
+  // ever shown, so the split runs on a bounded tail of the text (a
+  // `tool_execution_update` carries the whole accumulated output —
+  // splitting all of it per frame is O(total²) over a long command's run),
+  // not on the full string. Same output shape either way.
   function _bashLines(text) {
-    return text.split("\n").slice(-20).map(line => ({
+    // Walk back to just past the 20th newline from the end, and never
+    // start earlier than one window before the end (a pathological
+    // no-newline blob — a minified dump, base64 — must not be split from
+    // the string's start). `lastIndexOf` scans backwards natively, so the
+    // walk is O(20 lines + one window) instead of a full split per
+    // streaming update. Fewer than 20 newlines in reach: the windowed
+    // tail already holds every line there is.
+    const WINDOW = 32768;
+    const floor = text.length > WINDOW ? text.length - WINDOW : 0;
+    let nl = 0, i = text.length;
+    while (nl < 20 && i > floor) {
+      const prev = text.lastIndexOf("\n", i - 1);
+      if (prev === -1 || prev < floor) break;
+      nl++;
+      i = prev;
+    }
+    const cut = nl === 20 ? i + 1 : floor;
+    return text.slice(cut).split("\n").slice(-20).map(line => ({
       line,
       color: /^[✓✔]|^PASS|\bpassed\b/.test(line) ? "accent"
            : /^[✗✘]|^FAIL|^Error|\bfailed\b/.test(line) ? "rose"

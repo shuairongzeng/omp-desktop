@@ -206,4 +206,84 @@ check("exit / failure / skipped lines", () => {
   }
 });
 
+// ── ensureXterm: lazy injection of the vendored xterm scripts ────────────
+// The harness's `win` already carries Terminal/FitAddon (the "already
+// loaded" page), so a fresh window with a fake document exercises the
+// injection path: <script> elements are created, appended, and their
+// onload hand the globals over.
+const freshWin = () => ({
+  document: {
+    createElement: () => ({ src: "", onload: null, onerror: null, remove() { this.removed = true; } }),
+    head: { appended: [], appendChild(el) { this.appended.push(el); } },
+  },
+  OMP_TERMINAL: win.OMP_TERMINAL,
+  OMP_KEYMAP: win.OMP_KEYMAP,
+});
+const loadScripts = (w) => {
+  // Give the appended scripts their payload: onload installs the globals,
+  // as the real xterm.js/xterm-addon-fit.js UMD builds do.
+  for (const el of w.document.head.appended) {
+    if (el.src === "xterm.js") w.Terminal = FakeTerminal;
+    else if (el.src === "xterm-addon-fit.js") w.FitAddon = { FitAddon: FakeFit };
+    queueMicrotask(() => el.onload?.());
+  }
+};
+
+check("ensureXterm: a no-op when window.Terminal is already there", async () => {
+  // The main harness window has both globals (index.html still loads the
+  // tags eagerly): resolved immediately, and never a script injected —
+  // the eager tags and the loader must not double-load xterm.
+  const p = X.ensureXterm();
+  assert.ok(p instanceof Promise);
+  await p;
+  await X.ensureXterm();
+});
+
+check("ensureXterm: injects both scripts and resolves once they load", async () => {
+  const w = freshWin();
+  // eslint-disable-next-line no-new-func
+  new Function("window", readFileSync(join(root, "src/app/terminal-xterm.js"), "utf8"))(w);
+  const X2 = w.OMP_TERMINAL_XTERM;
+  loadScripts(w);
+  await X2.ensureXterm();
+  assert.deepEqual(w.document.head.appended.map(el => el.src), ["xterm.js", "xterm-addon-fit.js"],
+    "both vendored scripts, in order");
+  assert.ok(w.Terminal === FakeTerminal && w.FitAddon.FitAddon === FakeFit, "globals installed by the loads");
+});
+
+check("ensureXterm: concurrent mounts share one injection (one promise, one pair)", async () => {
+  const w = freshWin();
+  // eslint-disable-next-line no-new-func
+  new Function("window", readFileSync(join(root, "src/app/terminal-xterm.js"), "utf8"))(w);
+  const X3 = w.OMP_TERMINAL_XTERM;
+  const a = X3.ensureXterm();
+  const b = X3.ensureXterm();
+  assert.equal(a, b, "the module-level promise is handed to every caller");
+  assert.equal(w.document.head.appended.length, 2, "still exactly one pair of scripts");
+  loadScripts(w);
+  await Promise.all([a, b]);
+  // A later call after success re-injects nothing: the now-loaded page
+  // takes the no-op path.
+  assert.equal(w.document.head.appended.length, 2, "no new scripts after success");
+  await X3.ensureXterm();
+  assert.equal(w.document.head.appended.length, 2, "the loaded page is a no-op");
+});
+
+check("ensureXterm: a failed load rejects, clears the cached promise and retries", async () => {
+  const w = freshWin();
+  // eslint-disable-next-line no-new-func
+  new Function("window", readFileSync(join(root, "src/app/terminal-xterm.js"), "utf8"))(w);
+  const X4 = w.OMP_TERMINAL_XTERM;
+  const first = X4.ensureXterm();
+  queueMicrotask(() => { for (const el of w.document.head.appended) el.onerror?.(); });
+  await assert.rejects(first, /could not load xterm\.js/);
+  assert.ok(w.document.head.appended.every(el => el.removed), "the failed <script> is removed");
+  // The failure is not cached: a second call injects a fresh pair.
+  const second = X4.ensureXterm();
+  assert.notEqual(second, first);
+  assert.equal(w.document.head.appended.length, 4, "fresh pair after the failure");
+  loadScripts(w);
+  await second;
+});
+
 console.log(`terminal-xterm: ${passed} checks passed`);

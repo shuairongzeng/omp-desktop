@@ -72,6 +72,24 @@
       let started = false;
       let cancelled = false;
       let slot = null;
+      // Layout cache, filled when the drag starts (and after any scroll
+      // step, the only thing that moves items): the scrollable ancestor
+      // (its overflow walk runs getComputedStyle per ancestor — per
+      // pointermove was layout thrash), its rect, and each item's span.
+      // Before, every move re-walked the ancestors, wrote the scroll, then
+      // read a rect per item — a forced reflow per move; now only a scroll
+      // step pays for a re-read, and a plain move reads none of the DOM.
+      let scroller = null;
+      let scrollerRect = null;
+      let items = null;
+
+      const readRects = () => {
+        scroller = scrollableAncestor(item, axis);
+        scrollerRect = scroller ? scroller.getBoundingClientRect() : null;
+        items = [...container.querySelectorAll("[data-reorder-id]")]
+          .filter(el => el.dataset.reorderList === list)
+          .map(el => span(el, axis));
+      };
 
       const show = next => setDrag(prev => (prev && next && prev.targetId === next.targetId && prev.after === next.after ? prev : next));
       const move = ev => {
@@ -82,31 +100,32 @@
           try { item.setPointerCapture(pointerId); } catch (_) { /* pointer already gone */ }
           document.body.classList.add("reordering");
           window.getSelection()?.removeAllRanges();
+          readRects();
         }
         // #7: dragging near a scrollable ancestor's edge (top/bottom for a
         // "y" list, left/right for an "x" bar) steps the scroll so a long
-        // list reorders without releasing. Resolved per move — scrolling
-        // can reveal a different ancestor's overflow — and stepped by how
-        // deep into the edge the pointer is.
-        const scroller = scrollableAncestor(item, axis);
+        // list reorders without releasing. The scroller was resolved at
+        // drag start (scrolling can reveal a different ancestor's overflow,
+        // but only via this step — re-read then) and the step is by how
+        // deep into the edge the pointer is. A scroll step moves every
+        // item, so the rects are re-read after one, then (and only then).
+        let scrolled = false;
         if (scroller) {
-          const r = scroller.getBoundingClientRect();
+          const r = scrollerRect;
           const EDGE = 30;
           if (axis === "y") {
             const dTop = ev.clientY - r.top;
             const dBottom = r.bottom - ev.clientY;
-            if (dTop < EDGE && dTop <= dBottom) scroller.scrollTop -= Math.max(1, EDGE - dTop);
-            else if (dBottom < EDGE) scroller.scrollTop += Math.max(1, EDGE - dBottom);
+            if (dTop < EDGE && dTop <= dBottom) { scroller.scrollTop -= Math.max(1, EDGE - dTop); scrolled = true; }
+            else if (dBottom < EDGE) { scroller.scrollTop += Math.max(1, EDGE - dBottom); scrolled = true; }
           } else {
             const dLeft = ev.clientX - r.left;
             const dRight = r.right - ev.clientX;
-            if (dLeft < EDGE && dLeft <= dRight) scroller.scrollLeft -= Math.max(1, EDGE - dLeft);
-            else if (dRight < EDGE) scroller.scrollLeft += Math.max(1, EDGE - dRight);
+            if (dLeft < EDGE && dLeft <= dRight) { scroller.scrollLeft -= Math.max(1, EDGE - dLeft); scrolled = true; }
+            else if (dRight < EDGE) { scroller.scrollLeft += Math.max(1, EDGE - dRight); scrolled = true; }
           }
         }
-        const items = [...container.querySelectorAll("[data-reorder-id]")]
-          .filter(el => el.dataset.reorderList === list)
-          .map(el => span(el, axis));
+        if (scrolled) readRects();
         slot = dropSlot(items, id, axis === "y" ? ev.clientY : ev.clientX);
         show({ list, id, targetId: slot ? slot.targetId : null, after: !!slot?.after });
       };

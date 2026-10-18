@@ -382,15 +382,50 @@
   // Snapshot `sessions[]`: the registry entries plus each tab's run state.
   // Active tab reads live state; background tabs read their cached snapshot
   // (never activated yet = "idle" defaults).
+  //
+  // Per-tab view objects are cached (id → { entry, view }): a view is
+  // rebuilt only when its tab's entry was replaced (every writer `set`s a
+  // fresh entry object — branch, title, auto-rename budget; none mutates in
+  // place) or its run state changed, so a streaming delta that touches
+  // neither reuses the previous view object — and a tab that merely shifts
+  // position (a closed neighbour, a drag-reorder) keeps its cached view too.
+  // The array itself is reused when every element is unchanged; otherwise a
+  // new one is built from exactly those cached references. Referential
+  // stability across unchanged notifies is what React.memo'd tab rows
+  // (chrome.jsx, project-sidebar.jsx, tab-group-chip.jsx) need to skip
+  // re-rendering while a tab streams.
+  const _sessionsViewCache = new Map(); // id → { entry, view }
+  let _lastSessionsView = [];
   function _sessionsView() {
-    return [...sessionRegistry.values()].map(s => ({
-      ...s,
-      runState: runStateCached(
+    // The fast path returns the last array only when the cached views are
+    // element-for-element valid *and* in registry order — a drag-reorder
+    // re-inserts the same entry objects, so element hits alone would
+    // otherwise return the stale-order array.
+    let same = _lastSessionsView.length === sessionRegistry.size
+      && [...sessionRegistry.keys()].every((id, i) => _lastSessionsView[i]?.id === id);
+    for (const s of sessionRegistry.values()) {
+      const runState = runStateCached(
         s.id === activeSessionId
           ? state
           : sessionSnapshots.get(s.id) ?? _EMPTY_SESSION_FIELDS
-      ),
-    }));
+      );
+      const hit = _sessionsViewCache.get(s.id);
+      if (hit && hit.entry === s && hit.view.runState === runState) continue;
+      same = false;
+      _sessionsViewCache.set(s.id, { entry: s, view: { ...s, runState } });
+    }
+    // Prune closed tabs (their entries would otherwise hold views alive).
+    if (_sessionsViewCache.size !== sessionRegistry.size) {
+      for (const id of [..._sessionsViewCache.keys()]) {
+        if (!sessionRegistry.has(id)) _sessionsViewCache.delete(id);
+      }
+      same = false;
+    }
+    if (same) return _lastSessionsView;
+    // Rebuild in registry order; unchanged tabs keep their cached view
+    // objects by reference, changed ones use the views just built above.
+    return (_lastSessionsView = [...sessionRegistry.values()]
+      .map(s => _sessionsViewCache.get(s.id).view));
   }
 
   // Invoke a Tauri command, returning `fallback` when there's no Tauri
@@ -697,6 +732,23 @@
   }
 
   function notify() {
+    // Coalesced: one flush per animation frame (see _flushPendingNotify).
+    // A streaming delta dispatches many notify() calls per frame; the
+    // snapshot, the subscribers, the OMP_DATA sync and the layout write
+    // only need the *latest* state, so everything between two frames
+    // collapses into one publication. Events still dispatch synchronously
+    // (a journal replay of 256 events drains in one frame); only the
+    // publication is deferred. The document is interactive by the time
+    // any notify runs (live.js loads before React mounts), so rAF always
+    // fires; the setTimeout fallback covers harnesses without rAF.
+    if (_notifyPending) return;
+    _notifyPending = true;
+    _notifyScheduled = _notifyRAF(_flushPendingNotify);
+  }
+
+  /** Snapshot → subscribers → OMP_DATA sync → close guard → layout write.
+   *  Only the flush runs it, so the ordering inside is never reentrant. */
+  function _runNotify() {
     _trimMessages();
     // Stamp stable IDs on any message that doesn't have one yet (new pushes,
     // restored sessions, or messages from get_messages). O(N) but N ≤ 169 and
@@ -718,6 +770,55 @@
 
     _persistLayout();
   }
+
+  // Coalescing state for notify: the flag a notify call arms, and the
+  // scheduler handle armed with it. Both are cleared by the flush that
+  // owns them — a flush a caller ran itself (notifySync /
+  // flushPendingNotify) cancels its handle so the scheduled callback
+  // becomes a no-op, and a notify() *inside* the flush re-arms cleanly
+  // for the next frame.
+  let _notifyPending = false;
+  let _notifyScheduled = null;
+  const _notifyRAF = typeof window.requestAnimationFrame === "function"
+    ? (fn) => window.requestAnimationFrame(fn)
+    : (fn) => setTimeout(fn, 0);
+  const _notifyCancel = typeof window.cancelAnimationFrame === "function"
+    ? (id) => window.cancelAnimationFrame(id)
+    : (id) => clearTimeout(id);
+
+  function _flushPendingNotify() {
+    if (!_notifyPending) return;
+    _notifyPending = false;
+    if (_notifyScheduled !== null) {
+      _notifyCancel(_notifyScheduled);
+      _notifyScheduled = null;
+    }
+    _runNotify();
+  }
+
+  /** Synchronous notify, for a caller whose next line reads what the
+   *  publication writes (OMP_DATA, the close guard) instead of waiting a
+   *  frame. Ordinary state changes keep using notify(): coalescing the
+   *  streaming deltas is the whole point of the deferral. */
+  function notifySync() {
+    notify();
+    _flushPendingNotify();
+  }
+
+  // The rAF callback only fires while the document is visible; a hidden
+  // Tauri window still streams (the active tab's lines keep arriving), so
+  // a backstop timer keeps publications flowing at a coarse rate. Armed
+  // only where rAF exists (the browser): a harness without rAF gets the
+  // setTimeout scheduler instead, so nothing here would ever hold a
+  // Node process open.
+  const _NOTIFY_BACKSTOP_MS = 250;
+  if (typeof window.requestAnimationFrame === "function") {
+    setInterval(() => { if (_notifyPending) _flushPendingNotify(); }, _NOTIFY_BACKSTOP_MS);
+  }
+
+  // The flush entry points a harness (or a synchronous consumer) needs;
+  // `notify` itself stays module-private.
+  window.OMP_NOTIFY = { flushPendingNotify: _flushPendingNotify, notifySync };
 
   function _layoutNow() {
     return window.OMP_PROJECT_NAV.tabLayout([...sessionRegistry.values()], activeSessionId);
@@ -1120,8 +1221,16 @@
   // rpc_chunk frames. Each carries a base64 segment of the original UTF-8 JSON.
   const MAX_REASSEMBLED_FRAME = 64 * 1024 * 1024; // matches ready.maxReassembledFrameBytes
 
-  /** Decode base64 (rpc_chunk segments, terminal output) to its bytes. */
+  /** Decode base64 (rpc_chunk segments, terminal output) to its bytes.
+   *  One allocation where the engine offers it (Uint8Array.fromBase64,
+   *  Chromium 140+/WebKitGTK 2.48+): no intermediate binary string, no
+   *  per-byte copy loop — terminal output events hit this per frame while
+   *  a command runs. Older webviews fall back to the atob path (one atob,
+   *  one Uint8Array). Both throw on invalid input, which rpc_chunk
+   *  reassembly reports. */
+  const _b64Direct = typeof Uint8Array.fromBase64 === "function";
   function _b64Bytes(b64) {
+    if (_b64Direct) return Uint8Array.fromBase64(b64);
     const bin = atob(b64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
