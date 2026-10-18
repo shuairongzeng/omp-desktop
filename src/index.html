@@ -78,6 +78,12 @@
        window.OMP_DROPPED at top level, so this must load before it. -->
   <script src="app/dropped-paths.js"></script>
 
+  <!-- Quote-into-composer selection rules (which selections earn the
+       floating pill, where it floats). Dependency-free IIFE; app-live.jsx
+       reads window.OMP_QUOTE inside its effect, so any point before
+       app-live.jsx works — kept with the other plain helpers. -->
+  <script src="app/quote-selection.js"></script>
+
   <!-- Slash-command palette: local desktop list + RPC merge/filter helpers.
        Dependency-free IIFE; composer.jsx destructures window.OMP_SLASH at
        top level, so this must load before it. live.js also reads
@@ -332,6 +338,10 @@
   <script type="text/babel" src="design/chat/goal-row.jsx"></script>
   <script type="text/babel" src="design/chat/approval-row.jsx"></script>
   <script type="text/babel" src="design/chat/chat-view.jsx"></script>
+  <!-- The "Add to prompt" pill floating over a finished chat selection;
+       reads window.Icon at render time. app-live.jsx destructures
+       window.QuotePopover at top level. -->
+  <script type="text/babel" src="design/quote-popover.jsx"></script>
   <!-- Subagent manager UI. bits → controls → inspector (destructures the
        controls) → pane (destructures the inspector) → rail card; all before
        chrome.jsx, whose AmbientRail destructures SubagentRailCard at top level. -->

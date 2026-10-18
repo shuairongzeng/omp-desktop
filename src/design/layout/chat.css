@@ -37,6 +37,28 @@
   from { opacity: 0; transform: translateX(-50%) translateY(6px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+
+/* Quote-into-composer pill: fixed (viewport coords from the selection's
+   range rect), above the chat layer, below modals. */
+.quote-pop {
+  position: fixed;
+  z-index: 60;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line-bright);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-size: 12px; font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-pop);
+  animation: quote-pop-in 0.12s var(--ease-out);
+}
+.quote-pop:hover { border-color: var(--accent); color: var(--accent); }
+@keyframes quote-pop-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 .chat-pad {
   max-width: none;
   margin: 0;

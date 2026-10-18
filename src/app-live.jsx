@@ -19,7 +19,7 @@
 
 const {
   Icon, ChatView, Composer, CommandBridge, WindowChrome, TabBar, SubagentPane, ProjectSidebar, EmptyWorkspace,
-  StatusBar, AmbientRail, ConversationTree, PlanKanban, HistoryModal, GitBrowser, FilePreview, ApprovalRulesPanel, UsageStatsPanel, PromptHistoryModal, UpdateModal, useTweaks,
+  StatusBar, AmbientRail, ConversationTree, PlanKanban, HistoryModal, GitBrowser, FilePreview, ApprovalRulesPanel, UsageStatsPanel, PromptHistoryModal, UpdateModal, useTweaks, QuotePopover,
   SettingsPage, ConfirmCloseDialog,
   useWidgets, WidgetCard, WidgetErrorCard, WidgetApprovalCard, WidgetBoundary,
   TWEAK_DEFAULTS, NULL_MODEL, EMPTY_PROJECT, DEFAULT_PROFILE_ID,
@@ -504,6 +504,50 @@ function App() {
   const [promptInsert, setPromptInsert] = React.useState(null);
   const handlePickHistoryPrompt = (text) => setPromptInsert({ text, nonce: Date.now() });
   const handleWidgetInsert = React.useCallback(text => setPromptInsert({ text, append: true, nonce: Date.now() }), []);
+
+  // Quote-into-composer: a finished selection inside the chat transcript
+  // floats an "Add to prompt" pill at its end (rules and placement in
+  // OMP_QUOTE); picking it appends the captured text to the draft.
+  const [quote, setQuote] = React.useState(null); // { x, y, text } | null
+  React.useEffect(() => {
+    const Q = window.OMP_QUOTE;
+    const onMouseUp = () => {
+      const sel = window.getSelection();
+      const text = Q.quotableText(sel);
+      if (!text) return; // a collapsed selection is handled by selectionchange
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      const { x, y } = Q.popoverPos(rect, window.innerWidth, window.innerHeight);
+      setQuote({ x, y, text });
+    };
+    const onSelectionChange = () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) setQuote(null);
+    };
+    const onMouseDown = (e) => { if (!e.target.closest?.(".quote-pop")) setQuote(null); };
+    const onKey = (e) => { if (e.key === "Escape") setQuote(null); };
+    // Capture phase: a scroll inside .chat-scroll doesn't bubble, but any
+    // scroll moves the rect the pill was placed from — retract either way.
+    const onScroll = (e) => { if (e.target?.closest?.(".chat-scroll")) setQuote(null); };
+    document.addEventListener("mouseup", onMouseUp);
+    document.addEventListener("selectionchange", onSelectionChange);
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("selectionchange", onSelectionChange);
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("scroll", onScroll, true);
+    };
+  }, []);
+  const handleQuotePick = () => {
+    setQuote(q => {
+      if (q) setPromptInsert({ text: q.text, append: true, nonce: Date.now() });
+      return null;
+    });
+    window.getSelection()?.removeAllRanges();
+  };
 
   // Goal mode in the composer and the goal strip above it (omp's `goal`).
   const goalUi = useGoalMode({
@@ -1077,6 +1121,8 @@ function App() {
           initialCwd={historyCwd}
         />
       )}
+
+      {quote && <QuotePopover x={quote.x} y={quote.y} onPick={handleQuotePick} />}
 
       {gitOpen && (
         // Remounted per project, so no view state carries across; an

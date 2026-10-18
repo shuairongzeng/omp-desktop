@@ -4,6 +4,7 @@
 // Each icon has a single accent dot. Props: name, size, color, dotColor.
 const _ICON_PATHS = {
   plus:    { p: ['<path d="M8 3v10M3 8h10"/>'],                                                                                                                                                                                                d: [12,4]    },
+  quote:   { p: ['<path d="M6.5 5.5c-1.8.6-3 2-3 3.8V11h3.6V7.8H5.6c.1-.8.7-1.4 1.5-1.7zM12.5 5.5c-1.8.6-3 2-3 3.8V11h3.6V7.8h-1.5c.1-.8.7-1.4 1.5-1.7z"/>'],                                                                                                                                                 d: [13.5,4]  },
   minus:   { p: ['<path d="M3 8h10"/>'],                                                                                                                                                                                                       d: [12,8]    },
   close:   { p: ['<path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/>'],                                                                                                                                                                                   d: [12,4]    },
   check:   { p: ['<path d="M3 8l3 3 7-7"/>'],                                                                                                                                                                                                  d: [13,4]    },
