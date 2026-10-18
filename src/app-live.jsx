@@ -24,7 +24,7 @@ const {
   useWidgets, WidgetCard, WidgetErrorCard, WidgetApprovalCard, WidgetBoundary,
   TWEAK_DEFAULTS, NULL_MODEL, EMPTY_PROJECT, DEFAULT_PROFILE_ID,
   INTENT_FRAMING, APPROVAL_PROMPT,
-  useBridgeSnapshot, useThemeEffect, useSubagentManager, useUpdater, useConversationTree, useGoalMode, useTerminal, TerminalPanels, TerminalTweaks, timeNow,
+  useBridgeSnapshot, useThemeEffect, useBackgroundImage, useSubagentManager, useUpdater, useConversationTree, useGoalMode, useTerminal, TerminalPanels, TerminalTweaks, timeNow,
   useKeymap, useKeymapDispatch, ShortcutsModal, useBrowser, BrowserDock, BrowserTweaks, MarkdownLinkContext: _AL_MdLinkCtx,
 } = window;
 const { routeSubmit: _routeSubmit } = window.OMP_SLASH;
@@ -147,6 +147,12 @@ function App() {
     setPromptHistory, setSubagents, setSubagentTranscripts, setQueue, setQueueSending, setGoal, setExtWidgets,
   });
   useThemeEffect(t);
+  useBackgroundImage(t);
+  const pickBackgroundImage = async () => {
+    // Bridge swallows errors to null — a cancelled dialog reads the same.
+    const path = await bridge?.pickBackgroundImage();
+    if (path) setTweak("bgImage", path);
+  };
   React.useEffect(() => {
     bridge?.setPromptHistoryLimit(t.promptHistoryLimit ?? window.OMP_PROMPT_HISTORY.DEFAULT_LIMIT);
   }, [bridge, t.promptHistoryLimit]);
@@ -1021,15 +1027,8 @@ function App() {
       <TweaksPanel title="Tweaks" noDeckControls>
         <TweakSection label="Look">
           <TweakRadio label="theme" value={t.theme}
-            options={[
-              { label: "aurora",   value: "aurora"   },
-              { label: "phosphor", value: "phosphor" },
-              { label: "daylight", value: "daylight" },
-            ]}
-            onChange={v => setTweak({ theme: v, accent:
-              v === "aurora"   ? "#8AF0C8" :
-              v === "phosphor" ? "#C4FF3F" : "#1F8A5B"
-            })}
+            options={window.OMP_THEME.THEMES.map(n => ({ label: n, value: n }))}
+            onChange={v => setTweak({ theme: v, accent: window.OMP_THEME.THEME_ACCENTS[v] })}
           />
           <TweakRadio label="density" value={t.density}
             options={[
@@ -1048,6 +1047,34 @@ function App() {
           <TweakSlider label="font size" value={t.fontSize ?? 100}
             min={75} max={150} step={5} unit="%"
             onChange={v => setTweak("fontSize", v)} />
+          <TweakSlider label="text brightness" value={t.textBrightness ?? 0}
+            min={-20} max={20} step={1}
+            onChange={v => setTweak("textBrightness", v)} />
+          <TweakButton label="background image…" onClick={pickBackgroundImage} />
+          {t.bgImage && (<>
+            <TweakButton label="clear background" secondary onClick={() => setTweak("bgImage", null)} />
+            <TweakSlider label="background dim" value={t.bgImageDim ?? 40}
+              min={0} max={80} step={5} unit="%"
+              onChange={v => setTweak("bgImageDim", v)} />
+            <TweakSlider label="background blur" value={t.bgImageBlur ?? 0}
+              min={0} max={20} step={1} unit="px"
+              onChange={v => setTweak("bgImageBlur", v)} />
+          </>)}
+          <TweakToggle label="frosted glass" value={!!t.glassEffect}
+            onChange={v => setTweak("glassEffect", v)} />
+          {t.glassEffect && (<>
+            <TweakSlider label="glass opacity" value={t.glassOpacity ?? 85}
+              min={50} max={95} step={5} unit="%"
+              onChange={v => setTweak("glassOpacity", v)} />
+            <TweakSlider label="glass blur" value={t.glassBlur ?? 12}
+              min={0} max={40} step={2} unit="px"
+              onChange={v => setTweak("glassBlur", v)} />
+            {t.theme === "phosphor" && (
+              <div style={{ color: "var(--fg-3)", fontSize: "var(--d-text-xs)", padding: "2px 4px" }}>
+                frosted glass stays off under the phosphor theme
+              </div>
+            )}
+          </>)}
         </TweakSection>
         <TweakSection label="Layout">
           <TweakRadio label="layout" value={t.layout}

@@ -3982,6 +3982,13 @@
       return sessions || [];
     },
 
+    /** Pick a background image via the native dialog; Rust copies it under
+     *  the app's config dir and returns the copy's path. `null` when the
+     *  dialog was cancelled (or on error — the tweak simply stays unset). */
+    async pickBackgroundImage() {
+      return _invokeSafe("pick_background_image", {}, null);
+    },
+
     /** Return the full keybinding payload for the active tab's profile.
      *  Resolves to the `Payload` struct or `null` on error (network or
      *  corrupt overlay — the frontend falls back to omp + registry defaults). */

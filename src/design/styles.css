@@ -178,6 +178,198 @@
   color-scheme: light;
 }
 
+/* ── Nordic (Nord palette, polar night) ───────────────────────────────── */
+.theme-nordic {
+  --bg-app: #242933;
+  --bg-window: #2E3440;
+  --bg-surface: #3B4252;
+  --bg-elevated: #434C5E;
+  --bg-input: #2B333F;
+  --bg-hover: #404A5C;
+  --bg-active: #4C566A;
+
+  --line: #39415A;
+  --line-soft: #333B4E;
+  --line-bright: #4C566A;
+
+  --fg: #ECEFF4;
+  --fg-2: #D8DEE9;
+  --fg-3: #AEB9CC;
+  --fg-4: #7B88A1;
+  --fg-5: #55617A;
+
+  --accent: #88C0D0;
+  --accent-deep: #5E81AC;
+  --accent-soft: rgba(136, 192, 208, 0.12);
+  --accent-glow: rgba(136, 192, 208, 0.4);
+
+  --magenta: #B48EAD;
+  --cyan: #8FBCBB;
+  --amber: #EBCB8B;
+  --lilac: #81A1C1;
+  --rose: #BF616A;
+  --lime: #A3BE8C;
+
+  --syntax-comment: #616E88;
+  --syntax-key: #81A1C1;
+  --syntax-str: #A3BE8C;
+  --syntax-num: #B48EAD;
+  --syntax-fn: #88C0D0;
+  --syntax-tag: #BF616A;
+
+  --diff-add-bg: rgba(163, 190, 140, 0.10);
+  --diff-add-fg: #A3BE8C;
+  --diff-rm-bg: rgba(191, 97, 106, 0.08);
+  --diff-rm-fg: #BF616A;
+
+  --grain-opacity: 0.03;
+  color-scheme: dark;
+}
+
+/* ── Solarized (dark, the classic) ────────────────────────────────────── */
+.theme-solarized {
+  --bg-app: #001F27;
+  --bg-window: #002B36;
+  --bg-surface: #073642;
+  --bg-elevated: #0C4050;
+  --bg-input: #002731;
+  --bg-hover: #0D4353;
+  --bg-active: #115163;
+
+  --line: #0C3A46;
+  --line-soft: #083038;
+  --line-bright: #1A4B58;
+
+  --fg: #93A1A1;
+  --fg-2: #839496;
+  --fg-3: #657B83;
+  --fg-4: #586E75;
+  --fg-5: #3E545B;
+
+  --accent: #B58900;
+  --accent-deep: #8A6D00;
+  --accent-soft: rgba(181, 137, 0, 0.14);
+  --accent-glow: rgba(181, 137, 0, 0.4);
+
+  --magenta: #D33682;
+  --cyan: #2AA198;
+  --amber: #CB4B16;
+  --lilac: #6C71C4;
+  --rose: #DC322F;
+  --lime: #859900;
+
+  --syntax-comment: #586E75;
+  --syntax-key: #268BD2;
+  --syntax-str: #2AA198;
+  --syntax-num: #D33682;
+  --syntax-fn: #B58900;
+  --syntax-tag: #DC322F;
+
+  --diff-add-bg: rgba(133, 153, 0, 0.10);
+  --diff-add-fg: #859900;
+  --diff-rm-bg: rgba(220, 50, 47, 0.10);
+  --diff-rm-fg: #DC322F;
+
+  --grain-opacity: 0.03;
+  color-scheme: dark;
+}
+
+/* ── Sakura (light, pink wash) ────────────────────────────────────────── */
+.theme-sakura {
+  --bg-app: #F7E6EC;
+  --bg-window: #FFF5F7;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #FFF0F4;
+  --bg-input: #FFFFFF;
+  --bg-hover: #FBE4EB;
+  --bg-active: #F5D5E0;
+
+  --line: #F0D4DE;
+  --line-soft: #F7E4EB;
+  --line-bright: #E2B8C8;
+
+  --fg: #3B2A32;
+  --fg-2: #5A4350;
+  --fg-3: #8A6478;
+  --fg-4: #B597A6;
+  --fg-5: #D8C4CD;
+
+  --accent: #D6336C;
+  --accent-deep: #A82553;
+  --accent-soft: rgba(214, 51, 108, 0.10);
+  --accent-glow: rgba(214, 51, 108, 0.35);
+
+  --magenta: #B04FB0;
+  --cyan: #2F8F9D;
+  --amber: #C77D1F;
+  --lilac: #7A5AF8;
+  --rose: #D6455B;
+  --lime: #6C9A2E;
+
+  --syntax-comment: #B597A6;
+  --syntax-key: #7A5AF8;
+  --syntax-str: #2F8F9D;
+  --syntax-num: #C77D1F;
+  --syntax-fn: #D6336C;
+  --syntax-tag: #B04FB0;
+
+  --diff-add-bg: rgba(108, 154, 46, 0.12);
+  --diff-add-fg: #4F7A1F;
+  --diff-rm-bg: rgba(214, 69, 91, 0.10);
+  --diff-rm-fg: #B02A40;
+
+  --grain-opacity: 0;
+  color-scheme: light;
+}
+
+/* ── Midnight (OLED black) ────────────────────────────────────────────── */
+.theme-midnight {
+  --bg-app: #000000;
+  --bg-window: #050507;
+  --bg-surface: #0A0A0E;
+  --bg-elevated: #101016;
+  --bg-input: #08080C;
+  --bg-hover: #14141C;
+  --bg-active: #1A1A26;
+
+  --line: #1A1A24;
+  --line-soft: #12121A;
+  --line-bright: #26263A;
+
+  --fg: #E8E8F2;
+  --fg-2: #B8B8CC;
+  --fg-3: #7A7A92;
+  --fg-4: #50506A;
+  --fg-5: #34344A;
+
+  --accent: #7C6CFA;
+  --accent-deep: #5A48D6;
+  --accent-soft: rgba(124, 108, 250, 0.14);
+  --accent-glow: rgba(124, 108, 250, 0.45);
+
+  --magenta: #E86CE8;
+  --cyan: #5CD6F0;
+  --amber: #F0B45C;
+  --lilac: #9D8CFF;
+  --rose: #F06E8A;
+  --lime: #A8E05C;
+
+  --syntax-comment: #50506A;
+  --syntax-key: #9D8CFF;
+  --syntax-str: #A8E05C;
+  --syntax-num: #F0B45C;
+  --syntax-fn: #5CD6F0;
+  --syntax-tag: #E86CE8;
+
+  --diff-add-bg: rgba(168, 224, 92, 0.10);
+  --diff-add-fg: #A8E05C;
+  --diff-rm-bg: rgba(240, 110, 138, 0.10);
+  --diff-rm-fg: #F06E8A;
+
+  --grain-opacity: 0.02;
+  color-scheme: dark;
+}
+
 /* ── Density ──────────────────────────────────────────────────────────── */
 .density-cozy {
   --d-row: 32px;
@@ -247,6 +439,59 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
   opacity: var(--grain-opacity);
   mix-blend-mode: overlay;
   pointer-events: none;
+}
+
+/* ── Custom background image (tweak) ──────────────────────────────────── */
+/* With an image set (.has-bg-image on <html>), the aurora wash falls back
+   to the plain app colour and the image paints on ::before, dimmed toward
+   --bg-app so text keeps its contrast whatever the photo holds. Blur hits
+   the image layer only (the grain ::after stays sharp); the inset bleed
+   hides the blur's transparent edge fade. */
+/* body's solid --bg-app paints OVER the z-index:-1 backdrop in WebView2
+   (canvas propagation differs from Chromium — the harness lied, the app
+   buried the image). Hand the canvas to the backdrop layer instead. */
+.has-bg-image body { background: transparent; }
+.has-bg-image .app-backdrop { background: var(--bg-app); }
+.has-bg-image .app-backdrop::before {
+  content: ""; position: absolute; inset: -24px;
+  /* Longhands, never the shorthand: WebView2 parses but never paints a
+     var() inside the background shorthand (verified live on Edge 131). */
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--bg-app) var(--bg-dim, 40%), transparent),
+                    color-mix(in oklab, var(--bg-app) var(--bg-dim, 40%), transparent)),
+    var(--bg-image);
+  background-size: cover, cover;
+  background-position: center, center;
+  background-repeat: no-repeat, no-repeat;
+  filter: blur(var(--bg-blur, 0px));
+  pointer-events: none;
+}
+/* The big surfaces are opaque --bg-window boxes that would hide the image
+   entirely; these two-class selectors outrank their base rules wherever
+   the layout files load. One veil, not a stack: only .window dims the
+   image, inner panes go transparent — stacking 68% + 52% layers buried
+   the picture to ~7% visibility. Readability comes from the dim slider. */
+.has-bg-image .window { background: color-mix(in oklab, var(--bg-window) 45%, transparent); }
+.has-bg-image .session,
+.has-bg-image .chat-scroll,
+.has-bg-image .project-sidebar { background: transparent; }
+.has-bg-image .status { background: color-mix(in oklab, var(--bg-window) 30%, transparent); }
+
+/* ── Frosted glass (tweak) ────────────────────────────────────────────── */
+/* Floating surfaces go translucent and the backdrop blurs behind them;
+   the window itself softens a little so there is something behind them to
+   blur. Not offered under phosphor: scanlines over blur is visual mud.
+   Ordered after the background-image block so glass wins ties on
+   .project-sidebar when both tweaks are on. */
+.glass .window { background: color-mix(in oklab, var(--bg-window) 82%, transparent); }
+/* Both tweaks on: the image needs the window's deeper transparency, glass
+   alone is the subtler one — three classes outrank the pairs above. */
+.has-bg-image.glass .window { background: color-mix(in oklab, var(--bg-window) 45%, transparent); }
+.glass .project-sidebar,
+.glass .bridge,
+.glass .twk-panel {
+  background-color: color-mix(in oklab, var(--bg-surface) var(--glass-alpha, 85%), transparent);
+  backdrop-filter: blur(var(--glass-blur, 12px));
 }
 
 /* ── Phosphor scan-line treatment ─────────────────────────────────────── */
@@ -411,6 +656,8 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
 }
 .theme-phosphor .btn.primary { color: #001000; }
 .theme-daylight .btn.primary { color: #FAF7EF; }
+.theme-sakura .btn.primary { color: #FFF5F7; }
+.theme-midnight .btn.primary { color: #F2F0FF; }
 .btn.primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); color: #06241B; }
 .btn.outlined { border-color: var(--line); }
 .btn.outlined:hover { border-color: var(--line-bright); }

@@ -16,6 +16,8 @@
     apng: "image/apng",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
+    jfif: "image/jpeg",
+    svg: "image/svg+xml",
     gif: "image/gif",
     webp: "image/webp",
     bmp: "image/bmp",

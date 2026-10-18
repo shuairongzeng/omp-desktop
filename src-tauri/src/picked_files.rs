@@ -1,5 +1,5 @@
-//! Files arriving from the OS: dropped onto the composer, or sitting on the
-//! clipboard after a file-manager copy.
+//! Files arriving from the OS: dropped onto the composer, sitting on the
+//! clipboard after a file-manager copy, or picked as a background image.
 //!
 //! With `dragDropEnabled: true` (`tauri.conf.json`) the webview never sees
 //! HTML5 file drops — Tauri delivers `tauri://drag-drop` events carrying
@@ -13,8 +13,13 @@
 //! the OS clipboard (`CF_HDROP` on Windows), which a screenshot does not —
 //! that difference is what tells "paste these paths" apart from "attach
 //! this image".
+//!
+//! The background-image tweak stores a path under the app's config dir;
+//! [`copy_background`] makes that copy so a moved or deleted original never
+//! breaks the setting.
 
 use std::fs;
+use std::path::Path;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -60,6 +65,28 @@ pub fn read(path: String) -> Result<DroppedFile, String> {
 /// their image/text handling.
 pub fn copied_file_paths() -> Vec<String> {
     imp::copied_file_paths()
+}
+
+/// Copy a picked background image to `<config_dir>/backgrounds/background.<ext>`
+/// and return the copy's path. Single slot: any previous `background.*` is
+/// removed first, so the dir never accumulates stale picks.
+pub fn copy_background(config_dir: &Path, src: &Path) -> Result<String, String> {
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let dir = config_dir.join("backgrounds");
+    fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    for entry in fs::read_dir(&dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))? {
+        let entry = entry.map_err(|e| format!("cannot read entry: {e}"))?;
+        if entry.file_name().to_string_lossy().starts_with("background.") {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    let dest = dir.join(format!("background.{ext}"));
+    fs::copy(src, &dest).map_err(|e| format!("cannot copy {}: {e}", src.display()))?;
+    Ok(dest.to_string_lossy().into_owned())
 }
 
 #[cfg(windows)]
@@ -122,7 +149,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn read_dropped_file_reads_bytes_and_name() {
+    fn read_file_bytes_reads_bytes_and_name() {
         let dir = std::env::temp_dir().join("omp-desktop-dropped-test");
         fs::create_dir_all(&dir).unwrap();
         let file = dir.join("pic.png");
@@ -134,14 +161,14 @@ mod tests {
     }
 
     #[test]
-    fn read_dropped_file_refuses_a_directory() {
+    fn read_file_bytes_refuses_a_directory() {
         let err = read(std::env::temp_dir().to_string_lossy().into_owned())
             .unwrap_err();
         assert!(err.contains("not a file"), "unexpected error: {err}");
     }
 
     #[test]
-    fn read_dropped_file_refuses_a_missing_path() {
+    fn read_file_bytes_refuses_a_missing_path() {
         let err = read("definitely/not/there.png".to_string()).unwrap_err();
         assert!(err.contains("could not read"), "unexpected error: {err}");
     }

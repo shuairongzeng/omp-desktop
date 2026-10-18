@@ -45,7 +45,8 @@ function useBridgeSnapshot(bridge, setters) {
 function useThemeEffect(t) {
   React.useEffect(() => {
     const root = document.documentElement;
-    root.classList.remove("theme-aurora", "theme-phosphor", "theme-daylight");
+    const T = window.OMP_THEME;
+    root.classList.remove(...T.THEMES.map((n) => `theme-${n}`));
     root.classList.add(`theme-${t.theme}`);
     root.classList.remove("density-cozy", "density-compact", "density-dense");
     root.classList.add(`density-${t.density}`);
@@ -53,8 +54,74 @@ function useThemeEffect(t) {
     else            root.classList.remove("mono-chat");
     if (t.accent)   root.style.setProperty("--accent", t.accent);
     if (t.fontSize) root.style.fontSize = `${t.fontSize}%`;
-  }, [t.theme, t.density, t.accent, t.monoChat, t.fontSize]);
+
+    // Text brightness: shift the fg ladder toward the contrast pole (or
+    // wash it toward the window background). Overrides come off first so
+    // the computed base is the theme's own value, not a previous mix.
+    for (const v of T.FG_VARS) root.style.removeProperty(v);
+    const n = t.textBrightness ?? 0;
+    if (n) {
+      const cs = getComputedStyle(root);
+      const light = (cs.colorScheme || "").includes("light");
+      for (const v of T.FG_VARS) {
+        const css = T.fgOverrideCss(cs.getPropertyValue(v).trim(), n, light);
+        if (css) root.style.setProperty(v, css);
+      }
+    }
+
+    // Frosted glass: floating surfaces go translucent (styles.css .glass).
+    // Phosphor keeps its crisp CRT look — blur under scanlines is mud.
+    const glass = !!t.glassEffect && t.theme !== "phosphor";
+    root.classList.toggle("glass", glass);
+    root.style.setProperty("--glass-alpha", `${t.glassOpacity ?? 85}%`);
+    root.style.setProperty("--glass-blur", `${t.glassBlur ?? 12}px`);
+  }, [t.theme, t.density, t.accent, t.monoChat, t.fontSize,
+      t.textBrightness, t.glassEffect, t.glassOpacity, t.glassBlur]);
+}
+
+// Background image tweak. The tweak stores a path inside the app's data
+// dir (pick_background_image copies the choice there); the bytes come back
+// over IPC and become a blob: URL, which the img-src CSP already allows —
+// file:/asset: would need CSP and asset-protocol changes for no benefit.
+function useBackgroundImage(t) {
+  const { bgImage, bgImageDim = 40, bgImageBlur = 0 } = t;
+
+  // Path → blob URL (one file read per change, revoked on cleanup).
+  React.useEffect(() => {
+    const root = document.documentElement;
+    if (!bgImage) {
+      root.classList.remove("has-bg-image");
+      root.style.removeProperty("--bg-image");
+      return;
+    }
+    let alive = true, url = null;
+    (async () => {
+      const ext = String(bgImage).split(".").pop();
+      const { data } = await window.__TAURI__.core.invoke("read_file_bytes", { path: bgImage });
+      if (!alive) return;
+      const blob = window.OMP_THEME.base64ToBlob(data, window.OMP_DROPPED?.IMAGE_MIME?.[String(ext).toLowerCase()]);
+      url = URL.createObjectURL(blob);
+      root.style.setProperty("--bg-image", `url("${url}")`);
+      root.classList.add("has-bg-image");
+    })().catch((e) => {
+      // File unreadable (deleted, permissions): fall back to the theme's
+      // plain backdrop rather than wedging the class on with no image.
+      console.error("background image load failed", e);
+      if (alive) root.classList.remove("has-bg-image");
+    });
+    return () => {
+      alive = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [bgImage]);
+
+  // Dim/blur are plain variable writes — no need to reload the image.
+  React.useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--bg-dim", `${bgImageDim}%`);
+    root.style.setProperty("--bg-blur", `${bgImageBlur}px`);
+  }, [bgImageDim, bgImageBlur]);
 }
 
 
-Object.assign(window, { useBridgeSnapshot, useThemeEffect });
+Object.assign(window, { useBridgeSnapshot, useThemeEffect, useBackgroundImage });

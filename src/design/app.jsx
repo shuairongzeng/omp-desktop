@@ -37,7 +37,8 @@ function App() {
   // Apply theme + density to root
   React.useEffect(() => {
     const root = document.documentElement;
-    root.classList.remove("theme-aurora", "theme-phosphor", "theme-daylight");
+    root.classList.remove("theme-aurora", "theme-phosphor", "theme-daylight",
+      "theme-nordic", "theme-solarized", "theme-sakura", "theme-midnight");
     root.classList.add(`theme-${t.theme}`);
     root.classList.remove("density-cozy", "density-compact", "density-dense");
     root.classList.add(`density-${t.density}`);

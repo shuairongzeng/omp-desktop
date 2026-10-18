@@ -459,7 +459,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     const failed = [];
     for (const img of images) {
       try {
-        const r = await window.__TAURI__.core.invoke("read_dropped_file", { path: img.path });
+        const r = await window.__TAURI__.core.invoke("read_file_bytes", { path: img.path });
         const bytes = Uint8Array.from(atob(r.data), c => c.charCodeAt(0));
         files.push(new File([bytes], r.name || img.name, { type: img.mime }));
       } catch (err) {

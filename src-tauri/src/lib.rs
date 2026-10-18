@@ -10,7 +10,6 @@ mod approval_mode;
 mod browser;
 mod child_path;
 mod conversation_tree;
-mod dropped_files;
 mod external_open;
 mod files;
 mod git;
@@ -23,6 +22,7 @@ mod model_usage;
 mod navigation_guard;
 mod omp_cli;
 mod open_tabs;
+mod picked_files;
 mod private_fs;
 mod profiles;
 mod program_setting;
@@ -299,21 +299,59 @@ async fn list_saved_sessions(
         .await?
 }
 
-/// A dropped file's bytes for the composer's image pipeline
-/// (`dropped_files`): name + base64 contents, size-capped, files only.
+/// A user-picked file's bytes (`picked_files`): name + base64 contents,
+/// size-capped, files only. Serves the composer's dropped-image pipeline
+/// and the background-image tweak alike.
 ///
 /// `spawn_blocking`: up to 64 MiB of file read plus base64.
 #[tauri::command]
-async fn read_dropped_file(path: String) -> Result<dropped_files::DroppedFile, String> {
-    off_ipc(move || dropped_files::read(path)).await?
+async fn read_file_bytes(path: String) -> Result<picked_files::DroppedFile, String> {
+    off_ipc(move || picked_files::read(path)).await?
 }
 
 /// Paths of the files/folders a file manager has on the clipboard
-/// (`dropped_files`), or an empty list for any other clipboard content —
+/// (`picked_files`), or an empty list for any other clipboard content —
 /// the composer's "paste paths" vs "attach image" discriminator.
 #[tauri::command]
 fn copied_file_paths() -> Vec<String> {
-    dropped_files::copied_file_paths()
+    picked_files::copied_file_paths()
+}
+
+/// Pick a background image and copy it under the app's config dir
+/// (`picked_files::copy_background`), returning the copy's path; `None`
+/// when cancelled. The tweak only ever points at our own copy, so a moved
+/// or deleted original never breaks the setting.
+#[tauri::command]
+async fn pick_background_image(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    window
+        .dialog()
+        .file()
+        .set_title("Choose a Background Image")
+        .set_parent(&window)
+        .add_filter("Images", &["png", "jpg", "jpeg", "jfif", "webp", "gif", "bmp", "avif", "svg"])
+        .pick_file(move |result| {
+            let _ = tx.send(result);
+        });
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(picked) = rx.recv().map_err(|e| format!("channel error: {e}"))? else {
+            return Ok(None);
+        };
+        let src = picked
+            .into_path()
+            .map_err(|e| format!("invalid picked path: {e}"))?;
+        let config_dir = app
+            .path()
+            .app_config_dir()
+            .map_err(|e| format!("no app config dir: {e}"))?;
+        picked_files::copy_background(&config_dir, &src).map(Some)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
 }
 
 /// The conversation family of one saved session file (`session_file`, under
@@ -1448,8 +1486,9 @@ pub fn run() {
             stop_git_watch,
             open_url_external,
             list_saved_sessions,
-            read_dropped_file,
+            read_file_bytes,
             copied_file_paths,
+            pick_background_image,
             conversation_tree,
             approval_rules_list,
             approval_rules_grant,

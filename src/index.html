@@ -408,6 +408,10 @@
   <script src="live.js"></script>
 
   <!-- App root — wired to OMP_BRIDGE, no demo effects -->
+  <!-- Theme registry + appearance-tweak helpers (THEMES, THEME_ACCENTS,
+       fgOverrideCss, base64ToBlob): plain IIFE; use-bridge-snapshot.jsx
+       reads window.OMP_THEME at effect time, app-live.jsx at render time. -->
+  <script src="app/theme-effects.js"></script>
   <!-- Cross-cutting hooks (must load before app-live.jsx) -->
   <script type="text/babel" src="app/use-bridge-snapshot.jsx"></script>
   <script type="text/babel" src="app/use-keymap.jsx"></script>
