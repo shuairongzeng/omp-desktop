@@ -62,6 +62,7 @@
   font-size: var(--d-text-sm);
   text-align: left;
 }
+.bridge-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bridge-row:hover { background: var(--bg-hover); }
 .bridge-glyph { width: 18px; text-align: center; color: var(--fg-3); }
 /* RPC-sourced entries (builtin commands, skills) carry real, sometimes
@@ -74,7 +75,7 @@
   flex: 1; min-width: 0;
   white-space: pre; overflow: hidden; text-overflow: ellipsis;
 }
-.bridge-empty { padding: 32px; text-align: center; color: var(--fg-4); font-size: var(--d-text-sm); }
+.bridge-empty { padding: 32px; text-align: center; color: var(--fg-3); font-size: var(--d-text-sm); }
 .bridge-foot {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px;
@@ -332,3 +333,31 @@
   padding: 6px 8px;
   border-top: 1px solid color-mix(in oklab, var(--amber) 15%, var(--line));
 }
+
+/* ── Empty-workspace onboarding line (design/empty-workspace.jsx) ────── */
+/* One quiet row under the logo: chords into a first tab plus the two most
+   recent folders. Centred at 72% height — clear of the logo (capped at the
+   middle 40%) and of .empty-ws-notes pinned to the bottom (stage.css). */
+.empty-ws-hint {
+  position: absolute; left: 50%; top: 72%;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  max-width: min(560px, calc(100% - 48px));
+  font-size: var(--d-text-sm);
+  color: var(--fg-3);
+  white-space: nowrap;
+}
+.empty-ws-hint-sep { color: var(--fg-5); }
+.empty-ws-recent {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--r-1);
+  background: transparent; border: 0;
+  color: var(--fg-3);
+  font-size: var(--d-text-xs);
+  max-width: 180px;
+  overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+.empty-ws-recent:hover { background: var(--bg-hover); color: var(--fg-2); }
+.empty-ws-recent:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

@@ -19,6 +19,17 @@
   overflow: hidden;
   display: flex; flex-direction: column;
 }
+
+/* Entrance: the three panels share the same slide the bridge/kanban cards
+   use (styles.css .slide-in, its keyframes live there); the busy-close
+   confirmation is smaller and interrupts urgent work, so it gets the more
+   restrained fade instead of motion toward the eye. */
+.rules-panel,
+.stats-panel,
+.update-panel { animation: slideIn 360ms var(--ease-out) both; }
+.close-confirm-panel { animation: panelFade 200ms var(--ease-out) both; }
+@keyframes panelFade { from { opacity: 0; } to { opacity: 1; } }
+
 .rules-head,
 .stats-head,
 .update-head,
@@ -28,9 +39,16 @@
   border-bottom: 1px solid var(--line);
   background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 8%, transparent), transparent);
 }
-/* Used by every panel for its loading/empty states. */
+
+/* Busy refresh buttons (rules/stats heads): the icon spins while the fetch
+   is in flight; the shared `spin` keyframes are in styles.css. */
+.spin-icon { display: inline-flex; animation: spin 1s linear infinite; }
+
+/* Used by every panel for its loading/empty states. fg-3, not fg-4: this
+   is the panel's only information while loading/empty, so it must clear
+   the 3:1 bar on --bg-elevated in every theme. */
 .panel-empty {
-  color: var(--fg-4);
+  color: var(--fg-3);
   padding: 16px;
   font-size: var(--d-text-sm);
 }
@@ -101,6 +119,7 @@
   min-height: 22px; line-height: 1.2;
   cursor: default;
 }
+.mode-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mode-seg button:hover { color: var(--fg); }
 .mode-seg button:disabled { opacity: .6; }
 .mode-seg button[aria-checked="true"] {

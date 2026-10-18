@@ -22,7 +22,7 @@ const _CV_ToolCard_M        = React.memo(_CV_ToolCard);
 const _CV_AssistantBubble_M = React.memo(_CV_AssistantBubble);
 const _CV_AskBubble_M       = React.memo(_CV_AskBubble);
 
-const CompactRow = React.memo(function CompactRow({ msg }) {
+const CompactRow = React.memo(function CompactRow({ msg, idx, highlighted }) {
   const [open, setOpen] = React.useState(false);
   const pending  = msg.status === "pending";
   const error    = msg.status === "error";
@@ -33,9 +33,10 @@ const CompactRow = React.memo(function CompactRow({ msg }) {
   // render an empty "— before" chip instead of hiding it.
   const tok      = window.formatTokens(msg.tokensBefore);
   const hasBody  = !!msg.summary && !pending && !error;
+  const toggle   = () => { if (hasBody) setOpen(o => !o); };
 
   return (
-    <div className="row tool fade-up">
+    <div className={`row tool fade-up${highlighted ? " mm-hot" : ""}`} data-msg-idx={idx}>
       <div className="ass-rail">
         <div className="tool-glyph" style={{ borderColor: COLOR, color: COLOR }}>
           <_CV_Icon name={error ? "warn" : "context"} size={11} color={COLOR} />
@@ -45,8 +46,12 @@ const CompactRow = React.memo(function CompactRow({ msg }) {
       <div className={`tool-card ${pending ? "running" : "ok"}`}
         style={error ? { borderColor: "color-mix(in oklab, var(--rose) 35%, var(--line-bright))" } : {}}>
         <div className="tool-card-head"
+          role={hasBody ? "button" : undefined}
+          tabIndex={hasBody ? 0 : undefined}
+          aria-expanded={hasBody ? open : undefined}
           style={{ cursor: hasBody ? "pointer" : "default" }}
-          onClick={() => hasBody && setOpen(o => !o)}>
+          onClick={toggle}
+          onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}>
           <span className="tool-tag" style={{
             color: COLOR,
             background: `color-mix(in oklab, ${COLOR} 14%, transparent)`,
@@ -119,7 +124,7 @@ const JobRow = React.memo(function JobRow({ msg, idx, highlighted }) {
 // (app/chat-collapse.js). `followOutput` and `submitKey` are tweaks too: the
 // first lets new output move a view at the bottom, the second is the ask
 // editor's send chord.
-function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, onAskAnswer, onAskDialogAnswer, onConfirmAsk, onCancelAsk, onGrantApproval, onStopRetry, hasProjectPath, onInspectSubagent, onOpenFile, onPreviewFile, projectRoot, foldModes, collapseAfter, collapseOverrides, onToggleCollapse, followOutput = true, submitKey = "enter" }) {
+function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, onAskAnswer, onAskDialogAnswer, onConfirmAsk, onCancelAsk, onGrantApproval, onStopRetry, hasProjectPath, onInspectSubagent, onOpenFile, onPreviewFile, projectRoot, foldModes, collapseAfter, collapseOverrides, onToggleCollapse, onOpenKanban, followOutput = true, submitKey = "enter" }) {
   const scrollRef   = React.useRef(null);
   const pinnedRef   = React.useRef(true);   // assume start pinned to bottom
   const prevTopRef  = React.useRef(0);
@@ -134,6 +139,15 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
   // bottom. Newer blocks don't auto-collapse older ones meanwhile, so the
   // text being read doesn't fold away under the reader.
   const [collapseHorizon, setCollapseHorizon] = React.useState(null);
+  // New blocks since the reader left the bottom: everything after the
+  // horizon message, visible ones only (the button counts what a jump
+  // would actually reveal). Streaming updates keep it growing live.
+  const unread = React.useMemo(() => {
+    if (collapseHorizon == null) return 0;
+    const at = messages.findIndex(m => m._id === collapseHorizon);
+    const after = at === -1 ? messages.length : at + 1;
+    return messages.slice(after).filter(m => !window.OMP_TURN_STATUS.isHidden(m)).length;
+  }, [messages, collapseHorizon]);
 
   const setPinned = (val) => {
     pinnedRef.current = val;
@@ -217,6 +231,16 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
     <div className="chat-wrap">
       <div className="chat-scroll selectable" ref={scrollRef} onScroll={onScroll}>
         <div className="chat-pad" style={_CV_PAD_STYLE}>
+          {messages.length === 0 && !messages.some(m => m.streaming) && (
+            <div className="chat-welcome" aria-label="empty conversation">
+              <_CV_Icon name="sparkle" size={20} color="var(--fg-3)" />
+              <div className="chat-welcome-title">Ask anything</div>
+              <div className="chat-welcome-sub">
+                Send a message to start the conversation.<br />
+                Attach images, open a project, or switch models from the composer.
+              </div>
+            </div>
+          )}
           {/* Note: after a trim, idx shifts for all surviving messages, causing a full
              re-render of memo'd bubbles in that notify cycle (bounded at MINIMAP_MAX -
              MINIMAP_COLS = 156). Streaming re-renders are unaffected. Driving annotable
@@ -226,7 +250,7 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
             const hl = hoveredMsgIdx === i;
             if (window.OMP_TURN_STATUS.isHidden(m)) return null;
             if (m.kind === "user")    return <_CV_UserBubble_M    key={m._id ?? i} idx={i} highlighted={hl} msg={m} />;
-            if (m.kind === "compact") return <CompactRow          key={m._id ?? i} msg={m} />;
+            if (m.kind === "compact") return <CompactRow          key={m._id ?? i} idx={i} highlighted={hl} msg={m} />;
             if (m.kind === "job")     return <JobRow              key={m._id ?? i} idx={i} highlighted={hl} msg={m} />;
             if (m.kind === "retry")   return <_CV_RetryRow        key={m._id ?? i} idx={i} highlighted={hl} msg={m} onStop={onStopRetry} />;
             if (m.kind === "goal")    return <_CV_GoalRow         key={m._id ?? i} idx={i} highlighted={hl} msg={m} />;
@@ -238,6 +262,7 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
               annotable={i === lastAsstIdx}
               annotations={annotations}
               onAnnotate={onAnnotate}
+              onOpenKanban={onOpenKanban}
               thoughtCollapsed={collapsed[m._id]} onToggleCollapse={onToggleCollapse} />;
           })}
           <div style={{ height: 24 }} />
@@ -246,7 +271,7 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
       {showJump && (
         <button type="button" className="chat-jump-latest" onClick={jumpToLatest}>
           <_CV_Icon name="chev" size={12} />
-          Jump to latest
+          {unread > 0 ? `Jump to latest · ${unread} new` : "Jump to latest"}
         </button>
       )}
     </div>

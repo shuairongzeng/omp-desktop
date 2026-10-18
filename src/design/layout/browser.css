@@ -60,6 +60,29 @@
 .browser-address input:focus-visible { outline: none; }
 .browser-address input::placeholder { color: var(--fg-4); }
 .browser-address.shake { animation: browserShake 280ms var(--ease-out); border-color: var(--rose); }
+
+/* A navigation the restart-retry could not save (browser-toolbar.jsx):
+   a slim rose line under the bar, dismissible by retrying or leaving. */
+.browser-nav-error {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 2px 10px;
+  font-size: var(--d-text-xs); color: var(--rose);
+  border-bottom: 1px solid var(--line-soft);
+}
+.browser-nav-error span { flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-nav-error .btn.icon { width: 18px; height: 18px; color: var(--fg-4); }
+
+/* A page tab's own load state (browser-toolbar.jsx): the amber dot of
+   `.tab-run-dot` (chrome.css), still while it loads. */
+.browser-tabs .tab-run-dot.loading { background: var(--amber); }
+
+/* The annotate popover's Save / Cancel row (browser-panel.jsx). */
+.browser-popover-actions { display: flex; gap: 6px; }
+.browser-popover-actions .btn { height: 22px; padding: 0 10px; font-size: var(--d-text-xs); }
+.browser-popover-actions .btn:disabled { opacity: 0.4; cursor: default; }
+.browser-popover-actions .btn:disabled:hover { background: transparent; color: var(--fg-3); }
+
 @keyframes browserShake {
   20% { transform: translateX(-4px); }
   45% { transform: translateX(4px); }
@@ -166,8 +189,8 @@
 .stage.with-browser.browser-full,
 .window.is-split .stage.with-browser.browser-full { grid-template-columns: minmax(0, 1fr); }
 .stage.browser-full > :not(.browser-dock) { display: none; }
-.browser-dock { position: relative; display: flex; min-width: 0; min-height: 0; }
-.browser-dock > .browser-panel { flex: 1; }
+.browser-dock { position: relative; display: flex; min-width: 0; min-height: 0;
+  transition: width 140ms var(--ease-out), opacity 140ms var(--ease-out); }
 
 /* ── Composer: annotation chips ────────────────────────────────────── */
 /* `.paste-chip` / `.paste-chip-label` (composer.css) plus these deltas:

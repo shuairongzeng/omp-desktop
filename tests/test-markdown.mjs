@@ -54,10 +54,11 @@ const renderers = {
 
 // Everything the renderers themselves emit. Any other tag, or an attribute
 // outside this list, can only have come from the input. `button` and
-// `aria-label` are the code-block copy button (issue #33).
+// `aria-label` are the code-block copy button (issue #33); `div` (class
+// .md-table-wrap) is the table renderer's horizontal-scroll wrap.
 const TAGS = new Set(["p", "br", "strong", "em", "code", "pre", "span", "a", "ul", "ol", "li",
   "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "table", "thead", "tbody", "tr",
-  "th", "td", "del", "input", "img", "button"]);
+  "th", "td", "del", "input", "img", "button", "div"]);
 const ATTRS = new Set(["class", "href", "title", "align", "start", "type", "checked", "disabled", "src", "alt",
   "aria-label"]);
 function liveMarkup(html) {
@@ -221,6 +222,24 @@ check("query-string links keep legacy-looking & sequences literal", () => {
 
 check("mailto links survive the scheme check", () => {
   assert.equal(marked.parse("[m](mailto:a@b.c)"), '<p><a href="mailto:a@b.c">m</a></p>\n');
+});
+
+// ── Tables scroll instead of clipping (#3, .md-table-wrap) ────────────────
+
+check("a table renders wrapped in one .md-table-wrap div", () => {
+  assert.equal(marked.parse("| a | b |\n|---|---|\n| 1 | 2 |"),
+    '<div class="md-table-wrap"><table>\n<thead>\n<tr>\n<th>a</th>\n<th>b</th>\n</tr>\n</thead>\n<tbody><tr>\n<td>1</td>\n<td>2</td>\n</tr>\n</tbody></table>\n</div>\n');
+});
+
+check("the plan-segment renderer wraps tables too", () => {
+  const html = renderers.plan("| a |\n|---|\n| 1 |");
+  assert.ok(html.startsWith('<div class="md-table-wrap"><table>'), html);
+});
+
+check("table cell content stays escaped through the wrap", () => {
+  const html = marked.parse("| a |\n|---|\n| <img src=t onerror=alert(1)> |");
+  assert.ok(!liveMarkup(html).length, html);
+  assert.ok(html.includes("&lt;img src=t onerror=alert(1)&gt;"), html);
 });
 
 console.log(`markdown: ${passed} checks passed`);

@@ -102,6 +102,20 @@
     return Boolean(entry.open && entry.created && entry.status === null && entry.error === null);
   }
 
+  /**
+   * `terminal://data` or `exit` arrived for a tab the user is not looking
+   * at (another tab active, or its panel hidden): set per-tab `dirty` in
+   * the entry, shown as a dot on the project tab (chrome.jsx reads it from
+   * `OMP_TERMINAL.snapshot` / useTerminal's return).
+   */
+  function noteActivity(s, sid, active) {
+    if (!s || !s[sid] || active) return s;
+    return patch(s, sid, { dirty: true });
+  }
+
+  /** The tab's panel became visible: its dirty mark clears. */
+  const clearDirty = (s, sid) => (s?.[sid]?.dirty ? patch(s, sid, { dirty: false }) : s);
+
   /** The shell is gone (exited, or never started): Enter starts a new one. */
   function isExited(entry) {
     return entry.error !== null || entry.status?.state === "exited";
@@ -192,6 +206,8 @@
     applyStatus,
     applyExit,
     spawnFailed,
+    noteActivity,
+    clearDirty,
     needsSpawn,
     isExited,
     shellLive,

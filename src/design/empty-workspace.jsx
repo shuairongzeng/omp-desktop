@@ -9,8 +9,9 @@
    would otherwise have no transcript to land in.
    ═════════════════════════════════════════════════════════════════════ */
 
-const { MarkdownContent } = window;
+const { MarkdownContent, Icon: _EW_Icon } = window;
 const { LOGO, fitLogo, initDrops, stepDrops, randomGlyph } = window.OMP_MATRIX;
+const { basename: _EW_basename } = window.OMP_PROJECT_NAV;
 
 const RAIN_FONT = 14;          // px per rain cell
 const RAIN_STEP_MS = 55;       // ~18 steps/s: reads as rain, costs little
@@ -139,10 +140,61 @@ function MatrixBackdrop() {
   return <canvas ref={canvasRef} className="empty-ws-canvas" aria-hidden="true" />;
 }
 
+// Thin wrapper around the shared OMP_KEYMAP.hintFor — same guard and
+// rationale as chrome.jsx's copy: the registry itself is always loaded by
+// the time Babel files run, but the wrapper keeps the fallback for the
+// defensive case, and "" (user cleared the binding) means "don't show a
+// chip" rather than a stale default. Named uniquely per the shared-scope
+// rule for Babel files.
+function _EW_hintFor(actionId, fallback) {
+  return window.OMP_KEYMAP ? window.OMP_KEYMAP.hintFor(actionId) : fallback;
+}
+
+// One quiet onboarding line under the logo: the two chord-bound ways into a
+// first tab, then the profile's two most recent folders as one-click
+// entries. The recents arrive through the bridge snapshot channel
+// (live.js's `recentProjects`, same one useBridgeSnapshot feeds the project
+// sidebar); with no tab open there is nothing for `recentRows` to filter
+// out, so the first two rows are simply the list's head.
 function EmptyWorkspace({ notes }) {
+  const [recents, setRecents] = React.useState([]);
+
+  React.useEffect(() => {
+    const bridge = window.OMP_BRIDGE;
+    if (!bridge?.onUpdate) return undefined;
+    // The callback fires on every notify() (every RPC line); only a change
+    // to the two shown rows re-renders.
+    return bridge.onUpdate(snap => {
+      const head = (snap.recentProjects ?? []).slice(0, 2).map(r => r.path);
+      setRecents(prev =>
+        prev.length === head.length && prev.every((r, i) => r.path === head[i])
+          ? prev
+          : (snap.recentProjects ?? []).slice(0, 2));
+    });
+  }, []);
+
+  const openHint    = _EW_hintFor("desktop.tab.new", "Ctrl+T");
+  const bridgeHint  = _EW_hintFor("desktop.commands.open", "Ctrl+K");
+  const openRecent  = async path => {
+    try { await window.OMP_BRIDGE?.openProject(path); }
+    catch (err) { console.error("[EmptyWorkspace] failed to open recent project:", err); }
+  };
+
   return (
     <div className="empty-ws" aria-label="no project open">
       <MatrixBackdrop />
+      <div className="empty-ws-hint">
+        {openHint && <><span>open folder</span> <span className="kbd">{openHint}</span></>}
+        {openHint && bridgeHint && <span className="empty-ws-hint-sep">·</span>}
+        {bridgeHint && <><span>command bridge</span> <span className="kbd">{bridgeHint}</span></>}
+        {recents.length > 0 && <span className="empty-ws-hint-sep">·</span>}
+        {recents.map(r => (
+          <button key={r.path} className="empty-ws-recent mono" title={r.path} onClick={() => openRecent(r.path)}>
+            <_EW_Icon name="folder" size={10} color="var(--fg-3)" />
+            {_EW_basename(r.path)}
+          </button>
+        ))}
+      </div>
       {notes.length > 0 && (
         <div className="empty-ws-notes">
           {notes.map((note, i) => (

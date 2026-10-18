@@ -18,7 +18,9 @@ const _CMP_SEND_HINTS = {
   "enter":      { send: "↵", newline: "⇧↵" },
   "ctrl+enter": { send: window.OMP_KEYMAP?.detectMac?.() ? "⌘↵" : "Ctrl+↵", newline: "↵" },
 };
-
+// How long a transient attach-strip notice chip (an over-cap or decode
+// failure count) lingers before fading itself out.
+const _CMP_NOTICE_MS = 4000;
 // Thin wrappers around the shared `OMP_KEYMAP.hintFor`/`hintKeyFor` (display
 // logic lives there so chrome.jsx's ⌘K/history hints can reuse it too,
 // instead of each file re-deriving chord display independently). The guard
@@ -81,6 +83,9 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   const listRef = React.useRef(null);
   const attachCounterRef = React.useRef(0);
   const fileInputRef     = React.useRef(null);
+  // Fresh key per transient notice, so two identical back-to-back notices
+  // (e.g. two over-cap pastes in a row) still re-arm the 4s timer.
+  const noticeCounterRef = React.useRef(0);
   // File/folder drop from the OS (#50): with `dragDropEnabled` the drop
   // arrives as Tauri's drag-drop event carrying full paths (the effect by
   // `onTauriDrop`); in demo mode (no Tauri) the webview's own HTML5 drop
@@ -88,6 +93,12 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   // HTML5 path's hover element lives in `dropHoverRef`, so crossing
   // children re-renders only when the highlight itself flips.
   const [dropActive, setDropActive] = React.useState(false);
+  // What is being dragged over the composer, for the drop highlight's
+  // label: "images" or "paths" (OMP_DROPPED.splitDroppedPaths on the
+  // hover payload's paths — Tauri sends them on enter/over, before the
+  // drop; the HTML5 path can't peek at files before the drop, so it stays
+  // null there). Null = no hover → no label.
+  const [dropKind, setDropKind] = React.useState(null);
   const dropHoverRef = React.useRef(null);
   // The .composer root: the Tauri drop event is window-global, so the
   // highlight and the drop hit-test its rect.
@@ -163,8 +174,9 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   // text lists matching skills, by omp's own editor rules (see
   // slash-commands.js). It wins over the leading-command popup, as in omp
   // ("/plan do /sk"); when no skill matches, the leading popup applies as
-  // before. Escape dismisses only that token, like the @ list — never the
-  // draft, which here is the user's prose.
+  // before. Escape always dismisses the popup only — for a leading "/…"
+  // draft as well as a mid-prompt token — so a stray Esc never clears the
+  // text the user is still composing.
   const slashRange = React.useMemo(() => midPromptSlashToken(text, caret), [text, caret]);
   const slashKey   = slashRange ? `${slashRange.start}:${slashRange.query}` : null;
   // A dismissal belongs to one token: once there is none (sent, deleted,
@@ -173,7 +185,11 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   React.useEffect(() => { if (!slashRange) setSlashDismissedKey(null); }, [slashRange === null]);
   const skillHits  = slashRange && slashDismissedKey !== slashKey ? skillMenu(cmds, slashRange.query) : [];
   const midSlash   = skillHits.length > 0;
-  const filtered   = midSlash ? skillHits : slashMenu(cmds, text);
+  // The leading "/…" popup keys its dismissal on the whole draft: there is
+  // no separate token to anchor on, and the dismissal should survive until
+  // the draft actually changes (the same key it would re-derive from).
+  const leadingKey = midSlash ? null : `lead:${text}`;
+  const filtered   = midSlash ? skillHits : slashDismissedKey !== leadingKey ? slashMenu(cmds, text) : [];
   const showSlash  = filtered.length > 0 && !showMention;
 
   // Keep activeIdx in bounds; auto-select when single result
@@ -195,7 +211,11 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
 
   // Grow with the text up to the CSS max-height, then scroll: hidden
   // overflow past it would leave the rest of a long draft unreachable.
-  React.useEffect(() => {
+  // `measure` is also re-run on a *width* change (ResizeObserver below):
+  // wrapping is what decides the height, so a container resize — a rail
+  // toggled, a drag handle moved, the window itself — must re-measure the
+  // same text, not just a text edit.
+  const measure = React.useCallback(() => {
     const ta = taRef.current;
     if (!ta) return;
     // Read before the writes below, while style is still clean. Measure
@@ -206,7 +226,25 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     const full = ta.scrollHeight;
     ta.style.height = `${Math.min(full, max)}px`;
     if (full > max) ta.style.overflowY = "auto";
-  }, [text]);
+  }, []);
+  React.useEffect(() => { measure(); }, [text, measure]);
+  // Re-measure on width changes only: height changes are this component's
+  // own doing (the measure above), and feeding them back here would loop.
+  // The last-seen width guards the observer's initial callback, which fires
+  // with the current size before any real change happens.
+  React.useEffect(() => {
+    const ta = taRef.current;
+    if (!ta || typeof ResizeObserver === "undefined") return undefined;
+    let lastWidth = ta.clientWidth;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[entries.length - 1]?.contentBoxSize?.[0]?.inlineSize ?? ta.clientWidth;
+      if (w === lastWidth) return;
+      lastWidth = w;
+      measure();
+    });
+    ro.observe(ta);
+    return () => ro.disconnect();
+  }, [measure]);
 
   // Restore focus when the agent finishes streaming and the textarea
   // re-enables — unless the user is typing somewhere else by then (an
@@ -404,32 +442,47 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   const send = () => sendWith(onSend);
 
   // Pick, downscale/re-encode and queue image files as pending attachments.
-  // Silently drops files that fail to decode, and drops any that would push
-  // the batch over MAX_ATTACHMENTS, rather than blocking the rest: keep what
-  // fits, drop the rest of this paste/pick/drop silently (the user can always
-  // attach the dropped ones separately).
+  // Files that fail to decode, and any that would push the batch over
+  // MAX_ATTACHMENTS, are dropped rather than blocking the rest (keep what
+  // fits — the user can always attach the dropped ones separately). The
+  // drop count surfaces as a transient chip at the end of the attach strip
+  // (`droppedNotice`), instead of vanishing silently.
+  const [droppedNotice, setDroppedNotice] = React.useState(null); // { key, text }
+  React.useEffect(() => {
+    if (!droppedNotice) return undefined;
+    const timer = setTimeout(() => setDroppedNotice(null), _CMP_NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [droppedNotice]);
+  const notifyDropped = (count) => {
+    if (count > 0) setDroppedNotice({ key: ++noticeCounterRef.current, text: `${count} image${count === 1 ? "" : "s"} over the ${MAX_ATTACHMENTS}-image cap were dropped` });
+  };
   const addFiles = async (fileList) => {
     // The tab this paste/pick/drop belongs to: preparation is async, and the
     // result must not land in whichever tab is active by then.
     const target = sessionId;
     const files = Array.from(fileList || []).filter(f => f.type.startsWith("image/"));
     const room  = MAX_ATTACHMENTS - attachments.length;
-    if (files.length === 0 || room <= 0) return;
+    if (files.length === 0) return;
+    notifyDropped(room <= 0 ? files.length : files.length - room);
+    if (room <= 0) return;
     const slice = files.slice(0, room);
     // Counted only while the tab is open: a paste resolved through the
     // async clipboard path may land after its tab closed.
     updateOpenDraft(target, d => ({ ...d, pendingImages: d.pendingImages + slice.length }));
     let ok = [];
+    let failed = 0;
     try {
       const prepared = await Promise.all(slice.map(async (file) => {
         try {
           const image = await prepareImage(file);
           return { id: `att-${++attachCounterRef.current}`, name: file.name, image, src: toDataUrl(image) };
         } catch {
-          return null; // undecodable file — drop, don't block the rest of the batch
+          failed++; // undecodable file — drop, don't block the rest of the batch
+          return null;
         }
       }));
       ok = prepared.filter(Boolean);
+      if (failed > 0) setDroppedNotice({ key: ++noticeCounterRef.current, text: `${failed} image${failed === 1 ? "" : "s"} could not be decoded and were dropped` });
     } finally {
       // Cap against the latest entry, not the `attachments` this call closed
       // over — a concurrent addFiles (fast double-paste) may have already
@@ -504,11 +557,18 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
       const { type, paths, position } = ev.payload;
       if (type === "drop") {
         setDropActive(false);
+        setDropKind(null);
         if (inside(position)) void tauriDropRef.current?.(paths);
       } else if (type === "leave") {
         setDropActive(false);
+        setDropKind(null);
       } else {
-        setDropActive(inside(position)); // enter / over
+        const hit = inside(position); // enter / over
+        setDropActive(hit);
+        // The hover payload carries the paths being dragged: preview
+        // which pipeline would take them (images attach, the rest insert
+        // as text), so the highlight can say what the drop will do.
+        setDropKind(hit && paths?.length ? (splitDroppedPaths(paths).images.length > 0 ? "images" : "paths") : null);
       }
     }).then(
       (u) => { if (dead) u(); else off = u; },
@@ -531,8 +591,13 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
       return;
     }
     dropHoverRef.current = dropHoverAfter(dropHoverRef.current, e.type, e.target);
-    setDropActive(dropHoverRef.current !== null);
+    const hover = dropHoverRef.current !== null;
+    setDropActive(hover);
+    // Demo mode only ever attaches images, so the hover is always the
+    // image kind (carriesFiles already filtered non-files out).
+    setDropKind(hover ? "images" : null);
     if (e.type === "drop") {
+      setDropKind(null);
       addFiles(imageFilesFromTransfer(e.dataTransfer));
       taRef.current?.focus();
     }
@@ -601,7 +666,11 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     if (showSlash) {
       if (e.key === "ArrowDown")  { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, filtered.length - 1)); return; }
       if (e.key === "ArrowUp")    { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); return; }
-      if (e.key === "Escape")     { e.preventDefault(); if (midSlash) setSlashDismissedKey(slashKey); else setText(""); return; }
+      // Esc dismisses the popup only — both a mid-prompt skill token and a
+      // leading "/…" draft. Dismissing (not clearing) keeps the prose: the
+      // draft-cleared-on-Esc trap loses text a user meant to keep, and the
+      // token-scoped key re-opens the popup once the query differs anyway.
+      if (e.key === "Escape")     { e.preventDefault(); setSlashDismissedKey(midSlash ? slashKey : leadingKey); return; }
       if (e.key === "Tab")        { e.preventDefault(); setActiveIdx(i => (i + 1) % filtered.length); return; }
       // A plain Enter runs the highlighted command whatever the send chord:
       // it picks from the popup, it does not send a message.
@@ -656,12 +725,30 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   const bridgeHint    = hintFor("desktop.commands.open", "⌘K");
   const bridgeKeyHint = hintKeyFor("desktop.commands.open", "K");
   const abortHint = hintFor("app.interrupt", "⎋");
+  // The recall chord is the plain arrow (issues #16, #55) — same keys the
+  // desktop.composer.promptHistory action's picker opens with, so its keymap
+  // hint is the chord to advertise in the footer's "history" segment.
+  const historyHint = hintFor("desktop.composer.promptHistory", "↑");
   const cycleThinkingHint = hintFor("app.thinking.cycle", "⇧Tab");
   const sendHints = _CMP_SEND_HINTS[submitKey] ?? _CMP_SEND_HINTS.enter;
+  // live.js ships the key-dependent microcopy with `{abort}`/`{bridge}`
+  // placeholders; the actual chords live here (keymap-aware, so a rebind
+  // or a platform without ⌘ can't show a stale glyph). An unbound action
+  // drops its whole clause instead of leaving "Press  to interrupt".
+  const fillHints = (s) => {
+    if (typeof s !== "string" || !s.includes("{")) return s;
+    return s
+      .replace(/\{abort\}/g, abortHint ? `${abortHint} ` : "")
+      .replace(/\{bridge\}/g, bridgeHint ? ` · ${bridgeHint} opens the bridge` : "")
+      .replace(/\s+/g, " ").trim().replace(/[·—]\s*$/, "").trim();
+  };
+  const streamingPlaceholder = fillHints(microcopy?.streamingTip) || "agent is working…";
+  const palettePlaceholder    = fillHints(microcopy?.paletteTip) || `what should we ship?  ·  / for commands${bridgeHint ? `  ·  ${bridgeHint} for the bridge` : ""}`;
 
   return (
     <div className={`composer${planMode ? " plan-on" : ""}${goalTint ? " goal-on" : ""}${goalMode ? " goal-draft" : ""}${dropActive ? " drop-on" : ""}`}
       ref={rootRef}
+      data-drop-kind={dropActive ? dropKind ?? "" : undefined}
       {...(window.__TAURI__ ? {} : { onDragEnter: onFileDrag, onDragOver: onFileDrag, onDragLeave: onFileDrag, onDrop: onFileDrag })}>
       {planMode && (
         <div className="plan-strip">
@@ -675,9 +762,12 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
       {goalStrip}
 
       {showSlash && (
-        <div className="slash-pop" ref={listRef}>
+        <div className="slash-pop" id="slash-pop" role="listbox" aria-label="slash commands" ref={listRef}>
           {filtered.map((c, i) => (
             <button key={c.name}
+              id={`slash-row-${i}`}
+              role="option"
+              aria-selected={i === clampedIdx}
               className={`slash-row${i === clampedIdx ? " active" : ""}`}
               onMouseEnter={() => setActiveIdx(i)}
               onMouseDown={(e) => { e.preventDefault(); execCmd(c); }}>
@@ -715,16 +805,19 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
         onRemove={onRemoveBrowserChip}
         onChipClick={onBrowserChipClick} />
 
-      {attachments.length > 0 && (
+      {(attachments.length > 0 || droppedNotice) && (
         <div className="attach-strip">
           {attachments.map(a => (
             <div className="attach-chip" key={a.id}>
               <img className="attach-thumb" src={a.src} alt={a.name || "attached image"} />
-              <button className="attach-remove" title="remove" onClick={() => removeAttachment(a.id)}>
+              <button className="attach-remove" title="remove attachment" aria-label="remove attachment" onClick={() => removeAttachment(a.id)}>
                 <Icon name="close" size={9} />
               </button>
             </div>
           ))}
+          {droppedNotice && (
+            <span className="attach-notice" role="status" key={droppedNotice.key}>{droppedNotice.text}</span>
+          )}
         </div>
       )}
 
@@ -732,7 +825,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
       <PasteStrip key={sessionId} pastes={collapsed} onExpand={expandPaste} />
 
       <div className="composer-row">
-        <button className="btn icon ghost" title="attach image" onClick={() => fileInputRef.current?.click()}>
+        <button className="btn icon ghost" title="attach image" aria-label="attach image" onClick={() => fileInputRef.current?.click()}>
           <Icon name="image" size={13} />
         </button>
         <input
@@ -743,7 +836,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
           style={{ display: "none" }}
           onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }}
         />
-        <button className="btn icon ghost" title="dictate">
+        <button className="btn icon ghost" title="dictation coming soon" aria-label="dictate" disabled>
           <Icon name="voice" size={13} />
         </button>
         <div className={`composer-input${text.length > 0 ? " has-clear" : ""}`}>
@@ -756,22 +849,22 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
                 : planMode && !isStreaming
                 ? (microcopy?.planTip ?? "describe what to build, or give feedback on the plan…")
                 : isStreaming
-                  ? microcopy?.streamingTip
-                  : (microcopy?.paletteTip ?? `what should we ship?  ·  / for commands${bridgeHint ? `  ·  ${bridgeHint} for the bridge` : ""}`)
+                  ? streamingPlaceholder
+                  : palettePlaceholder
             }
             value={text}
             onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart); }}
             onSelect={(e) => setCaret(e.target.selectionStart)}
             onKeyDown={onKey}
             onPaste={onPaste}
-            className="selectable"
-            role={showMention ? "combobox" : undefined}
-            aria-expanded={showMention ? true : undefined}
-            aria-controls={showMention ? "mention-menu" : undefined}
-            aria-activedescendant={showMention ? `mention-row-${mentionActiveIdx}` : undefined}
+            className={`selectable${draft.historyNav !== null ? " recalling" : ""}`}
+            role={showMention || showSlash ? "combobox" : undefined}
+            aria-expanded={showMention || showSlash ? true : undefined}
+            aria-controls={showMention ? "mention-menu" : showSlash ? "slash-pop" : undefined}
+            aria-activedescendant={showMention ? `mention-row-${mentionActiveIdx}` : showSlash ? `slash-row-${clampedIdx}` : undefined}
           />
           {text.length > 0 && (
-            <button type="button" className="composer-clear" title="clear input"
+            <button type="button" className="composer-clear" title="clear input" aria-label="clear input"
               onMouseDown={e => e.preventDefault()}
               onClick={() => { setText(""); setCaret(0); setActiveIdx(0); requestAnimationFrame(() => taRef.current?.focus()); }}>
               <Icon name="trash" size={11} />
@@ -846,6 +939,10 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
             ...(isStreaming && steerable
               ? [goalMode ? `${sendHints.send} start goal` : `${sendHints.send} steer`]
               : [goalMode ? `${sendHints.send} start goal` : `${sendHints.send} send`, `${sendHints.newline} newline`]),
+            // Recall lives on the plain arrows, so the segment rides the
+            // non-streaming branch only (steering has no recall). Dropped
+            // entirely when unbound, like the abort segment.
+            ...(!(isStreaming && steerable) && historyHint ? [`${historyHint} history`] : []),
             // Dropped entirely when unbound rather than showing a keyless
             // "abort" segment that advertises a shortcut that isn't there.
             ...(abortHint ? [`${abortHint} abort`] : []),
@@ -869,7 +966,15 @@ const RECENT_MODEL_LIMIT = 5;
 function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, profileId, onPickLogin, onInsertDraft, loginProviders, initialView = "commands" }) {
   const [q, setQ]       = React.useState("");
   const [view, setView] = React.useState("commands");
+  // Which row the filter input's ↑↓/Enter drive (the footer's "navigate"
+  // hint is real, not decoration): an index into the current view's flat
+  // row list. Reset on every filter/view change so it never points past
+  // the end; `clamped` guards the in-between renders.
+  const [activeIdx, setActiveIdx] = React.useState(0);
   const inputRef = React.useRef(null);
+  // The scrollable rows container (bridge-body) — the active row scrolls
+  // into view as ↑↓ moves, the way history-modal.jsx does it.
+  const rowsRef = React.useRef(null);
   // omp's MRU is per profile (each has its own agent.db), so the list is
   // fetched *for* `profileId` and tagged with it, and only shown while that
   // is still the active tab's profile — a tab switch or a profile respawn
@@ -885,9 +990,14 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
     if (open) {
       setQ("");
       setView(initialView);
+      setActiveIdx(0);
       setTimeout(() => inputRef.current?.focus(), 30);
     }
   }, [open]);
+  // A narrower filter (or a drill-in's reset of `q`) re-clamps the index;
+  // resetting to 0 also means ↑ always starts from the top row.
+  React.useEffect(() => { setActiveIdx(0); }, [q, view]);
+
 
   React.useEffect(() => {
     if (!open || view !== "models") return undefined;
@@ -909,18 +1019,62 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose, view]);
 
+  // ── Keyboard navigation plumbing (all three views) ────────────────
+  // ↑↓ move the active row, ↵ fires it, and the active row scrolls into
+  // view. Declared before the `!open` early return (and before any view
+  // branch) so the login view's useEffect below sees a stable reference —
+  // it lives at window level there, since the login view has no filter
+  // input to carry the keys.
+  const scrollActiveRef = React.useRef(null);
+  scrollActiveRef.current = () => {
+    const el = rowsRef.current?.querySelector(".bridge-row.kb-active");
+    el?.scrollIntoView({ block: "nearest" });
+  };
+  const loginProvidersList = loginProviders ?? [];
+  React.useEffect(() => {
+    if (!open || view !== "login") return undefined;
+    const enterProvider = (p) => { if (p?.available) { onPickLogin(p); onClose(); } };
+    const onKey = (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, loginProvidersList.length - 1)); requestAnimationFrame(() => scrollActiveRef.current?.()); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); requestAnimationFrame(() => scrollActiveRef.current?.()); }
+      else if (e.key === "Enter") { e.preventDefault(); enterProvider(loginProvidersList[Math.min(activeIdx, loginProvidersList.length - 1)]); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, view, loginProviders, activeIdx, onPickLogin, onClose]);
+
   if (!open) return null;
 
   const fil    = (s) => s.toLowerCase().includes(q.toLowerCase());
   const models = window.OMP_DATA.models;
 
+  // Filter-input key nav for the models/commands views: `count` is the
+  // view's flat row list length, `enterRow(i)` fires row i's action.
+  const makeInputKeyNav = (count, enterRow) => (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx(i => Math.min(i + 1, count - 1)); requestAnimationFrame(() => scrollActiveRef.current?.()); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActiveIdx(i => Math.max(i - 1, 0)); requestAnimationFrame(() => scrollActiveRef.current?.()); }
+    else if (e.key === "Enter") { e.preventDefault(); enterRow(Math.min(activeIdx, count - 1)); }
+  };
+
   // ── Model picker view ──────────────────────────────────────────────
   if (view === "models") {
     const modelHits = models.filter((m) => !q || fil(m.name) || fil(m.id));
     const recentHits = window.pickRecentModels(modelHits, recentKeys, RECENT_MODEL_LIMIT);
-    const modelRow = (m, group) => (
+    // Flat row list in DOM order: recents first, then the full list, with
+    // any model that already appeared in recents skipped (the button keys
+    // are `${group}:…`, so a model can appear in both groups only when
+    // pickRecentModels already deduped it — verify with the row keys).
+    const flatRows = [...recentHits, ...modelHits.filter((m) => !recentHits.includes(m))];
+    const clampedIdx = Math.min(activeIdx, flatRows.length - 1);
+    const enterModel = (m) => { if (m) { onPickModel(m); onClose(); } };
+    const inputKeyNav = makeInputKeyNav(flatRows.length, (i) => enterModel(flatRows[i]));
+    const modelRow = (m, group) => {
+      const rowIdx = flatRows.indexOf(m);
+      return (
       <button key={`${group}:${window.modelKey(m)}`}
-        className={`bridge-row ${m.id === currentModelId ? "active" : ""}`}
+        id={`bridge-model-row-${rowIdx}`}
+        className={`bridge-row${m.id === currentModelId ? " active" : ""}${rowIdx === clampedIdx ? " kb-active" : ""}`}
         onClick={() => { onPickModel(m); onClose(); }}>
         <span className="bridge-glyph">
           {m.id === currentModelId
@@ -932,12 +1086,13 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
         <span style={{ color: "var(--fg-3)" }}>· {m.note}</span>
         <span className="chip muted" style={{ marginLeft: "auto" }}>{m.latency}ms</span>
       </button>
-    );
+      );
+    };
     return (
       <div className="bridge-scrim" onClick={onClose}>
         <div className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
           <div className="bridge-input-row">
-            <button className="btn icon ghost" title="back"
+            <button className="btn icon ghost" title="back" aria-label="back to commands"
               onClick={() => { setView("commands"); setQ(""); }}
               style={{ marginRight: 4 }}>
               <Icon name="chevR" size={12} color="var(--fg-3)"
@@ -945,10 +1100,12 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
             </button>
             <input ref={inputRef} className="bridge-input mono"
               placeholder="filter models…" value={q}
-              onChange={(e) => setQ(e.target.value)} />
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={inputKeyNav}
+              role="combobox" aria-expanded aria-controls="bridge-model-rows" aria-activedescendant={flatRows.length ? `bridge-model-row-${clampedIdx}` : undefined} />
             <span className="kbd">esc</span>
           </div>
-          <div className="bridge-body">
+          <div className="bridge-body" ref={rowsRef} id="bridge-model-rows" role="listbox" aria-label="models">
             {recentHits.length > 0 && (
               <div className="bridge-group">
                 <div className="bridge-group-head mono">recently used</div>
@@ -982,13 +1139,14 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
     );
   }
 
-  // ── Login view ───────────────────────────────────────────────────────────
   if (view === "login") {
+    const providers = loginProviders ?? [];
+    const clampedIdx = Math.min(activeIdx, providers.length - 1);
     return (
       <div className="bridge-scrim" onClick={onClose}>
         <div className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
           <div className="bridge-input-row">
-            <button className="btn icon ghost" title="back"
+            <button className="btn icon ghost" title="back" aria-label="back to commands"
               onClick={() => { setView("commands"); setQ(""); }}
               style={{ marginRight: 4 }}>
               <Icon name="chevR" size={12} color="var(--fg-3)"
@@ -999,7 +1157,7 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
             </span>
             <span className="kbd">esc</span>
           </div>
-          <div className="bridge-body">
+          <div className="bridge-body" ref={rowsRef} role="listbox" aria-label="login providers">
             <div className="bridge-group">
               <div className="bridge-group-head mono">select provider</div>
               {loginProviders === null && (
@@ -1008,9 +1166,10 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
               {loginProviders !== null && loginProviders.length === 0 && (
                 <div className="bridge-empty">no providers available</div>
               )}
-              {loginProviders !== null && loginProviders.map((p) => (
+              {loginProviders !== null && loginProviders.map((p, i) => (
                 <button key={p.id}
-                  className={`bridge-row ${p.authenticated ? "active" : ""}`}
+                  id={`bridge-login-row-${i}`}
+                  className={`bridge-row ${p.authenticated ? "active" : ""}${i === clampedIdx ? " kb-active" : ""}`}
                   onClick={() => { if (p.available) { onPickLogin(p); onClose(); } }}>
                   <span className="bridge-glyph">
                     {p.authenticated
@@ -1037,12 +1196,25 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
     );
   }
 
+
   // ── Commands view ──────────────────────────────────────────────────
   const cmds    = window.OMP_DATA.commands;
   const cmdHits = cmds.filter((c) => matchesQuery(c, q));
   const groups  = {};
   cmdHits.forEach((c) => { (groups[c.group] = groups[c.group] || []).push(c); });
   const activeModelName = models.find((m) => m.id === currentModelId)?.name ?? "–";
+  // Groups render in insertion order, so the flat list matches the DOM.
+  const flatCmds = Object.values(groups).flat();
+  const clampedIdx = Math.min(activeIdx, flatCmds.length - 1);
+  const runCmd = (c) => {
+    if (!c) return;
+    if (c.name === "model") { setQ(""); setView("models"); }
+    else if (c.name === "login") { setQ(""); setView("login"); }
+    else if (isDesktop(c)) { onPick(c); onClose(); }
+    else { onInsertDraft(slashInsertText(c)); onClose(); }
+  };
+  const inputKeyNav = makeInputKeyNav(flatCmds.length, (i) => runCmd(flatCmds[i]));
+  const cmdRowIdx = (c) => flatCmds.indexOf(c);
 
   return (
     <div className="bridge-scrim" onClick={onClose}>
@@ -1051,10 +1223,12 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
           <Icon name="command" size={14} color="var(--accent)" />
           <input ref={inputRef} className="bridge-input mono"
             placeholder="cross the bridge — type to filter…" value={q}
-            onChange={(e) => setQ(e.target.value)} />
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={inputKeyNav}
+            role="combobox" aria-expanded aria-controls="bridge-cmd-rows" aria-activedescendant={flatCmds.length ? `bridge-cmd-row-${clampedIdx}` : undefined} />
           <span className="kbd">esc</span>
         </div>
-        <div className="bridge-body">
+        <div className="bridge-body" ref={rowsRef} id="bridge-cmd-rows" role="listbox" aria-label="commands">
           {Object.entries(groups).map(([g, list]) => (
             <div key={g} className="bridge-group">
               <div className="bridge-group-head mono">{g.toLowerCase()}</div>
@@ -1063,13 +1237,10 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
                 const isLogin = c.name === "login";
                 const drillsIn = isModel || isLogin;
                 return (
-                  <button key={c.name} className="bridge-row"
-                    onClick={() => {
-                      if (isModel) { setQ(""); setView("models"); }
-                      else if (isLogin) { setQ(""); setView("login"); }
-                      else if (isDesktop(c)) { onPick(c); onClose(); }
-                      else { onInsertDraft(slashInsertText(c)); onClose(); }
-                    }}>
+                  <button key={c.name}
+                    id={`bridge-cmd-row-${cmdRowIdx(c)}`}
+                    className={`bridge-row${cmdRowIdx(c) === clampedIdx ? " kb-active" : ""}`}
+                    onClick={() => runCmd(c)}>
                     <span className="bridge-glyph">{c.icon}</span>
                     <span className="bridge-cmd-name mono" style={{ color: "var(--accent)" }}>/{c.name}</span>
                     <span className="bridge-cmd-hint" style={{ color: "var(--fg-3)" }} title={c.hint}>{c.hint}</span>
@@ -1093,7 +1264,7 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
           <span className="kbd">↑↓</span> navigate
           <span className="kbd">↵</span> run
           <span className="kbd">esc</span> close
-          <span style={{ marginLeft: "auto", color: "var(--fg-4)" }}>{window.OMP_DATA.microcopy.paletteTip}</span>
+          <span style={{ marginLeft: "auto", color: "var(--fg-4)" }}>{(window.OMP_DATA.microcopy?.paletteTip ?? "").replace(/\{[^}]*\}/g, "").trim() || "type / to give orders"}</span>
         </div>
       </div>
     </div>

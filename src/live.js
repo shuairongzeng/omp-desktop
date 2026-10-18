@@ -37,8 +37,11 @@
     ctx: { used: 0, total: 200000, pct: 0, label: "0 / 200k", cost: "$0.00", tokensPerSec: 0 },
     microcopy: {
       empty:        "Hand me a project. I'll set the table.",
-      streamingTip: "Press ⎋ to interrupt — your cursor is in the room.",
-      paletteTip:   "type / to give orders · ⌘K opens the bridge",
+      // The {abort}/{bridge} placeholders are filled by composer.jsx with
+      // the live keymap chord (OMP_KEYMAP.hintFor) — a hardcoded ⎋/⌘K here
+      // would go stale the moment the user rebinds either action.
+      streamingTip: "Press {abort} to interrupt — your cursor is in the room.",
+      paletteTip:   "type / to give orders{bridge}",
       planTip:      "describe what to build, or give feedback on the plan…",
       todoEmpty:    "no plan yet. think out loud below.",
       radarHint:    "agent has been busy — last 60 seconds",
@@ -71,9 +74,11 @@
     // wake the agent after it yielded: set by every get_state's
     // `hasPendingAsyncWork` (agent_end always asks for one), cleared by
     // `session_settled`. Drives the "background" run state.
-    asyncPending:   false,
     // `_trimMessages` cut the transcript's head (see the get_messages merge).
     trimmed:        false,
+    // #19: total messages dropped from the head across all trims, so the
+    // minimap can say "−N earlier" instead of a bare count of what's left.
+    trimmedCount:   0,
     // Subagent manager (src/app/subagents.js). Terminal agents are kept here
     // for the life of the session — omp's own registry forgets them.
     subagents:           SUB.emptySubagents(),
@@ -295,6 +300,7 @@
     const drop = MINIMAP_COLS;                      // evict one full row (13)
     state.messages = state.messages.slice(drop);
     state.trimmed = true;
+    state.trimmedCount += drop;
     for (const [id, idx] of activeToolCards) {
       const shifted = idx - drop;
       if (shifted < 0) activeToolCards.delete(id); // guard: possible on abort (no tool_execution_end)
@@ -340,6 +346,8 @@
     return {
       messages:        state.messages,
       isStreaming:     state.isStreaming,
+      // #19: head-trim tally for the minimap's "−N earlier" badge.
+      trimmedCount:    state.trimmedCount,
       model:           state.model,
       thinkingLevel:   state.thinkingLevel,
       ctx:             state.ctx,
@@ -801,6 +809,7 @@
       exitReason:    state.exitReason,
       asyncPending:  state.asyncPending,
       trimmed:       state.trimmed,
+      trimmedCount:  state.trimmedCount,
       // Last-turn outcome for the auto-rename gate (see _applyRpcState):
       // survives tab switches so a snapshot-restored session does not
       // forget a failed first exchange and re-arm the one-shot.
@@ -844,6 +853,7 @@
       exitReason:    snap.exitReason ?? null,
       asyncPending:  snap.asyncPending ?? false,
       trimmed:       snap.trimmed ?? false,
+      trimmedCount:  snap.trimmedCount ?? 0,
       subagents:     snap.subagents ?? SUB.emptySubagents(),
       subagentTranscripts: {},
       queue:         snap.queue ?? QUEUE.EMPTY_QUEUE,

@@ -6,15 +6,20 @@
    exact command is approved, the card for a config-level error, and the
    per-card error boundary. Blocks come from widgets/widget-blocks.jsx. */
 
-const { Icon: _WC_Icon, WidgetBlocks: _WC_Blocks, OMP_WIDGETS: { argvDisplay: _WC_argvDisplay } } = window;
+const { Icon: _WC_Icon, WidgetBlocks: _WC_Blocks, OMP_WIDGETS: { argvDisplay: _WC_argvDisplay, relativeTime: _WC_relativeTime } } = window;
 
-function _wcTime(ms) {
+// #25: relative labels for the card's timestamps — minute-granular, and
+// "2m" beats "14:32" for glance reading. Uses OMP_WIDGETS.relativeTime,
+// the same helper the project sidebar's history rows use.
+function _wcWhen(ms) {
   if (!ms) return "";
-  const d = new Date(ms);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return _WC_relativeTime(ms, Date.now());
 }
 
-function WidgetErrorCard({ title, error }) {
+/** #21: config-level errors (widgets.json). `configPath` and the settings
+ *  button come through props from the caller (app-live); the prop is a
+ *  transparent passthrough — openSettings wiring lives there. */
+function WidgetErrorCard({ title, error, configPath, onOpenSettings }) {
   return (
     <div className="rail-card glass wdg-card tone-error">
       <div className="rail-card-head">
@@ -22,6 +27,16 @@ function WidgetErrorCard({ title, error }) {
         <span className="mono wdg-title">{title}</span>
       </div>
       <div className="wdg-error selectable">{error}</div>
+      {configPath && (
+        <>
+          <div className="wdg-note mono selectable" title={configPath}>{configPath}</div>
+          {onOpenSettings && (
+            <button className="btn ghost outlined" onClick={onOpenSettings}>
+              <_WC_Icon name="cog" size={10} /> open settings
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -34,7 +49,7 @@ function WidgetCard({ title, run, onRefresh, onInsert, source }) {
   const widget = run?.widget ?? null;
   const toneClass = state === "error" ? "tone-error" : state === "ok" && widget ? `tone-${widget.status}` : "tone-neutral";
   const stale = state === "running" && widget != null;
-  const meta = source ?? (state === "running" ? "running…" : run?.durationMs != null ? `${run.durationMs} ms · ${_wcTime(run.at)}` : "");
+  const meta = source ?? (state === "running" ? "running…" : run?.durationMs != null ? `${run.durationMs} ms · ${_wcWhen(run.at)}` : "");
   return (
     <div className={`rail-card glass wdg-card ${toneClass}${stale ? " wdg-stale" : ""}${source ? " wdg-pushed" : ""}`}>
       <div className="rail-card-head">
@@ -50,7 +65,7 @@ function WidgetCard({ title, run, onRefresh, onInsert, source }) {
       {state === "error" && (
         <>
           <div className="wdg-error selectable">{run.error}</div>
-          {run.lastOkAt != null && <div className="wdg-note mono">last ok {_wcTime(run.lastOkAt)}</div>}
+          {run.lastOkAt != null && <div className="wdg-note mono">last ok {_wcWhen(run.lastOkAt)}</div>}
         </>
       )}
       {(state === "ok" || stale) && widget && (
@@ -69,7 +84,7 @@ function WidgetCard({ title, run, onRefresh, onInsert, source }) {
  *  argv here. The argv is shown one element per line, quoted and escaped
  *  (OMP_WIDGETS.argvDisplay): this card is the only gate, so a newline, an
  *  empty argument or a bidi override must not change what the user reads. */
-function WidgetApprovalCard({ title, command, changed, onApprove }) {
+function WidgetApprovalCard({ title, command, changed, onApprove, onDismiss }) {
   const [busy, setBusy] = React.useState(false);
   const approve = () => {
     if (busy || !onApprove) return;
@@ -97,6 +112,14 @@ function WidgetApprovalCard({ title, command, changed, onApprove }) {
         {(command ?? []).map((arg, i) => <div key={i} className="wdg-argv-line">{_WC_argvDisplay(arg)}</div>)}
       </div>
       <div className="wdg-approval-actions">
+        {/* #20: "Not now" hides the card for this session only (the
+            approval itself is untouched); `onDismiss` is a no-op prop
+            without the caller's session state. */}
+        {onDismiss && (
+          <button className="btn ghost" onClick={onDismiss} title="hide this card for the rest of the session">
+            Not now
+          </button>
+        )}
         <button className="btn primary" disabled={busy || !onApprove} onClick={approve}>
           {changed ? "Approve again" : "Approve"}
         </button>

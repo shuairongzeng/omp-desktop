@@ -123,6 +123,16 @@
                '<button class="copy-btn is-floating" type="button" aria-label="Copy code" title="Copy code"></button>' +
                '</pre>';
       },
+      // A wide table renders wider than the message column; the wrap
+      // scrolls horizontally (platform.css .md-table-wrap) instead of the
+      // card clipping it. The default renderer builds the <table> itself;
+      // calling it through the prototype keeps every cell path (inline
+      // parsing, align attributes) exactly as marked writes them.
+      table(token) {
+        return '<div class="md-table-wrap">' +
+          Object.getPrototypeOf(this).table.call(this, token) +
+          '</div>\n';
+      },
       link({ href, title, tokens, text, autolink }) {
         // Only these schemes can ever be a legitimate chat/diff/plan
         // link; anything else (a script scheme, or an href `new URL`

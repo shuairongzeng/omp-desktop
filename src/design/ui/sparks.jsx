@@ -71,6 +71,10 @@ const ActivityRadar = ({ activity, tps }) => {
             className={`radar-cell ${c ? "on" : ""}`}
             style={{
               background: c ? _SP_TOOL_META[c.k]?.color : "transparent",
+              // #23: box-shadow's currentColor resolves from `color`, which
+              // inline backgrounds never set — without this the glow always
+              // used the inherited text colour.
+              color: c ? _SP_TOOL_META[c.k]?.color : undefined,
               animationDelay: `${i * 30}ms`,
             }}
             title={c ? `t-${60 - i}s · ${c.k}` : ""} />

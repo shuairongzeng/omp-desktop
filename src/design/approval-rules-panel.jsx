@@ -23,15 +23,28 @@ function ApprovalRulesPanel({ onClose, activeProject, sessions, approvalModes })
   const bridge = window.OMP_BRIDGE;
   const [rules, setRules]     = React.useState([]);
   const [loading, setLoading] = React.useState(false);
+  // Generation counter guarding `refresh` against out-of-order completions.
+  const genRef = React.useRef(0);
 
   const refresh = React.useCallback(async () => {
     if (!bridge) return;
+    // Generation counter: a slower earlier refresh resolving after a newer
+    // one must not overwrite its rules (use-keymap.jsx:62-68's pattern).
+    const gen = ++genRef.current;
     setLoading(true);
     try {
       // The mode view lands in the snapshot (the `approvalModes` prop).
-      await Promise.all([bridge.approvalModes(), bridge.listApprovalRules().then(setRules)]);
+      // The rules list is applied only when this call is still the newest
+      // one — a slower earlier refresh resolving after a newer one must
+      // not overwrite its rules.
+      await Promise.all([
+        bridge.approvalModes(),
+        bridge.listApprovalRules().then(r => {
+          if (gen === genRef.current) setRules(r);
+        }),
+      ]);
     } finally {
-      setLoading(false);
+      if (gen === genRef.current) setLoading(false);
     }
   }, [bridge]);
 
@@ -42,16 +55,34 @@ function ApprovalRulesPanel({ onClose, activeProject, sessions, approvalModes })
     await refresh();
   };
 
+  // Capture phase on `window`, not the panel's own onKeyDown: focus can sit
+  // in the mode section's buttons while the panel is open, and Escape must
+  // close the panel instead of reaching the global keymap's `app.interrupt`
+  // (app-live.jsx's guard skips abort while this overlay is open, so the
+  // key would otherwise do nothing). Same pattern as update-modal.jsx.
+  // Ctrl/Alt/Meta chords pass through as global shortcuts.
+  React.useEffect(() => {
+    const onKey = e => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
   return (
     <div className="bridge-scrim" onClick={onClose} style={{ paddingTop: "10vh" }}>
       <div className="rules-panel" onClick={e => e.stopPropagation()}>
         <div className="rules-head">
           <_RulesIcon name="check" size={13} color="var(--accent)" />
           <span className="mono" style={{ color: "var(--fg-2)" }}>approvals</span>
-          <button className="btn icon ghost" style={{ marginLeft: "auto" }} onClick={refresh} title="refresh">
-            <_RulesIcon name="refresh" size={11} />
+          <button className="btn icon ghost" style={{ marginLeft: "auto" }} onClick={refresh} disabled={loading} title="refresh">
+            <span className={loading ? "spin-icon" : undefined}><_RulesIcon name="refresh" size={11} /></span>
           </button>
-          <button className="btn icon ghost" onClick={onClose} title="close">
+          <button className="btn icon ghost" onClick={onClose} title="close (esc)">
             <_RulesIcon name="close" size={11} />
           </button>
         </div>

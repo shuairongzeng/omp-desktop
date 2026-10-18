@@ -7,7 +7,8 @@
    (settings/rows-*.jsx) as <Comp row ctx query modified onReset />.
 
    Keys while the page is active: Ctrl+F focuses the search, ←/→ switch
-   sections outside text fields, Escape clears the search. Escape is
+   sections outside text fields and radio/switch groups (those own their
+   arrows, controls.jsx), Escape clears the search. Escape is
    default-prevented (capture phase) so the window keymap never sees it
    (no agent interrupt), but not stopped, so an open row menu or the
    shortcut recorder still gets it: such an element carries
@@ -22,6 +23,9 @@ const {
 
 const _SP_IS_MAC = window.OMP_KEYMAP?.detectMac?.() ?? false;
 const _SP_FIELD = "input, textarea, select, [contenteditable='true'], [role='slider']";
+// A radio/switch control owns ←/→ itself (roving within its group);
+// the page's section switching must not steal them.
+const _SP_RADIO = "[role='radio'], [role='switch'], [role='option'], [role='checkbox']";
 
 function _SP_TweakRow({ row, ctx, query }) {
   const S = window.OMP_SETTINGS;
@@ -94,6 +98,13 @@ function SettingsPage({ ctx }) {
   const { t } = ctx;
   const active = ctx.active !== false;
   const [query, setQuery] = React.useState("");
+  // The footer's reset: armed for a second click ("reset N settings? yes
+  // / no"), timing out back to the plain button after 3s — the inline
+  // confirm pattern of profile-menu.jsx, no new modal.
+  const [resetArmed, setResetArmed] = React.useState(false);
+  // Focus when the page last went inactive: an element id, else null —
+  // restored on return; the search field is the fallback.
+  const lastFocus = React.useRef(null);
   const rootRef = React.useRef(null);
   const bodyRef = React.useRef(null);
   const searchRef = React.useRef(null);
@@ -106,7 +117,11 @@ function SettingsPage({ ctx }) {
   const counts = React.useMemo(
     () => (q ? hits.bySection : Object.fromEntries(sections.map(s => [s.id, S.modifiedCount(s.id, t, ctx.keyOpts)]))),
     [S, q, hits, sections, t, ctx.keyOpts]);
-  // While searching, the footer resets the matched rows only.
+  // Rows a section reset covers but the page hides right now: same row set
+  // as the count, so the badge tooltip can say "includes N hidden".
+  const hiddenCounts = React.useMemo(
+    () => (q ? {} : Object.fromEntries(sections.map(s => [s.id, S.hiddenCount(s.id, t, ctx.keyOpts)]))),
+    [S, q, sections, t, ctx.keyOpts]);
   const resetEdits = React.useMemo(() => (q
     ? S.resetRows(hits.groups.flatMap(g => g.rows), t, ctx.keyOpts)
     : S.resetEdits(section.id, t, ctx.keyOpts)), [S, q, hits, section.id, t, ctx.keyOpts]);
@@ -122,12 +137,31 @@ function SettingsPage({ ctx }) {
   // Opening on a section (Ctrl+/, /shortcuts) shows that section, not a
   // search left from before.
   React.useEffect(() => { setQuery(""); }, [ctx.section]);
+  // A different section's reset target, or a fresh search, disarms the
+  // armed reset: its "N" would be a lie.
+  React.useEffect(() => { setResetArmed(false); }, [ctx.section, q]);
+  // 3s after arming, the confirm times out and the button goes back to its
+  // plain wording.
+  React.useEffect(() => {
+    if (!resetArmed) return undefined;
+    const t0 = setTimeout(() => setResetArmed(false), 3000);
+    return () => clearTimeout(t0);
+  }, [resetArmed]);
 
   // A new section starts at its top; returning to the tab keeps the scroll.
   React.useEffect(() => { if (bodyRef.current) bodyRef.current.scrollTop = 0; }, [section.id, q === ""]);
-  // Activating the tab moves focus into the page (search field), so keys
-  // never land in the composer hidden underneath.
-  React.useEffect(() => { if (active) searchRef.current?.focus({ preventScroll: true }); }, [active]);
+  // Activating the tab moves focus into the page so keys never land in the
+  // composer hidden underneath: back where it was when the page went
+  // inactive, if that element is still here, else the search field.
+  React.useEffect(() => {
+    if (active) {
+      const el = lastFocus.current && rootRef.current?.querySelector(`#${CSS.escape(lastFocus.current)}, [data-st-focus="${CSS.escape(lastFocus.current)}"]`);
+      (el ?? searchRef.current)?.focus({ preventScroll: true });
+    } else {
+      const el = rootRef.current?.querySelector(":focus");
+      lastFocus.current = el ? el.id || el.dataset.stFocus || null : null;
+    }
+  }, [active]);
 
   React.useEffect(() => {
     if (!active) return undefined;
@@ -152,7 +186,8 @@ function SettingsPage({ ctx }) {
         return;
       }
       if (mod || e.altKey || e.shiftKey) return;
-      if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !target.closest?.(_SP_FIELD)) {
+      if ((e.key === "ArrowLeft" || e.key === "ArrowRight")
+        && !target.closest?.(_SP_FIELD) && !target.closest?.(_SP_RADIO)) {
         e.preventDefault();
         const n = sections.length;
         select(sections[(idx + (e.key === "ArrowRight" ? 1 : n - 1)) % n].id);
@@ -168,10 +203,15 @@ function SettingsPage({ ctx }) {
     body = (
       <>
         <div className="st-head">
-          <div className="st-kicker">search · {hits.total} setting{hits.total === 1 ? "" : "s"}</div>
+          <div className="st-kicker">search · {hits.total} setting{hits.total === 1 ? "" : "s"}{hits.hiddenCount ? ` · ${hits.hiddenCount} hidden` : ""}</div>
           <div className="st-h1">“{q}”</div>
         </div>
-        {hits.groups.length === 0 && <div className="st-empty">No setting matches “{q}”.</div>}
+        {hits.groups.length === 0 && (
+          <div className="st-empty">
+            No visible setting matches “{q}”
+            {hits.hiddenCount ? ` (${hits.hiddenCount} hidden by current state)` : ""}.
+          </div>
+        )}
         {hits.groups.map(g => (
           <_SP_Group key={`${g.sectionId}/${g.groupName}`} name={`${g.sectionTitle} › ${g.groupName}`}
             src={g.src} rows={g.rows} ctx={ctx} query={q} />
@@ -201,22 +241,40 @@ function SettingsPage({ ctx }) {
           <label className="st-search">
             <_SP_Icon name="search" size={14} />
             <input ref={searchRef} type="text" placeholder="Search settings" value={query} autoComplete="off"
-              spellCheck={false} aria-label="Search settings" onChange={e => setQuery(e.target.value)} />
+              spellCheck={false} aria-label="Search settings" data-st-focus="search"
+              onChange={e => setQuery(e.target.value)} />
+            {query && (
+              <button type="button" className="st-search-clear" aria-label="clear search" title="clear search"
+                onClick={() => { setQuery(""); searchRef.current?.focus(); }}>
+                <_SP_Icon name="close" size={10} />
+              </button>
+            )}
             <span className="st-kbd">{_SP_IS_MAC ? "⌘F" : "Ctrl+F"}</span>
           </label>
-          <_SP_Strip sections={sections} active={section.id} counts={counts} searching={!!q} onSelect={select} />
+          <_SP_Strip sections={sections} active={section.id} counts={counts} hidden={hiddenCounts}
+            searching={!!q} onSelect={select} />
         </div>
       </div>
-      <div className="st-body" ref={bodyRef}>
+      <div className="st-body" ref={bodyRef} id="st-body"
+        role="tabpanel" aria-label={q ? `Search results for “${q}”` : section.title}>
         <div className="st-inner">{body}</div>
       </div>
       <div className="st-foot">
         <div className="st-inner">
           <span>changes apply at once</span>
           <span className="st-sp" />
-          <button type="button" disabled={!canReset} onClick={() => ctx.setTweak(resetEdits)}>
-            reset {q ? "matches" : section.title.toLowerCase()} to defaults
-          </button>
+          {resetArmed && canReset ? (
+            <span className="st-reset-confirm" role="status">
+              reset {Object.keys(resetEdits).length} setting{Object.keys(resetEdits).length === 1 ? "" : "s"}?
+              <button type="button" className="yes" onClick={() => { setResetArmed(false); ctx.setTweak(resetEdits); }}>yes</button>
+              <button type="button" onClick={() => setResetArmed(false)}>no</button>
+            </span>
+          ) : (
+            <button type="button" disabled={!canReset} onClick={() => setResetArmed(true)}
+              title={q ? "Reset every matched setting to its default" : `Reset every changed ${section.title.toLowerCase()} setting to its default`}>
+              reset {q ? "matches" : section.title.toLowerCase()} to defaults
+            </button>
+          )}
           <span><span className="st-kbd">←</span> <span className="st-kbd">→</span> sections</span>
           {closeHint && <span><span className="st-kbd">{closeHint}</span> close tab</span>}
         </div>

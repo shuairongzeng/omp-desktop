@@ -267,9 +267,15 @@
 
   const scope = (sectionId) => (sectionId && sectionId !== "all" ? [sectionById(sectionId)].filter(Boolean) : SECTIONS);
 
-  /** Changed visible rows of a section (or of all, for `"all"`/nothing). */
+  /** Changed rows of a section (or of all, for `"all"`/nothing), hidden
+   *  ones included: the same rows the section reset covers, so the badge
+   *  count and the reset agree. */
   const modifiedCount = (sectionId, values, opts) =>
-    scope(sectionId).flatMap(sectionRows).filter(r => visible(r, values) && isModified(r, values, opts)).length;
+    scope(sectionId).flatMap(sectionRows).filter(r => isModified(r, values, opts)).length;
+
+  /** Of those, how many are hidden by `visibleIf` right now. */
+  const hiddenCount = (sectionId, values, opts) =>
+    scope(sectionId).flatMap(sectionRows).filter(r => !visible(r, values) && isModified(r, values, opts)).length;
 
   /** Edits for setTweak that reset every changed row of `rows`.
    *  Rows see the edits before them, so a theme reset settles the accent. */
@@ -291,28 +297,38 @@
   const searchText = (row) =>
     `${row.label} ${(row.desc ?? "").replace(/`/g, "")} ${row.kw ?? ""} ${row.moreKw?.() ?? ""}`.toLowerCase();
 
-  /** Visible rows whose label, desc or keywords contain the query,
-   *  case-insensitive, grouped by section › group in page order. */
+  /** Every whitespace-separated token of the query in the row's text (a
+   *  tokenised AND: "font mono" needs both, in any order). */
+  const textMatches = (text, tokens) => tokens.every(tok => text.includes(tok));
+
+  /** Visible rows whose label, desc or keywords contain every token of the
+   *  query, case-insensitive, grouped by section › group in page order;
+   *  `hiddenCount` counts the rows that match but `visibleIf` hides. */
   function search(query, values) {
     const q = String(query ?? "").trim().toLowerCase();
     const bySection = Object.fromEntries(SECTIONS.map(s => [s.id, 0]));
     const groups = [];
     let total = 0;
-    if (!q) return { total, bySection, groups };
+    let hiddenCount = 0;
+    if (!q) return { total, hiddenCount, bySection, groups };
+    const tokens = q.split(/\s+/);
     for (const s of SECTIONS) {
       for (const g of s.groups) {
-        const hits = g.rows.filter(r => visible(r, values) && searchText(r).includes(q));
+        const matched = g.rows.filter(r => textMatches(searchText(r), tokens));
+        if (!matched.length) continue;
+        const hits = matched.filter(r => visible(r, values));
+        hiddenCount += matched.length - hits.length;
         if (!hits.length) continue;
         groups.push({ sectionId: s.id, sectionTitle: s.title, groupName: g.name, src: g.src, rows: hits });
         bySection[s.id] += hits.length;
         total += hits.length;
       }
     }
-    return { total, bySection, groups };
+    return { total, hiddenCount, bySection, groups };
   }
 
   window.OMP_SETTINGS = Object.freeze({
     SECTIONS, THEMES, ACCENTS, themeAccent,
-    rows, value, clamp, visible, isModified, resetRow, modifiedCount, resetRows, resetEdits, search,
+    rows, value, clamp, visible, isModified, resetRow, modifiedCount, hiddenCount, resetRows, resetEdits, search,
   });
 })();

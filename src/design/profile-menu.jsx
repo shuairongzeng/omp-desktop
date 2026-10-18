@@ -29,6 +29,7 @@ function ProfileMenu({
   const rootRef    = React.useRef(null);
   const inputRef   = React.useRef(null);
   const triggerRef = React.useRef(null);
+  const popRef     = React.useRef(null);
   // Bumped by every close. Each async handler captures it and drops its
   // result if the popover it belonged to is gone: `close()` is the only
   // thing that resets `error`/`mode`/`armedDelete`, so a late `setError`
@@ -54,6 +55,12 @@ function ProfileMenu({
   }, []);
 
   window.usePopoverDismiss(open, rootRef, close);
+  // #6: arrows / Home / End between the rows, Tab closes (menuKeyNav). The
+  // create/rename form (mode) handles its own keys first.
+  const onPopKey = e => {
+    if (mode) return;
+    window.menuKeyNav(e, popRef.current, '[role="menuitem"]', close);
+  };
 
   React.useEffect(() => { if (mode) inputRef.current?.focus(); }, [mode]);
 
@@ -209,7 +216,7 @@ function ProfileMenu({
       </button>
 
       {open && (
-        <div className="profile-pop" role="menu">
+        <div className="profile-pop" role="menu" ref={popRef} onKeyDown={onPopKey}>
           <div className="profile-pop-head mono" role="none">profile · this tab</div>
 
           {/* role="none" on every non-menuitem container: a generic element

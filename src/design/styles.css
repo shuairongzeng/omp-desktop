@@ -51,7 +51,7 @@
   --fg: #E6E9F2;
   --fg-2: #B7BDD0;
   --fg-3: #7B8298;
-  --fg-4: #545A70;
+  --fg-4: #60677D;
   --fg-5: #393E54;
 
   --accent: #8AF0C8;            /* liquid mint */
@@ -195,7 +195,7 @@
   --fg: #ECEFF4;
   --fg-2: #D8DEE9;
   --fg-3: #AEB9CC;
-  --fg-4: #7B88A1;
+  --fg-4: #8F9BB2;
   --fg-5: #55617A;
 
   --accent: #88C0D0;
@@ -243,7 +243,7 @@
   --fg: #93A1A1;
   --fg-2: #839496;
   --fg-3: #657B83;
-  --fg-4: #586E75;
+  --fg-4: #768A8E;
   --fg-5: #3E545B;
 
   --accent: #B58900;
@@ -339,7 +339,7 @@
   --fg: #E8E8F2;
   --fg-2: #B8B8CC;
   --fg-3: #7A7A92;
-  --fg-4: #50506A;
+  --fg-4: #606079;
   --fg-5: #34344A;
 
   --accent: #7C6CFA;
@@ -646,7 +646,10 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
   font-size: var(--d-text-sm);
   transition: background 120ms var(--ease-out), color 120ms, border-color 120ms;
 }
-.btn:hover { background: var(--bg-hover); color: var(--fg); }
+/* Disabled is visible at a glance (composer's send/steer, busy refresh
+   buttons): dimmed, no hover feedback, no pointer. */
+.btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.btn:disabled { opacity: .45; cursor: default; }
 .btn.ghost { color: var(--fg-3); }
 .btn.primary {
   background: var(--accent);

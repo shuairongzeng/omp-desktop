@@ -45,6 +45,16 @@
 .st-width b i { font-style: normal; color: var(--fg-4); }
 .st-width-def { color: var(--fg-4); }
 
+/* The width cell's changed dot is the per-column reset (rows-layout.jsx):
+ *  the same 6px dot, but a real button, with a hover halo. */
+.st-width b .st-moddot-btn {
+  width: 6px; height: 6px; padding: 0; border: 0; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 6px var(--accent-glow);
+}
+.st-width b .st-moddot-btn:hover { box-shadow: 0 0 0 3px var(--accent-soft), 0 0 6px var(--accent-glow); }
+.st-width b .st-moddot-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.st-width b .st-moddot[aria-hidden="true"] { background: transparent; box-shadow: none; }
+
 /* ── Misc rows ──────────────────────────────────────────────────────── */
 .st-path-text { min-width: 0; }
 .st-btns { display: flex; gap: 8px; flex: none; }
@@ -56,7 +66,14 @@
 
 /* ── Shortcuts editor ───────────────────────────────────────────────── */
 .st-kb { display: flex; flex-direction: column; }
-.st-kb-top { padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.st-kb-top {
+  position: sticky; top: 0; z-index: 2;
+  padding: 10px 16px; border-bottom: 1px solid var(--line);
+  background: var(--bg-surface);
+}
+/* The shortcuts editor's own group: its filter bar is sticky in the page's
+   scroll box, which the group's overflow:hidden would clip. */
+.st-grp:has(> .st-kb) { overflow: visible; }
 .st-kb-filter {
   width: 100%; padding: 6px 10px; border-radius: 7px;
   border: 1px solid var(--line); background: var(--bg-input); color: var(--fg);

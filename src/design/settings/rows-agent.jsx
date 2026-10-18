@@ -48,7 +48,11 @@ function _SRA_GoalContinue({ row, ctx, query }) {
   const scope = name ? ` Applies to profile “${name}” (omp's config); its running tabs pick it up without a restart.` : "";
   let control;
   if (cont.value !== null) {
-    control = <Toggle value={cont.value} label={row.label} onChange={v => { if (!cont.busy) cont.set(v); }} />;
+    control = (
+      <Toggle value={cont.value} label={row.label} disabled={cont.busy}
+        className={`st-tgl-pending${cont.busy ? " busy" : ""}`}
+        onChange={v => { if (!cont.busy) cont.set(v); }} />
+    );
   } else {
     control = <span className="st-ro">{cont.error ? "unavailable" : "reading…"}</span>;
   }

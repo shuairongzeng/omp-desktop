@@ -127,6 +127,9 @@
 .md-content a:hover { color: var(--fg); }
 
 .md-content table { border-collapse: collapse; width: 100%; margin: 0.6em 0; font-size: 0.9em; }
+/* The marked table renderer wraps every table in this div: a wide one
+   scrolls horizontally here instead of being clipped by its card. */
+.md-content .md-table-wrap { overflow-x: auto; max-width: 100%; }
 .md-content th { background: var(--bg-elevated); font-weight: 600; }
 .md-content th, .md-content td {
   padding: 0.4em 0.75em; border: 1px solid var(--line); text-align: left;
@@ -137,8 +140,10 @@
 .md-content strong { font-weight: 600; color: var(--fg); }
 .md-content em     { font-style: italic; color: var(--fg-2); }
 
-/* Streaming caret appended after the last block */
-.md-streaming::after {
+/* Streaming caret appended inside the last block's flow, so it sits right
+   after the text (a container-level ::after lands below a trailing list
+   or code block, visually detached from what is streaming). */
+.md-streaming > :last-child::after {
   content: '▌';
   display: inline-block;
   color: var(--accent);

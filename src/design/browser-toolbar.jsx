@@ -2,7 +2,10 @@
    (browser-panel.jsx renders it). `ui` is app/use-browser.jsx's result.
    Page tabs wear the project tab bar's look (`.tab`, `.tab-name`,
    `.tab-close`, `.tab-add`; layout/chrome.css), sized down for the panel in
-   layout/browser.css. The name is a button so the keyboard reaches it. */
+   layout/browser.css. The name is a button so the keyboard reaches it.
+   A refused navigation's error shows as a line under the bar (`ui.navError`),
+   and the address field keeps a submitted URL as its draft until Rust's
+   state catches up, so it does not flash back to the old page. */
 
 const { Icon: _BT_Icon, OMP_BROWSER: _BT } = window;
 
@@ -11,11 +14,21 @@ function BrowserTabs({ ui }) {
     <div className="browser-tabs">
       <div className="browser-tabs-scroll">
         {ui.tabs.map((t) => {
-          const name = t.title || t.url || "new tab";
+          // A blank page has no title and `about:blank` for its URL: "new
+          // tab" is what it is to the user.
+          const name = t.title || (t.url && t.url !== "about:blank" ? t.url : "new tab");
           return (
             <div key={t.targetId} className={`tab${t.active ? " active" : ""}`} title={t.url || name}
-              onClick={() => ui.activateTab(t.targetId)}>
+              onClick={() => ui.activateTab(t.targetId)}
+              onAuxClick={(e) => {
+                // Middle click closes, like the project tabs and browsers.
+                if (e.button !== 1) return;
+                e.preventDefault();
+                e.stopPropagation();
+                ui.closeTab(t.targetId);
+              }}>
               <button type="button" className="tab-name" aria-current={t.active ? "page" : undefined}>{name}</button>
+              {t.loading && <span className="tab-run-dot loading" title="loading" />}
               <button type="button" className="tab-close" aria-label={`close ${name}`}
                 onClick={(e) => { e.stopPropagation(); ui.closeTab(t.targetId); }}>
                 <_BT_Icon name="close" size={9} />
@@ -35,12 +48,20 @@ function BrowserToolbar({ ui }) {
   const { state } = ui;
   const [draft, setDraft] = React.useState(null); // null = show the page's address
   const [shake, setShake] = React.useState(false);
+  // `draft` is the field's own text while editing, or `{ text, held }` after
+  // a submit (held = the URL the state must catch up to); null = the page's.
+  const shown = typeof draft === "string" || draft == null ? draft : draft.text;
+  // A submitted URL stays as the draft until the state's url catches up,
+  // else the field flashes back to the old page for the whole load.
+  React.useEffect(() => {
+    if (draft?.held && state.url === draft.held) setDraft(null);
+  }, [state.url, draft]);
   const submit = (e) => {
     e.preventDefault();
-    const url = _BT.normalizeUrl(draft ?? state.url);
+    const url = _BT.normalizeUrl(shown ?? state.url);
     if (!url) { setShake(true); return; }
-    setDraft(null);
-    ui.navigate(url);
+    setDraft({ text: url, held: url });
+    void ui.navigate(url);
     e.currentTarget.elements.address.blur();
   };
   const onKeyDown = (e) => {
@@ -52,6 +73,7 @@ function BrowserToolbar({ ui }) {
     setDraft(null);
     e.currentTarget.blur();
   };
+  const navError = ui.navError && state.status === "running" ? ui.navError : null;
   return (
     <>
       <BrowserTabs ui={ui} />
@@ -69,13 +91,15 @@ function BrowserToolbar({ ui }) {
           <input
             name="address"
             className="mono"
-            value={draft ?? state.url}
+            value={shown ?? state.url}
             placeholder="address or localhost:3000"
             spellCheck={false}
             autoComplete="off"
             onChange={(e) => setDraft(e.target.value)}
             onFocus={(e) => e.target.select()}
-            onBlur={() => setDraft(null)}
+            // Blur keeps a held draft (a submitted URL): the page's own
+            // address takes over once it caught up, or Esc resets the field.
+            onBlur={() => { if (typeof draft === "string") setDraft(null); }}
             onKeyDown={onKeyDown}
           />
         </form>
@@ -89,6 +113,16 @@ function BrowserToolbar({ ui }) {
           <_BT_Icon name="close" size={11} />
         </button>
       </div>
+      {navError && (
+        <div className="browser-nav-error" role="alert" title={navError}>
+          <_BT_Icon name="warn" size={10} color="var(--rose)" />
+          <span>{navError}</span>
+          <button type="button" className="btn icon ghost" title="retry" aria-label="retry"
+            onClick={() => { setDraft(null); void ui.navigate(state.url || "about:blank"); }}>
+            <_BT_Icon name="refresh" size={10} />
+          </button>
+        </div>
+      )}
     </>
   );
 }

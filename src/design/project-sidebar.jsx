@@ -29,15 +29,41 @@ function sidebarHint(actionId, fallback) {
   return window.OMP_KEYMAP ? window.OMP_KEYMAP.hintFor(actionId) : fallback;
 }
 
+// #12: collapsed groups persist per project. A group key is already
+// `profile|normPath` (project-nav.js groupKey) — pathless tabs' `tab:<id>`
+// keys never survive a restart, so they fall through the JSON re-parse and
+// simply start expanded, which is the old behaviour.
+const COLLAPSE_KEY = "omp-desktop.sidebar.collapsed";
+function _loadCollapsed() {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY);
+    const map = raw ? JSON.parse(raw) : null;
+    return map && typeof map === "object" ? map : {};
+  } catch (_) { return {}; }
+}
+function _saveCollapsed(map) {
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(map)); } catch (_) { /* quota/private mode */ }
+}
+
+// #13: platform-aware fallback for the registry-not-loaded window.
+const _PSB_IS_WIN = typeof navigator !== "undefined" &&
+  (navigator.userAgent.includes("Windows") || navigator.platform.startsWith("Win"));
+
 function ProjectSidebar({
   tabs, activeId, recents, savedSessions = [], historyProfile, profileLabel,
   onSelectTab, onCloseTab, onRenameTab, onNewInProject, onOpenRecent, onForgetRecent, onOpenFolder, onHide, onReorder,
   onResumeSession, onShowAllHistory,
 }) {
-  // Group keys the user folded. Not persisted: tab ids (and so pathless
-  // groups' keys) don't survive a restart anyway.
-  const [collapsed, setCollapsed] = React.useState({});
-  const toggle = key => setCollapsed(c => ({ ...c, [key]: !c[key] }));
+  // Group keys the user folded (#12): persisted as a `profile|normPath`
+  // JSON map in localStorage — a restart remembers the folds. Truthy =
+  // collapsed; entries for projects that no longer open simply linger
+  // (bounded by distinct folders ever folded).
+  const [collapsed, setCollapsed] = React.useState(_loadCollapsed);
+  const toggle = key => setCollapsed(c => {
+    const next = { ...c, [key]: !c[key] };
+    _saveCollapsed(next);
+    return next;
+  });
   // Tab whose name is being edited inline (#32). Starting selects it, the
   // same as the first click of a double-click does.
   const [renaming, setRenaming] = React.useState(null);
@@ -56,7 +82,7 @@ function ProjectSidebar({
   // Drag to reorder (#40), the same lists as the tab bar's: projects (a
   // project's rows move as one block), and members within their project.
   const reorder = window.useDragReorder(onReorder);
-  const hideHint = sidebarHint("desktop.sidebar.toggle", "Ctrl+B");
+  const hideHint = sidebarHint("desktop.sidebar.toggle", _PSB_IS_WIN ? "Ctrl+B" : "⌘B");
 
   return (
     <aside className="project-sidebar" aria-label="projects">

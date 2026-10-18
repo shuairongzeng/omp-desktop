@@ -12,6 +12,7 @@
 //   clampWidth(px, stageWidth)      panel width bounds (MIN_WIDTH .. maxWidth)
 //   maxWidth(stageWidth)            the widest the panel goes
 //   popoverTop(rect, pageH, popH, margin)  annotate popover's top, view fraction
+//   pickKey(pick)                   a pick's element identity (comment drafts)
 //   pathMenu(settings)              Settings → Browser's Chromium menu rows
 // Which keys the page gives back to the app is OMP_KEYMAP.guestShouldBypass
 // (shared with the terminal). Whether the panel follows the agent's page is
@@ -252,12 +253,24 @@
   }
 
   // Esc on the panel while annotating: closes the comment popover when one
-  // is open, else leaves annotate mode; outside annotate mode it is the
-  // page's (null). Either way the panel consumes it, so the app keymap's
-  // Esc (interrupt the agent's turn) never fires from here.
-  function escapeAction(annotate, pending) {
-    if (!annotate && !pending) return null;
-    return pending ? "cancelPick" : "leaveAnnotate";
+  // is open, else leaves annotate mode; in full view it leaves full view;
+  // outside both it is the page's (null). Either way the panel consumes it,
+  // so the app keymap's Esc (interrupt the agent's turn) never fires here.
+  function escapeAction(annotate, pending, fullView = false) {
+    if (pending) return "cancelPick";
+    if (annotate) return "leaveAnnotate";
+    if (fullView) return "leaveFullView";
+    return null;
+  }
+
+  // The identity a pick's comment draft is stored under: the element it
+  // points at (selector, or tag + page rect for an area), stable while the
+  // page does not move. use-browser.jsx keeps one draft per key, so a pick
+  // left and picked again comes back with its text.
+  function pickKey(pick) {
+    if (!pick) return "";
+    if (pick.kind === "area") return `area@${round(pick.rect?.x)},${round(pick.rect?.y)}`;
+    return pick.selector || `${pick.tag ?? "element"}@${round(pick.rect?.x)},${round(pick.rect?.y)}`;
   }
 
   // ---- Chips ---------------------------------------------------------------
@@ -375,6 +388,7 @@
     MIN_WIDTH,
     maxWidth,
     clampWidth,
+    pickKey,
     popoverTop,
     pathMenu,
   };

@@ -69,8 +69,16 @@ function WidgetList({ block, onInsert }) {
       {block.title && <div className="wdg-section mono">{block.title}<span className="wdg-count">{items.length}</span></div>}
       <div className="wdg-list">
         {shown.map((it, i) => <WidgetItem key={i} item={it} now={now} onInsert={onInsert} />)}
-        {shown.length < items.length && (
-          <button className="btn ghost wdg-more" onClick={() => setExpanded(true)}>+{items.length - shown.length} more</button>
+        {shown.length < items.length ? (
+          <button className="btn ghost wdg-more" onClick={() => setExpanded(true)}>
+            +{items.length - shown.length} more
+          </button>
+        ) : limit && expanded && (
+          /* #26: the expanded list can fold back to its truncated form;
+             rendered only when a limit exists (no limit = never truncated). */
+          <button className="btn ghost wdg-more" onClick={() => setExpanded(false)}>
+            show less
+          </button>
         )}
       </div>
     </>

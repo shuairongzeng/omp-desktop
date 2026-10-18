@@ -117,14 +117,25 @@ function useWidgets({ bridge, activeSessionId, railVisible, tweaks }) {
     return out;
   }, [config.plugins, activeIds, hiddenIds, sessionId, runsVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // #20: approvals the user dismissed with "Not now" — hidden for this
+  // browser session only (component state, never the backend's config).
+  // A changed fingerprint re-lists the plugin: `changed` cards are urgent
+  // (a previously approved command mutated), not nagging.
+  const [dismissed, setDismissed] = React.useState(new Set());
+  const dismissApproval = React.useCallback((pluginId) => {
+    setDismissed(prev => {
+      const next = new Set(prev);
+      next.add(pluginId);
+      return next;
+    });
+  }, []);
+
   // Approval is per plugin, not per tab: shown whatever the active project.
   const approvals = React.useMemo(() => config.plugins
-    .filter(p => p.enabled && p.approval !== "approved" && !hiddenIds.includes(p.id))
+    .filter(p => p.enabled && p.approval !== "approved" && !hiddenIds.includes(p.id)
+      && !dismissed.has(p.id))
     .map(p => ({ id: p.id, title: p.title, command: p.command, changed: p.approval === "changed" })),
-  [config.plugins, hiddenIds]);
-
-  const togglePlugins = React.useMemo(() => config.plugins.filter(p => p.enabled), [config.plugins]);
-
+  [config.plugins, hiddenIds, dismissed]);
   const refresh = React.useCallback((pluginId) => bridge?.widgetsRefresh(pluginId), [bridge]);
   const reload = React.useCallback(async () => {
     if (bridge) applySnapshot(await bridge.widgetsReload());
@@ -144,9 +155,11 @@ function useWidgets({ bridge, activeSessionId, railVisible, tweaks }) {
     throw new Error(res.error);
   }, [bridge, applySnapshot]);
 
+  const togglePlugins = React.useMemo(() => config.plugins.filter(p => p.enabled), [config.plugins]);
+
   return {
     cards, approvals, configErrors: config.errors, fatal: config.fatal, configPath: config.configPath,
-    togglePlugins, refresh, reload, approve,
+    togglePlugins, refresh, reload, approve, dismissApproval,
   };
 }
 

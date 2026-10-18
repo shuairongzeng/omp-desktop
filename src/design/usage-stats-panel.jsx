@@ -65,12 +65,17 @@ function UsageStatsPanel({ onClose, profileLabel }) {
   const [data, setData]       = React.useState(EMPTY);
   const [loading, setLoading] = React.useState(false);
   const [error, setError]     = React.useState(null);
+  // Generation counter: a slower earlier refresh resolving after a newer
+  // one must not overwrite its figures (use-keymap.jsx:62-68's pattern).
+  const genRef                = React.useRef(0);
 
   const refresh = React.useCallback(async () => {
     if (!bridge) return;
+    const gen = ++genRef.current;
     setLoading(true);
     setError(null);
     const res = await bridge.usageStats();
+    if (gen !== genRef.current) return; // stale — a newer refresh started, discard
     if (!res.ok) {
       // Backend rejection (omp not on PATH, an omp build old enough to
       // predate the `stats` subcommand, a sync failure, ...) — see
@@ -96,6 +101,24 @@ function UsageStatsPanel({ onClose, profileLabel }) {
 
   React.useEffect(() => { refresh(); }, [refresh]);
 
+  // Capture phase on `window`, not the panel's own onKeyDown: Escape must
+  // close the panel even when focus sits on the refresh button, and must
+  // not fall through to the global keymap's `app.interrupt` (app-live.jsx's
+  // guard skips abort while this overlay is open, so the key would
+  // otherwise do nothing). Same pattern as update-modal.jsx. Ctrl/Alt/Meta
+  // chords pass through as global shortcuts.
+  React.useEffect(() => {
+    const onKey = e => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
   const overall = data.overall;
 
   return (
@@ -104,10 +127,10 @@ function UsageStatsPanel({ onClose, profileLabel }) {
         <div className="stats-head">
           <_StatsIcon name="cost" size={13} color="var(--accent)" />
           <span className="mono" style={{ color: "var(--fg-2)" }}>usage · {profileLabel} · last 24h</span>
-          <button className="btn icon ghost" style={{ marginLeft: "auto" }} onClick={refresh} title="refresh">
-            <_StatsIcon name="refresh" size={11} />
+          <button className="btn icon ghost" style={{ marginLeft: "auto" }} onClick={refresh} disabled={loading} title="refresh">
+            <span className={loading ? "spin-icon" : undefined}><_StatsIcon name="refresh" size={11} /></span>
           </button>
-          <button className="btn icon ghost" onClick={onClose} title="close">
+          <button className="btn icon ghost" onClick={onClose} title="close (esc)">
             <_StatsIcon name="close" size={11} />
           </button>
         </div>

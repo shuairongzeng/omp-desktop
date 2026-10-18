@@ -108,6 +108,18 @@ body.reordering, body.reordering * { cursor: grabbing !important; user-select: n
    context and paint its open dropdown under the stage while it is dragged. */
 .reorder-src > :not(.tab-group-pop) { opacity: 0.5; }
 .drop-before, .drop-after { position: relative; }
+/* #11: the slot opens a 4px gap the dragged item will visually land in,
+   transitioned so the gap grows/shrinks as the pointer crosses rows
+   instead of snapping. Only while reordering: these classes also appear
+   on the bar's chips, whose margin is a plain base style. */
+body.reordering .drop-before { margin-block-start: 4px; }
+body.reordering .drop-after  { margin-block-end: 4px; }
+body.reordering [data-reorder-axis="x"].drop-before,
+body.reordering [data-reorder-axis="x"].drop-after {
+  margin-block: 0; margin-inline: 4px 0;
+}
+body.reordering [data-reorder-axis="x"].drop-after { margin-inline: 0 4px; }
+[data-reorder-axis] { transition: margin 120ms var(--ease-out); }
 .drop-before::after, .drop-after::after {
   content: ""; position: absolute; z-index: 1; pointer-events: none;
   background: var(--accent);

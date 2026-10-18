@@ -59,7 +59,14 @@ function SubagentRailCard({ agents, paneOpen, onOpen, onTogglePane }) {
               </button>
             ))}
           </div>
-          {hidden > 0 && <div className="sa-rail-more mono">+{hidden} more</div>}
+          {/* #27: clickable — the hidden agents are the ones the manager
+              pane is for; the row and the button below it both open it. */}
+          {hidden > 0 && (
+            <button className="sa-rail-more mono" onClick={onTogglePane}
+              title={`open the manager to see all ${agents.length} agents`}>
+              +{hidden} more
+            </button>
+          )}
         </>
       )}
 

@@ -27,6 +27,22 @@ function WindowChrome({
   profiles, activeProfileId, startupProfileId,
   onSelectProfile, onCreateProfile, onRenameProfile, onDeleteProfile, onSetStartupProfile,
 }) {
+  // #15: the maximize glyph must follow the window's real state, including
+  // OS-level changes (double-click title bar, Win+Up, taskbar). `listen`
+  // ("tauri://resize") fires on both directions; isMaximized() is polled
+  // once per event, not per render.
+  const [maximized, setMaximized] = React.useState(false);
+  React.useEffect(() => {
+    const win = window.__TAURI__?.window?.getCurrentWindow?.();
+    if (!win) return undefined;
+    let alive = true;
+    const sync = () => { win.isMaximized().then(m => { if (alive) setMaximized(m); }).catch(() => {}); };
+    sync();
+    let unlisten = null;
+    win.listen?.("tauri://resize", sync).then(un => { unlisten = un; }).catch(() => {});
+    return () => { alive = false; unlisten?.(); };
+  }, []);
+
   return (
     <div className="chrome" data-tauri-drag-region>
       {/* macOS traffic lights — left side, hidden on Windows */}
@@ -41,7 +57,7 @@ function WindowChrome({
       <div className="chrome-title">
         <span className="mono" style={{ color: "var(--fg-3)" }}>OMP</span>
         <span className="mono" style={{ color: "var(--fg-5)" }}>·</span>
-        <span style={{ color: "var(--fg-2)" }}>{project.name}</span>
+        <span className="chrome-title-project" style={{ color: "var(--fg-2)" }}>{project.name}</span>
         {project.branch && (
           <span className="chip muted" style={{ marginLeft: 6 }}>
             <Icon name="branch" size={9} color="var(--fg-3)" />
@@ -74,8 +90,16 @@ function WindowChrome({
             <button className="win-ctrl win-min" title="Minimize">
               <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5.5h8" stroke="currentColor" strokeWidth="1" /></svg>
             </button>
-            <button className="win-ctrl win-max" title="Maximize / Restore">
-              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" /></svg>
+            <button className="win-ctrl win-max" title={maximized ? "Restore" : "Maximize"}>
+              {/* #15: restore shows the classic two-overlapping-rects glyph. */}
+              {maximized ? (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <rect x="0.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+                  <path d="M2.5 2.5V0.5h7v7h-2" fill="none" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" /></svg>
+              )}
             </button>
             <button className="win-ctrl win-close" title="Close">
               <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" strokeWidth="1.1" /></svg>
@@ -99,6 +123,12 @@ function tabClickProps(onSelect, onClose) {
     onClick: e => (e.button === 1 ? onClose?.() : onSelect?.()),
     onMouseDown: e => { if (e.button === 1) e.preventDefault(); },
     onAuxClick: e => { if (e.button === 1) { e.preventDefault(); onClose?.(); } },
+    // #3: the div is role="tab" + tabIndex={0}, so Enter and Space must
+    // activate it like the native button it isn't. `key === " "` is Space
+    // (and isSubmitEnter's IME guard lives in profile-menu's input, not here).
+    onKeyDown: e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect?.(); }
+    },
   };
 }
 
@@ -107,6 +137,7 @@ function TabBar({
   sidebarOpen, onToggleSidebar,
   profiles = [], appVersion, updateVersion, onUpdate, onCheckUpdate,
   settings, onSelectSettings, onCloseSettings,
+  terminalDirty,
 }) {
   // Tabs can run under different profiles, so a tab whose profile is not the
   // built-in one is labelled with it — otherwise two tabs on the same folder
@@ -120,7 +151,7 @@ function TabBar({
   // group), and a group chip's members in its dropdown (see TabGroupChip).
   const reorder = window.useDragReorder(onReorder);
   return (
-    <div className="tabs" onPointerDown={reorder.onPointerDown}>
+    <div className="tabs" role="tablist" aria-label="projects" onPointerDown={reorder.onPointerDown}>
       <button className={`tab-add ${sidebarOpen ? "on" : ""}`}
         title={`project sidebar (${hintFor("desktop.sidebar.toggle", "Ctrl+B")})`}
         aria-pressed={!!sidebarOpen}
@@ -151,12 +182,16 @@ function TabBar({
           <div key={p.id}
             {...reorder.itemProps("projects", group.key, "x")}
             className={`tab ${active ? "active" : ""}${reorder.dropClass("projects", group.key)}`}
+            role="tab"
+            tabIndex={0}
+            aria-selected={active}
             {...tabClickProps(() => onSelect(p.id), () => onClose?.(p.id))}
             // The first click of the pair already selected the tab.
             onDoubleClick={e => { if (onRename && !e.target.closest(".tab-close")) setRenaming(p.id); }}>
             <span className="tab-bar-mark" style={{ background: active ? p.color : "transparent" }} />
             <Icon name="folder" size={11} color={active ? p.color : "var(--fg-4)"} />
             <TabRunDot state={p.runState} />
+            {terminalDirty?.[p.id] && <span className="tab-run-dot term-dirty" title="terminal has new output" />}
             {renaming === p.id ? (
               <RenameField value={p.name}
                 onCommit={name => onRename(p.id, name)}
@@ -175,6 +210,7 @@ function TabBar({
           dragged; `changed` counts settings off their default. */}
       {settings?.open && (
         <div className={`tab app-tab ${settings.active ? "active" : ""}`}
+          role="tab" tabIndex={0} aria-selected={!!settings.active}
           title={`settings (${hintFor("desktop.settings.open", "Ctrl+,")})`}
           {...tabClickProps(onSelectSettings, onCloseSettings)}>
           <span className="tab-bar-mark" style={{ background: settings.active ? "var(--fg-3)" : "transparent" }} />
@@ -215,24 +251,45 @@ function TabBar({
 // pills below the prompt box show (and change) both. It spans the window
 // under the workspace; the st-ctx meter, st-cost and st-tps cells (each
 // with its separator) drop out when the window is narrow (layout/rail.css).
-function StatusBar({ ctx, todoDone, todoTotal, onTodo, onSettings, settingsActive = false, onChanges, onRules, approvalMode, onStats, onTree, onTerminal, terminalOpen, onBrowser, browserOpen = false }) {
+function StatusBar({
+  ctx, todoDone, todoTotal, onTodo, onSettings, settingsActive = false, onChanges, onRules,
+  approvalMode, onStats, onTree, onTerminal, terminalOpen, onBrowser, browserOpen = false,
+  busy = false, connected = true, showRailToggle = false, onToggleRail,
+}) {
+  // #5: currentTps is the *last* finished turn's rate — stale whenever no
+  // turn is running. Muted + "last" prefix instead of reading as current.
+  const tps = busy ? (
+    <span className="st-tps mono" style={{ color: "var(--fg-3)" }}>{ctx.tokensPerSec} t/s</span>
+  ) : (
+    <span className="st-tps mono" style={{ color: "var(--fg-4)" }}>last {ctx.tokensPerSec} t/s</span>
+  );
+  // #22: same thresholds as TokenGauge (sparks.jsx) so the tube and the
+  // rail gauge never disagree.
+  const tone = ctx.pct > 80 ? "rose" : ctx.pct > 60 ? "amber" : "";
   return (
     <div className="status">
-      <span className="status-cell"><span className="dot live" /> connected</span>
+      {/* #2: honest connection state; "connecting" is the not-yet bridge
+          startup, not a third colour for a healthy session. */}
+      <span className="status-cell">
+        <span className={`dot ${connected === null ? "warn" : connected ? "live" : "error"}`} />
+        {connected === null ? "connecting" : connected ? "connected" : "disconnected"}
+      </span>
       <span className="status-sep">·</span>
       <span className="status-cell st-ctx mono">
         <span style={{ color: "var(--fg-3)" }}>{ctx.label}</span>
         <span className="status-bar-tube">
-          <span className="status-bar-fill" style={{ width: `${ctx.pct}%` }} />
+          <span className={`status-bar-fill${tone ? ` tone-${tone}` : ""}`} style={{ width: `${ctx.pct}%` }} />
         </span>
         <span className="st-ctx-pct" style={{ color: "var(--fg-4)" }}>{(+ctx.pct).toFixed(1)}%</span>
       </span>
       <span className="status-sep st-cost">·</span>
       <span className="status-cell st-cost mono"><span style={{ color: "var(--fg-3)" }}>cost</span> {ctx.cost}</span>
       <span className="status-sep st-tps">·</span>
-      <span className="status-cell st-tps mono"><span style={{ color: "var(--fg-3)" }}>{ctx.tokensPerSec}</span> t/s</span>
+      <span className="status-cell st-tps-cell">{tps}</span>
       <div className="status-gap" />
-      <button className="status-cell btn ghost" onClick={onTodo} style={{ height: 20, padding: "0 6px" }}>
+      <button className="status-cell btn ghost" onClick={onTodo}
+        title={`plan kanban (${hintFor("desktop.panel.todo", "todo")})`}
+        style={{ height: 20, padding: "0 6px" }}>
         <Icon name="plan" size={11} color="var(--accent)" />
         <span style={{ color: "var(--accent)" }}>todo {todoDone}/{todoTotal}</span>
       </button>
@@ -268,6 +325,18 @@ function StatusBar({ ctx, todoDone, todoTotal, onTodo, onSettings, settingsActiv
         aria-pressed={settingsActive} style={{ height: 20, padding: "0 6px" }}>
         <Icon name="cog" size={11} color={settingsActive ? "var(--accent)" : "var(--fg-3)"} />
       </button>
+      {/* #16: the rail's ✕ leaves focus layout with no way back; this
+          restores it (same place the toggle lives for the sidebar). */}
+      {showRailToggle && (
+        <>
+          <span className="status-sep">·</span>
+          <button className="status-cell btn ghost" onClick={onToggleRail}
+            title={`show ambient rail${hintFor("desktop.rail.toggle") ? ` (${hintFor("desktop.rail.toggle")})` : ""}`}
+            style={{ height: 20, padding: "0 6px" }}>
+            <Icon name="layers" size={11} color="var(--fg-3)" />
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -295,7 +364,7 @@ function ApprovalModeCell({ cell, onClick }) {
 // messages, opacity is log-scaled by tokens used so expensive turns pop
 // against cheap ones. Click scrolls the chat to that message; hover
 // highlights it via shared hoveredIdx state.
-function SessionMinimap({ messages, hoveredIdx, onHover, onClick }) {
+function SessionMinimap({ messages, hoveredIdx, onHover, onClick, trimmedCount = 0 }) {
   // Log-scaled max across assistant messages so heatmap variance is
   // visible even when one compaction turn dwarfs the rest.
   const { maxTokens, shown } = React.useMemo(() => {
@@ -315,7 +384,12 @@ function SessionMinimap({ messages, hoveredIdx, onHover, onClick }) {
       <div className="minimap-head">
         <Icon name="minimap" size={11} color="var(--fg-3)" />
         <span className="mono" style={{ color: "var(--fg-3)" }}>session</span>
-        <span className="mono" style={{ marginLeft: "auto", color: "var(--fg-4)" }}>{shown}</span>
+        <span className="mono" style={{ marginLeft: "auto", color: "var(--fg-4)" }}>
+          {/* #19: only what is still here is counted; earlier messages were
+              trimmed from the head (_trimMessages). */}
+          {trimmedCount > 0 && <span title={`${trimmedCount} earlier messages trimmed from this view`} style={{ marginRight: 6, color: "var(--fg-5)" }}>−{trimmedCount}</span>}
+          {shown}
+        </span>
       </div>
       <div className="minimap-grid">
         {messages.map((m, i) => {
@@ -329,6 +403,9 @@ function SessionMinimap({ messages, hoveredIdx, onHover, onClick }) {
           else if (m.kind === "job")       hue = TOOL_META.job.color;
           else if (m.kind === "goal")      hue = TOOL_META.goal.color;
           else if (m.kind === "approval")  hue = TOOL_META.approval.color;
+          // #17: a soft violet-grey distinct from every tool colour, so a
+          // compaction turn reads as its own event, not a tool call.
+          else if (m.kind === "compact")   hue = "color-mix(in oklab, var(--accent) 22%, var(--fg-5))";
 
           // Brightness: assistant cells modulate by log(tokens), others flat.
           let opacity = 0.7;
@@ -364,6 +441,12 @@ function SessionMinimap({ messages, hoveredIdx, onHover, onClick }) {
             title = window.OMP_GOAL.rowView(m).title;
           } else if (m.kind === "approval") {
             title = `auto-approved · ${m.tool || "tool"}`;
+          } else if (m.kind === "compact") {
+            // #17: status, not just the kind — a pending compact otherwise
+            // reads as an unexplained grey cell.
+            title = m.status === "pending" ? "compacting context…"
+              : m.status === "error" ? "compaction failed"
+              : `context compacted${m.tokensBefore ? ` · ${m.tokensBefore.toLocaleString()} tok before` : ""}`;
           } else {
             title = m.kind;
           }
@@ -380,12 +463,44 @@ function SessionMinimap({ messages, hoveredIdx, onHover, onClick }) {
           );
         })}
       </div>
-      <div className="minimap-legend">
-        <span className="minimap-legend-item"><i style={{ background: "var(--fg-3)" }} />you</span>
-        <span className="minimap-legend-item"><i style={{ background: "var(--accent)" }} />assistant</span>
-        <span className="minimap-legend-item"><i style={{ background: "var(--amber)" }} />ask</span>
-        <span className="minimap-legend-item"><i style={{ background: "var(--fg-4)" }} />tool</span>
-      </div>
+      <MinimapLegend messages={messages} />
+    </div>
+  );
+}
+
+// #24: legend entries for the kinds actually present in this session, in a
+// fixed order — a session with no asks shows no ask swatch.
+function MinimapLegend({ messages }) {
+  const present = React.useMemo(() => {
+    const set = new Set();
+    for (const m of messages) {
+      if (window.OMP_TURN_STATUS.isHidden(m)) continue;
+      if (m.kind === "compact") set.add("compact");
+      else if (m.kind === "assistant") set.add(m.failure ? "failed" : "assistant");
+      else if (m.kind === "tool" && TOOL_META[m.tool]?.color) set.add("tool");
+      else if (m.kind === "tool") continue; // unknown tools render fg-4 too, but one generic swatch is noise
+      else if (["user", "ask", "retry", "job", "goal", "approval"].includes(m.kind)) set.add(m.kind);
+    }
+    return set;
+  }, [messages]);
+  const entries = [
+    ["user", "you", "var(--fg-3)"],
+    ["assistant", "assistant", "var(--accent)"],
+    ["failed", "failed", "var(--rose)"],
+    ["ask", "ask", "var(--amber)"],
+    ["tool", "tool", "var(--fg-4)"],
+    ["compact", "compact", "color-mix(in oklab, var(--accent) 22%, var(--fg-5))"],
+    ["retry", "retry", TOOL_META.retry.color],
+    ["job", "job", TOOL_META.job.color],
+    ["goal", "goal", TOOL_META.goal.color],
+    ["approval", "auto-ok", TOOL_META.approval.color],
+  ].filter(([id]) => present.has(id));
+  if (!entries.length) return null;
+  return (
+    <div className="minimap-legend">
+      {entries.map(([id, label, color]) => (
+        <span key={id} className="minimap-legend-item"><i style={{ background: color }} />{label}</span>
+      ))}
     </div>
   );
 }
@@ -397,7 +512,7 @@ function SessionMinimap({ messages, hoveredIdx, onHover, onClick }) {
 function AmbientRail({
   ctx, activity, messages, microcopy, onClose, sparklineValues, hoveredMsgIdx, onMinimapHover, onMinimapClick,
   subagents, subagentPaneOpen, onOpenSubagent, onToggleSubagentPane, onOpenTree,
-  show = {}, children,
+  trimmedCount = 0, show = {}, children,
 }) {
   // Use live tps samples. Before the first turn, sparklineValues is all zeros
   // which renders as a flat baseline — honest, not fake random data.
@@ -462,8 +577,19 @@ function AmbientRail({
             <Icon name="minimap" size={11} color="var(--fg-3)" />
             <span className="mono" style={{ color: "var(--fg-2)" }}>minimap</span>
           </div>
-          <SessionMinimap messages={messages} hoveredIdx={hoveredMsgIdx} onHover={onMinimapHover} onClick={onMinimapClick} />
+          <SessionMinimap messages={messages} hoveredIdx={hoveredMsgIdx} onHover={onMinimapHover} onClick={onMinimapClick} trimmedCount={trimmedCount} />
         </div>
+      )}
+
+      {/* #28: all four cards off and no widget/plugin cards — the rail is
+          an empty strip otherwise, with no pointer to where the cards went.
+          `children` is always an array here (Babel wraps the slot's
+          expressions, falsy entries included); only a truthy child means
+          a card would render. */}
+      {!React.Children.toArray(children).length
+        && !(show.context ?? true) && !(show.radar ?? true)
+        && !(show.subagents ?? true) && !(show.minimap ?? true) && (
+        <div className="rail-empty mono">all cards off — Settings → Rail</div>
       )}
     </aside>
   );

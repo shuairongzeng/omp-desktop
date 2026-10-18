@@ -41,6 +41,10 @@
   border-radius: 4px;
   transition: width 400ms var(--ease-out);
 }
+/* #22: same >60 / >80 thresholds as TokenGauge (sparks.jsx), so the tube
+   and the rail's radial gauge never disagree. */
+.status-bar-fill.tone-amber { background: var(--amber); }
+.status-bar-fill.tone-rose { background: var(--rose); }
 
 /* ── Ambient rail ──────────────────────────────────────────────────── */
 .rail {
@@ -51,6 +55,13 @@
   background: linear-gradient(180deg, var(--bg-window), color-mix(in oklab, var(--bg-app) 50%, var(--bg-window)));
   border-left: 1px solid var(--line);
   overflow-y: auto;
+}
+/* #28: all cards off — one honest hint line instead of a bare strip. */
+.rail-empty {
+  font-size: var(--d-text-xs);
+  color: var(--fg-3);
+  padding: 8px 6px;
+  line-height: 1.5;
 }
 .rail-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -115,7 +126,11 @@
 
 .minimap-grid {
   display: grid;
-  grid-template-columns: repeat(13, 1fr);
+  /* #18: dense but responsive — a wider rail fits more columns instead of
+     leaving fixed 13-column slack. Each cell is square (aspect-ratio below),
+     so the count follows the available width; live.js's MINIMAP_MAX stays
+     the transcript-bound, not this grid's, cap. */
+  grid-template-columns: repeat(auto-fill, minmax(14px, 1fr));
   gap: 2px;
   flex: 1; min-height: 0; overflow-y: auto;
   padding: 6px; border-radius: 6px;
@@ -145,7 +160,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px 10px;
-  font-size: 10px;
+  font-size: var(--d-text-xs);
   color: var(--fg-4);
 }
 .minimap-legend-item { display: inline-flex; align-items: center; gap: 4px; }

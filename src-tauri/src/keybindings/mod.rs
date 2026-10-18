@@ -86,6 +86,7 @@ pub const ACTION_IDS: &[&str] = &[
     "desktop.chat.collapseAll",
     "desktop.chat.expandAll",
     "desktop.terminal.toggle",
+    "desktop.rail.toggle",
 ];
 
 // ── public types ──────────────────────────────────────────────────────────────

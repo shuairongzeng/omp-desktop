@@ -10,9 +10,20 @@
    The row frame and controls are settings/controls.jsx's.
    ═════════════════════════════════════════════════════════════════════ */
 
-// What a column-width tweak of 0 shows; 0 = the column's default, for the
-// browser half the stage (OMP_BROWSER.clampWidth).
+// What a column-width tweak of 0 shows; 0 = the column's default, for
+// the browser half the stage (OMP_BROWSER.clampWidth).
 const _SRL_WIDTH_DEFAULT = { browserWidth: "½ stage" };
+
+/** The moddot next to a column width, clickable: resets that one column
+ *  (the tweak to 0, its default), per the row's single-column scope. */
+const _SRL_WidthDot = ({ changed, onReset }) => (
+  changed ? (
+    <button type="button" className="st-moddot st-moddot-btn" title="Reset this column"
+      aria-label="reset this column to its default" onClick={onReset} />
+  ) : (
+    <span className="st-moddot" aria-hidden="true" style={{ visibility: "hidden" }} />
+  )
+);
 
 // The schema row's `keys` are the width tweaks, in display order;
 // `modified` / `onReset` come from the page.
@@ -30,7 +41,7 @@ function _SRL_Widths({ row, ctx, query, modified, onReset }) {
               <small>{key.replace(/Width$/, "")}</small>
               <b>
                 {px > 0 ? <>{Math.round(px)}<i> px</i></> : <span className="st-width-def">{_SRL_WIDTH_DEFAULT[key] ?? "default"}</span>}
-                {px > 0 && <span className="st-moddot" title="Changed from default" />}
+                <_SRL_WidthDot changed={px > 0} onReset={() => ctx.setTweak(key, 0)} />
               </b>
             </div>
           );

@@ -95,6 +95,9 @@ function App() {
   const [messages,      setMessages]      = React.useState([]);
   const [streaming,     setStreaming]     = React.useState(false);
   const [model,         setModelState]    = React.useState(NULL_MODEL);
+  // #19: messages trimmed from the transcript head (live.js _trimMessages),
+  // surfaced by the minimap's "−N earlier" badge.
+  const [trimmedCount,  setTrimmedCount]  = React.useState(0);
   const [thinkingLevel, setThinkingLevel] = React.useState(null);
   const [ctx,           setCtx]           = React.useState(data.ctx);
   const [kanban,        setKanban]        = React.useState([]);
@@ -149,7 +152,7 @@ function App() {
 
   // ── Cross-cutting effects ─────────────────────────────────────────────────
   useBridgeSnapshot(bridge, {
-    setMessages, setStreaming, setCtx, setKanban, setPlanMeta,
+    setMessages, setStreaming, setCtx, setKanban, setPlanMeta, setTrimmedCount,
     setModels, setActivity, setSparkline,
     setModelState, setThinkingLevel,
     setSessions, setActiveSessionId, setProfiles, setStartupProfileId, setRecentProjects,
@@ -158,6 +161,11 @@ function App() {
   });
   useThemeEffect(t);
   useBackgroundImage(t);
+  // #16: focus layout has no rail ✕ undo — the status bar button (and the
+  // `desktop.rail.toggle` action) flip the layout tweak back.
+  const toggleRail = React.useCallback(() => {
+    setTweak("layout", t.layout === "focus" ? "rail" : "focus");
+  }, [setTweak, t.layout]);
   React.useEffect(() => {
     bridge?.setPromptHistoryLimit(t.promptHistoryLimit ?? window.OMP_PROMPT_HISTORY.DEFAULT_LIMIT);
   }, [bridge, t.promptHistoryLimit]);
@@ -208,6 +216,15 @@ function App() {
   // goes. Shared by WindowChrome's menu, the keymap, recents and the
   // usage-stats panel's header label, instead of a second copy.
   const activeProfileId    = activeProject.id ? activeProject.profile : noTabProfileId;
+// #10: the window title follows the active tab, with a run marker while a
+// turn is live; no tab (and unmount) restores the plain app name.
+React.useEffect(() => {
+  const prev = document.title;
+  document.title = activeProject.id
+    ? `${streaming ? "● " : ""}${activeProject.name} — OMP Desktop`
+    : "OMP Desktop";
+  return () => { document.title = prev; };
+}, [activeProject.id, activeProject.name, streaming]);
   const activeProfileLabel = profiles.find(p => p.id === activeProfileId)?.name ?? activeProfileId;
   // Status-bar approvals cell: the mode the rendered tab's omp runs, or
   // `running ⇢ target` while a change waits for its turn to end. Read
@@ -775,6 +792,7 @@ function App() {
     "desktop.chat.expandAll":  () => handleCollapseAll(false),
     "desktop.terminal.toggle": () => terminal.toggle(planKey),
     "desktop.browser.toggle":  () => toggleSide("browser"),
+    "desktop.rail.toggle":     toggleRail,
   };
 
   // Profile switch applies to the active tab only: its omp process is
@@ -895,6 +913,7 @@ function App() {
             onUpdate={updater.openModal}
             onCheckUpdate={updater.check}
             settings={{ open: stab.open, active: stab.active, changed: settingsChanged }}
+            terminalDirty={terminal.dirtyTabs}
             onSelectSettings={() => openSettings()}
             onCloseSettings={closeSettings}
           />
@@ -949,6 +968,7 @@ function App() {
                     onToggleCollapse={handleToggleCollapse}
                     followOutput={t.followOutput}
                     submitKey={t.submitKey}
+                    onOpenKanban={() => setPlanOpen(true)}
                   />
                   <TerminalPanels sessions={sessions} activeId={planKey} terminal={terminal} />
                   <Composer
@@ -1033,19 +1053,24 @@ function App() {
                   onOpenTree={() => setSide("tree")}
                   messages={messages}
                   microcopy={data.microcopy}
-                  sparklineValues={sparkline}
-                  onClose={() => setTweak("layout", "focus")}
-                  hoveredMsgIdx={hoveredMsgIdx}
                   onMinimapHover={setHoveredMsgIdx}
                   onMinimapClick={handleMinimapClick}
+                  trimmedCount={trimmedCount}
                   show={{ context: t.showContext ?? true, radar: t.showRadar ?? true, subagents: t.showSubagents ?? true, minimap: t.showMinimap ?? true }}
                 >
-                  {widgets.fatal && <WidgetErrorCard title="widgets.json" error={widgets.fatal} />}
-                  {widgets.configErrors.map((e, i) => <WidgetErrorCard key={i} title="widgets.json" error={e} />)}
+                  {/* #21: the error cards take the widgets.json path and an
+                      "open settings" passthrough; the openSettings handler
+                      itself is the app's (section stays the integrator's). */}
+                  {widgets.fatal && <WidgetErrorCard title="widgets.json" error={widgets.fatal}
+                    configPath={widgets.configPath} onOpenSettings={() => openSettings("rail")} />}
+                  {widgets.configErrors.map((e, i) => <WidgetErrorCard key={i} title="widgets.json" error={e}
+                    configPath={widgets.configPath} onOpenSettings={() => openSettings("rail")} />)}
                   {widgets.approvals.map(a => (
                     <WidgetBoundary key={`approve:${a.id}`} title={a.title}>
+                      {/* #20: "Not now" keeps the plugin unapproved but hides
+                          its card until the window closes. */}
                       <WidgetApprovalCard title={a.title} command={a.command} changed={a.changed}
-                        onApprove={() => widgets.approve(a.id)} />
+                        onApprove={() => widgets.approve(a.id)} onDismiss={() => widgets.dismissApproval(a.id)} />
                     </WidgetBoundary>
                   ))}
                   {widgets.cards.map(c => (
@@ -1086,6 +1111,10 @@ function App() {
             browserOpen={side === "browser"}
             onSettings={() => openSettings()}
             settingsActive={stab.active}
+            busy={streaming}
+            connected={bridge?.isConnected ?? null}
+            showRailToggle={t.layout === "focus"}
+            onToggleRail={toggleRail}
           />
         </div>
       </div>

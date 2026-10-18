@@ -127,15 +127,20 @@ check("custom rows count their owned tweak keys", () => {
   assert.equal(S.modifiedCount("rail", vals({ "widget:plugin:gone": false })), 1);
 });
 
-check("modifiedCount per section and overall, hidden rows excluded", () => {
+check("modifiedCount per section and overall, hidden rows included; hiddenCount the rest", () => {
   const v = vals({ fontSize: 110, showMinimap: false, railWidth: 300 });
   assert.equal(S.modifiedCount("appearance", v), 1);
   assert.equal(S.modifiedCount("rail", v), 1);
   assert.equal(S.modifiedCount("layout", v), 1);
   assert.equal(S.modifiedCount("all", v), 3);
   assert.equal(S.modifiedCount(undefined, v), 3);
+  // A changed row hidden by visibleIf still counts: the badge and the
+  // section reset cover the same rows (page.jsx).
   const hidden = vals({ foldThinking: "open", foldTools: "open", collapseAfter: 9 });
-  assert.equal(S.modifiedCount("chat", hidden), 2);
+  assert.equal(S.modifiedCount("chat", hidden), 3, "the hidden collapse-after row counts");
+  assert.equal(S.hiddenCount("chat", hidden), 1);
+  assert.equal(S.hiddenCount("chat", vals()), 0);
+  assert.equal(S.hiddenCount("all", hidden), 1);
 });
 
 check("resetEdits resets only changed rows; theme brings its accent", () => {
@@ -165,12 +170,39 @@ check("search matches label, desc text and keywords, grouped in page order", () 
   assert.deepEqual(r.groups.map(g => [g.sectionId, g.sectionTitle, g.groupName]), [["appearance", "Appearance", "Text"]]);
   assert.equal(S.search("POWERSHELL", vals()).groups[0].src, "terminal.json", "keywords, case-insensitive");
   assert.equal(S.search("/compact", vals()).total, 1, "desc text with backticks stripped");
-  assert.deepEqual(S.search("   ", vals()), { total: 0, bySection: Object.fromEntries(S.SECTIONS.map(s => [s.id, 0])), groups: [] });
+  assert.deepEqual(S.search("   ", vals()), { total: 0, hiddenCount: 0, bySection: Object.fromEntries(S.SECTIONS.map(s => [s.id, 0])), groups: [] });
 });
 
-check("search skips hidden rows", () => {
+check("search skips hidden rows and counts them as hiddenCount", () => {
   assert.equal(S.search("collapse after", vals()).total, 1);
-  assert.equal(S.search("collapse after", vals({ foldThinking: "open", foldTools: "open" })).total, 0);
+  assert.equal(S.search("collapse after", vals()).hiddenCount, 0);
+  const hidden = S.search("collapse after", vals({ foldThinking: "open", foldTools: "open" }));
+  assert.equal(hidden.total, 0);
+  assert.equal(hidden.hiddenCount, 1, "a match hidden by visibleIf is counted, not dropped silently");
+  assert.deepEqual(hidden.groups, []);
+  // glassEffect defaults off, so the opacity/blur rows hide even by default;
+  // turning it on shows them (kw "translucent" is on all three).
+  const glassOn = S.search("translucent", vals({ glassEffect: true }));
+  assert.equal(glassOn.total, 3);
+  assert.equal(glassOn.hiddenCount, 0, "nothing hidden while the effect is on");
+  const noGlass = S.search("translucent", vals({ glassEffect: false }));
+  assert.equal(noGlass.total, 1, "the master toggle always matches");
+  assert.equal(noGlass.hiddenCount, 2, "its dependent rows hide while it is off");
+});
+
+check("search matches every whitespace-separated token (tokenised AND)", () => {
+  // "font mono" needs both tokens: label "Font size" + label "Monospace chat"
+  const both = S.search("font mono", vals());
+  assert.equal(both.total, 1);
+  assert.equal(both.groups[0].rows[0].id, "monoChat", "label token + label token");
+  // Order does not matter.
+  assert.equal(S.search("mono font", vals()).total, 1);
+  // A keyword token and a desc token AND together on one row.
+  assert.equal(S.search("spacing compact", vals()).groups[0].rows[0].id, "density", "kw + desc");
+  // One token missing: no match.
+  assert.equal(S.search("font nonexistent", vals()).total, 0);
+  // Repeated whitespace is one separator.
+  assert.equal(S.search("  font   mono  ", vals()).total, 1);
 });
 
 check("the key bindings row is found by any shortcut action's name or id", () => {

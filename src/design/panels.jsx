@@ -32,6 +32,23 @@ function PlanKanban({ kanban, planMeta, onClose, onAbort }) {
   // Derive phase from task data — no external state needed
   const allDone = total > 0 && done === total;
   const phase   = allDone ? "done" : "running";
+  // Capture phase on `window`, not the panel's own onKeyDown: focus can sit
+  // in a card's "why" body or the abort button while the kanban is open, and
+  // Escape must close it instead of reaching the global keymap's
+  // `app.interrupt` (app-live.jsx's guard skips abort while this overlay is
+  // open, so the key would otherwise do nothing). Same pattern as
+  // update-modal.jsx. Ctrl/Alt/Meta chords pass through as global shortcuts.
+  React.useEffect(() => {
+    const onKey = e => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
 
   return (
     <div className="kanban-scrim" onClick={onClose}>

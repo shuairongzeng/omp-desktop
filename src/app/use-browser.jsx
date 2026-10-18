@@ -8,7 +8,10 @@
    side column (`open` / `setOpen`). Painting and input forwarding are
    app/browser-screen.js, the pure decisions app/browser.js. The panel
    element must stay mounted while `open` (the effect binds the
-   `viewRef`/`canvasRef`/`sinkRef` elements of the commit that opened it). */
+   `viewRef`/`canvasRef`/`sinkRef` elements of the commit that opened it).
+   A navigation that fails restarts the panel's screencast and retries once
+   (`navigate`), its error surfacing as `navError` for the toolbar; comment
+   drafts of unsubmitted picks are kept per element (`pendingDraft`). */
 
 const { OMP_BROWSER: _UB, OMP_BROWSER_SCREEN: _UBS } = window;
 const _UB_IDLE = Object.freeze({ status: "idle", error: null, url: "", loading: false, canBack: false, canForward: false, annotate: false });
@@ -39,17 +42,21 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
   const openInFlight = React.useRef(null);
   // What the key handlers (bound once per open) must see current.
   const latest = React.useRef({});
-  latest.current = { annotate, pending };
+  latest.current = { annotate, pending, fullView };
+  // Comment drafts of picks that were left (a new pick, a tab switch,
+  // a restart): sid → pick key → text, restored on the same element.
+  const [draftsAny, setDrafts] = React.useState(_UB.EMPTY);
   // Bumped whenever annotate is left, so a capture that settles after the
   // pick has been dismissed (Esc / annotate off / restart) is dropped.
   const pickGen = React.useRef(0);
 
-  // A closed tab drops its chips and pick.
+  // A closed tab drops its chips, pick and comment drafts.
   const idsKey = (sessionIds ?? []).join("\0");
   React.useEffect(() => {
     const ids = idsKey ? idsKey.split("\0") : [];
     setChips((s) => window.OMP_SESSION_UI.pruneEntries(s, ids));
     setPending((p) => (p && ids.includes(p.sid) ? p : null));
+    setDrafts((s) => window.OMP_SESSION_UI.pruneEntries(s, ids));
   }, [idsKey]);
   // Leaving the panel leaves full view.
   React.useEffect(() => { if (!open) setFullView(false); }, [open]);
@@ -106,9 +113,14 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
         else bridge.browserResize(sid, w, h, dpr);
       },
       onPage: setPage,
-      // Esc while annotating closes the comment popover, else leaves annotate.
-      escape: () => _UB.escapeAction(latest.current.annotate, latest.current.pending),
-      onEscape: (action) => (action === "cancelPick" ? setPending(null) : setAnnotate(false)),
+      // Esc while annotating closes the comment popover, else leaves annotate,
+      // else full view (OMP_BROWSER.escapeAction).
+      escape: () => _UB.escapeAction(latest.current.annotate, latest.current.pending, latest.current.fullView),
+      onEscape: (action) => {
+        if (action === "cancelPick") setPending(null);
+        else if (action === "leaveAnnotate") setAnnotate(false);
+        else if (action === "leaveFullView") setFullView(false);
+      },
     });
     screenRef.current = screen;
     // A pick stands only if annotate was not left before its capture
@@ -168,18 +180,6 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
   }, [bridge, sid, open, setAnnotate, showAnnotate]);
 
   const close = React.useCallback(() => setOpen(false), [setOpen]);
-  // Show `url` (already normalised) in the panel, opening it first if needed.
-  // While `browserOpenPanel` is still in flight the backend has no view to
-  // navigate yet, so the URL is queued (latest wins) and the open flushes it.
-  const openUrl = React.useCallback((url) => {
-    if (!sid) return;
-    if (open && !openInFlight.current?.pending) {
-      bridge?.browserNavigate(sid, url);
-      return;
-    }
-    wantUrl.current = { sid, url };
-    if (!open) setOpen(true);
-  }, [bridge, sid, open, setOpen]);
 
   // A plain click on a localhost link in the chat opens it here (when the
   // tweak is on); a modifier click opens it in the system browser through
@@ -204,14 +204,38 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
     openLink.current(link.url, link.external);
   } : null), [localLinks]);
 
+  // A pick left unsubmitted keeps its comment as a draft, stored per tab
+  // under the element's key (OMP_BROWSER.pickKey): picked again — this tab,
+  // another one, after a restart — the text comes back. Saving drops it.
+  const stashDraft = (text) => {
+    if (!pending || !text) return;
+    const key = _UB.pickKey(pending.pick);
+    setDrafts((s) => {
+      const tab = window.OMP_SESSION_UI.entryOf(s, pending.sid, _UB.EMPTY);
+      return { ...s, [pending.sid]: { ...tab, [key]: text } };
+    });
+  };
   const savePending = React.useCallback((comment) => {
     const text = comment.trim();
     if (!pending || !text) return;
     const chip = { id: `bc${++_ubChipSeq}`, pick: pending.pick, comment: text, image: pending.image };
     setChips((s) => _UB.addChip(s, pending.sid, chip));
+    // Saved: the draft of this element is spent.
+    const key = _UB.pickKey(pending.pick);
+    setDrafts((s) => {
+      const tab = window.OMP_SESSION_UI.entryOf(s, pending.sid, _UB.EMPTY);
+      if (!(key in tab)) return s;
+      const { [key]: _used, ...rest } = tab;
+      const next = { ...s };
+      if (Object.keys(rest).length) next[pending.sid] = rest;
+      else delete next[pending.sid];
+      return next;
+    });
     setPending(null);
-  }, [pending]);
-  const cancelPending = React.useCallback(() => setPending(null), []);
+  }, [pending, sessionIds]);
+  // `text` is the popover's current comment (Esc, a new pick, a restart).
+  const cancelPending = React.useCallback((text = "") => { stashDraft(text); setPending(null); },
+    [pending, stashDraft]);
   // A submit takes its chips with the rest of the draft (`takeChips`: those
   // ids only, chips added since stay); a goal start that fails hands them
   // back with the draft (`restoreChips`). `id` defaults to the tab shown.
@@ -220,10 +244,21 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
     takeChips: (ids, id = sid) => setChips((s) => _UB.removeChips(s, id, ids)),
     restoreChips: (list, id = sid) => setChips((s) => _UB.restoreChips(s, id, list)),
   }), [sid]);
-
-  // Page actions on the open tab; a refused navigation shows in the page.
+  // Page actions on the open tab. A navigate that fails (bridge fault, a
+  // browser gone) restarts the panel's screencast once and retries; if it
+  // still fails the toolbar shows the error (`navError`) instead of doing
+  // nothing behind an unchanged address bar.
+  const [navError, setNavError] = React.useState(null);
   const act = React.useMemo(() => ({
-    navigate: (url) => bridge?.browserNavigate(sid, url),
+    navigate: async (url) => {
+      if (!bridge) return;
+      let r = await bridge.browserNavigate(sid, url);
+      if (r?.ok) { setNavError(null); return; }
+      act.restart();
+      r = await bridge.browserNavigate(sid, url);
+      if (r?.ok) { setNavError(null); return; }
+      setNavError(r?.error ?? "navigation failed");
+    },
     history: (delta) => bridge?.browserHistory(sid, delta),
     newTab: () => bridge?.browserTabNew(sid),
     closeTab: (id) => bridge?.browserTabClose(sid, id),
@@ -232,16 +267,35 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
     restart: () => {
       showAnnotate(false);
       setPending(null);
+      setNavError(null);
       const s = screenRef.current?.size();
       if (s) bridge?.browserOpenPanel(sid, s.width, s.height, s.dpr, onMessageRef.current);
     },
   }), [bridge, sid, showAnnotate]);
 
+  // Show `url` (already normalised) in the panel, opening it first if needed.
+  // While `browserOpenPanel` is still in flight the backend has no view to
+  // navigate yet, so the URL is queued (latest wins) and the open flushes it.
+  // Live navigations go through `act.navigate` (restart + retry on a fault).
+  const openUrl = React.useCallback((url) => {
+    if (!sid) return;
+    if (open && !openInFlight.current?.pending) {
+      void act.navigate(url);
+      return;
+    }
+    wantUrl.current = { sid, url };
+    if (!open) setOpen(true);
+  }, [bridge, sid, open, setOpen, act]);
+
   return {
     open, close, openUrl, onChatClick, fullView, setFullView,
     width: tweaks?.browserWidth ?? 0, // px; 0 = default (half the stage) — see OMP_BROWSER.clampWidth
     setWidth: (px) => setTweak("browserWidth", Math.round(px)),
-    state, tabs, page, annotate, setAnnotate,
+    state, tabs, page, annotate, setAnnotate, navError,
+    // The popover's starting text: the draft of the element picked before.
+    pendingDraft: pending
+      ? window.OMP_SESSION_UI.entryOf(draftsAny, pending.sid, _UB.EMPTY)[_UB.pickKey(pending.pick)] ?? ""
+      : "",
     pending, savePending, cancelPending,
     chips: _UB.chipsOf(chips, sid),
     ...chipActions, canvasRef, viewRef, sinkRef, ...act,

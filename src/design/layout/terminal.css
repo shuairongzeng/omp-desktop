@@ -8,20 +8,33 @@
   min-height: 0; max-height: 70%;
   border-top: 1px solid var(--line);
   background: var(--bg-window);
+  /* A collapse/expand reads as one motion, and the xterm refits once it
+     settles (the ResizeObserver's debounce) instead of mid-transition. */
+  transition: height 140ms var(--ease-out), opacity 140ms var(--ease-out);
 }
 .term-panel[hidden] { display: none; }
 
 .term-handle {
-  position: absolute; top: -2px; left: 0; right: 0; height: 5px;
+  position: absolute; top: -3px; left: 0; right: 0; height: 6px;
   cursor: row-resize; z-index: 1;
+  touch-action: none; outline: none;
 }
-.term-handle:hover { background: var(--accent-soft); }
+.term-handle:hover, .term-handle.dragging, .term-handle:focus-visible {
+  background: color-mix(in oklab, var(--accent) 35%, transparent);
+}
+.term-handle-tip {
+  display: none; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  padding: 2px 7px; white-space: nowrap; pointer-events: none;
+  background: var(--bg-elevated); border: 1px solid var(--line-bright); border-radius: var(--r-1);
+  font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--accent);
+}
+.term-handle.dragging .term-handle-tip, .term-handle:focus-visible .term-handle-tip { display: block; }
 
 .term-head {
   flex: none;
   display: flex; align-items: center; gap: 6px;
-  height: 22px; padding: 0 6px 0 10px;
-  font-size: 11px; color: var(--fg-3);
+  height: var(--d-row); padding: 0 6px 0 10px;
+  font-size: var(--d-text-xs); color: var(--fg-3);
   border-bottom: 1px solid var(--line-soft);
 }
 .term-head-shell { color: var(--fg-2); font-weight: 600; }
@@ -30,11 +43,36 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--fg-4);
 }
+.term-head-starting {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  color: var(--fg-4);
+}
+.term-head-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex: none;
+  background: var(--amber);
+  animation: term-start-pulse 1.6s ease-in-out infinite;
+}
+@keyframes term-start-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+/* An exited shell's restart badge: on the accent, clickable, the code (or
+   the start error) shown right in it — not in a hover title. */
+.term-head-exited {
+  flex: none; margin-left: auto;
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: 60%; padding: 1px 8px 1px 6px;
+  border: 0; border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent); font-size: var(--d-text-xs); font-family: var(--font-mono);
+  cursor: pointer;
+  transition: background 120ms var(--ease-out), color 120ms;
+}
+.term-head-exited:hover { background: color-mix(in oklab, var(--accent) 20%, transparent); color: var(--accent); }
+.term-head-exited-text {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .term-head-shell + .term-head-exited { margin-left: auto; }
-.term-head-exited { color: var(--fg-4); font-style: italic; }
-/* Fixed px like the 22px head it sits in; its size-9 icon still fits at 150%. */
+/* Fixed px like the head it sits in; its size-9 icon still fits at 150%. */
 .btn.icon.term-head-close { width: 18px; height: 18px; margin-left: auto; }
-.term-head-exited ~ .btn.term-head-close { margin-left: 0; }
+.term-head-exited ~ .btn.term-head-close, .term-head-starting ~ .btn.term-head-close { margin-left: 0; }
 
 .term-body { flex: 1; min-height: 0; overflow: hidden; }
 /* The inset sits on xterm's own element: FitAddon subtracts that padding

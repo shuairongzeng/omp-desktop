@@ -196,29 +196,42 @@ function TaskPanel({ subagents, onInspect }) {
 function ToolCard({ msg, idx, highlighted, onInspectSubagent, onOpenFile, onPreviewFile, projectRoot, collapsed, onToggleCollapse }) {
   const meta    = _TC_TOOL_META[msg.tool] || { color: "var(--fg-3)", icon: "circle", label: msg.tool };
   const running = msg.status === "running";
+  const failed  = !running && msg.isError;
   const bashLines = collapsed && msg.output ? _TC_bashPreview(msg.output) : msg.output;
+  // Live tail of a running bash/eval card: keeps the newest output line in
+  // view, the same auto-scroll TaskAgentRow applies to its own body. For
+  // eval the scrollable element is the last running cell's .eval-output
+  // (EvalCell renders its own <pre>, so query inside the container).
+  const outputRef = React.useRef(null);
+  React.useEffect(() => {
+    if (!running || !outputRef.current) return;
+    const el = outputRef.current;
+    const target = msg.tool === "eval" ? el.querySelector(".eval-output:last-of-type") : el;
+    if (target) target.scrollTop = target.scrollHeight;
+  }, [msg.output, msg.cells, running, msg.tool]);
   return (
     <div className={`row tool fade-up${highlighted ? " mm-hot" : ""}`} data-msg-idx={idx}>
       <div className="ass-rail">
-        <div className="tool-glyph" style={{ borderColor: meta.color, color: meta.color }}>
-          <_TC_Icon name={meta.icon} size={11} color={meta.color} />
+        <div className="tool-glyph" style={{ borderColor: failed ? "var(--rose)" : meta.color, color: failed ? "var(--rose)" : meta.color }}>
+          <_TC_Icon name={failed ? "warn" : meta.icon} size={11} color={failed ? "var(--rose)" : meta.color} />
         </div>
         <div className="ass-thread" />
       </div>
-      <div className={`tool-card ${running ? "running" : "ok"}`}>
+      <div className={`tool-card ${running ? "running" : "ok"}${failed ? " failed" : ""}`}>
         <div className="tool-card-head">
           <span className="tool-tag" style={{ color: meta.color, background: `color-mix(in oklab, ${meta.color} 14%, transparent)`, borderColor: `color-mix(in oklab, ${meta.color} 30%, var(--line))` }}>
             {meta.label}
           </span>
-          <span className="tool-title selectable">{msg.title}</span>
+          <span className="tool-title selectable" title={msg.title}>{msg.title}</span>
           <div className="tool-card-spacer" />
+          {failed && <span className="chip" style={{ color: "var(--rose)" }}>failed</span>}
           {running ? (
             <span className="chip accent" style={{ animation: "pulseDot 1.4s infinite" }}>
               <span className="dot live" /> running
             </span>
           ) : (
             <span className="chip muted">
-              <span className="mono">{msg.duration}ms</span>
+              <span className="mono">{window.OMP_SUBAGENTS.fmtDuration(msg.duration)}</span>
             </span>
           )}
           <span className="chip muted mono">{msg.time}</span>
@@ -230,13 +243,27 @@ function ToolCard({ msg, idx, highlighted, onInspectSubagent, onOpenFile, onPrev
         <div className={collapsed ? `collapse-clip${msg.tool === "bash" ? " from-end" : ""}` : undefined}>
           {msg.tool === "search" && msg.preview && (
             <div className="tool-search">
-              {msg.preview.map((p, i) => (
-                <div key={i} className={`search-row ${p.hot ? "hot" : ""}`}>
-                  <_TC_Icon name="file" size={11} color={p.hot ? "var(--accent)" : "var(--fg-3)"} />
-                  <span className="mono" style={{ color: p.hot ? "var(--fg)" : "var(--fg-2)" }}>{p.file}</span>
-                  <span className="mono" style={{ color: "var(--fg-4)", marginLeft: "auto" }}>{p.hits} hits</span>
-                </div>
-              ))}
+              {msg.preview.map((p, i) => {
+                // A hit inside this tab's project opens the file preview;
+                // anything else (a URL-shaped target readTarget rejects,
+                // or outside the root) stays a plain non-interactive row.
+                const target      = _TC_readTarget(p.file);
+                const previewable = !!(onPreviewFile && projectRoot && target && _TC_inProject(target.path, projectRoot));
+                const open = () => onPreviewFile(target);
+                return previewable ? (
+                  <button key={i} type="button" className={`search-row ${p.hot ? "hot" : ""}`} title="Preview the file" onClick={open}>
+                    <_TC_Icon name="file" size={11} color={p.hot ? "var(--accent)" : "var(--fg-3)"} />
+                    <span className="mono" style={{ color: p.hot ? "var(--fg)" : "var(--fg-2)" }}>{p.file}</span>
+                    <span className="mono" style={{ color: "var(--fg-4)", marginLeft: "auto" }}>{p.hits} hits</span>
+                  </button>
+                ) : (
+                  <div key={i} className={`search-row ${p.hot ? "hot" : ""}`}>
+                    <_TC_Icon name="file" size={11} color={p.hot ? "var(--accent)" : "var(--fg-3)"} />
+                    <span className="mono" style={{ color: p.hot ? "var(--fg)" : "var(--fg-2)" }}>{p.file}</span>
+                    <span className="mono" style={{ color: "var(--fg-4)", marginLeft: "auto" }}>{p.hits} hits</span>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -264,7 +291,7 @@ function ToolCard({ msg, idx, highlighted, onInspectSubagent, onOpenFile, onPrev
           {msg.tool === "bash" && bashLines && (
             // Copies the whole output, not just the lines shown.
             <_TC_CopyHost label="Copy output" text={msg.outputText}>
-              <pre className="tool-bash mono selectable">
+              <pre className="tool-bash mono selectable" ref={outputRef}>
                 {bashLines.map((l, i) => (
                   <div key={i} style={{ color: `var(--${l.color})` }}>{l.line}</div>
                 ))}
@@ -273,7 +300,7 @@ function ToolCard({ msg, idx, highlighted, onInspectSubagent, onOpenFile, onPrev
           )}
 
           {msg.tool === "eval" && msg.cells && (
-            <div className="tool-eval">
+            <div className="tool-eval" ref={outputRef}>
               {msg.cells.map((cell, i) => <_TC_EvalCell key={i} cell={cell} />)}
             </div>
           )}

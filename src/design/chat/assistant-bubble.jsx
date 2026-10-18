@@ -4,7 +4,7 @@
 
 const { Icon: _ChatIcon, MarkdownContent: _ChatMd, AnnotablePlan: _ChatAP, CopyButton: _ChatCopy, CollapseToggle: _ChatCollapse } = window;
 
-function InlinePlan({ plan }) {
+function InlinePlan({ plan, onOpenKanban }) {
   return (
     <div className="inline-plan slide-in">
       <div className="inline-plan-head">
@@ -12,7 +12,7 @@ function InlinePlan({ plan }) {
         <span style={{ color: "var(--fg-2)", fontWeight: 600 }}>{plan.title}</span>
         <span className="chip muted">{plan.phases.reduce((n, p) => n + p.tasks.length, 0)} tasks</span>
         <div style={{ flex: 1 }} />
-        <button className="btn ghost" style={{ height: 22 }}>open kanban →</button>
+        <button className="btn ghost" style={{ height: 22 }} onClick={onOpenKanban}>open kanban →</button>
       </div>
       <div className="inline-plan-body">
         {plan.phases.map((ph) => (
@@ -84,7 +84,7 @@ function _AB_Retries({ retries: r }) {
 
 // `thoughtCollapsed`: true/false when the thinking has a toggle, undefined
 // when it is too short to collapse (app/chat-collapse.js).
-function AssistantBubble({ msg, idx, highlighted, annotable, annotations, onAnnotate, thoughtCollapsed, onToggleCollapse }) {
+function AssistantBubble({ msg, idx, highlighted, annotable, annotations, onAnnotate, thoughtCollapsed, onToggleCollapse, onOpenKanban }) {
   // A failed request has no text of its own; its copy is the provider's error.
   const copyText = msg.streaming ? "" : (_messageText(msg) || msg.failure?.raw || "");
   return (
@@ -135,7 +135,7 @@ function AssistantBubble({ msg, idx, highlighted, annotable, annotations, onAnno
             );
           }
           if (b.type === "plan") {
-            return <InlinePlan key={i} plan={b} />;
+            return <InlinePlan key={i} plan={b} onOpenKanban={onOpenKanban} />;
           }
           return null;
         })}

@@ -11,7 +11,7 @@
 // of the panel channel (OMP_BROWSER.parseFrame). `ack(seq)` tells Rust a frame was
 // painted or dropped (one frame in flight per view). `onResize(w, h, dpr)`
 // fires 100 ms after the view's CSS size or the display's pixel ratio
-// settled on a new value; `onPage({cssW, cssH})` when the painted frame's
+// settled on a new value; `onPage({cssW,cssH})` when the painted frame's
 // CSS size changes. `escape()` is what Esc on the panel does now
 // (OMP_BROWSER.escapeAction, null = the page's key), `onEscape(action)`
 // does it. Chords the app keymap takes leave the page the way they leave

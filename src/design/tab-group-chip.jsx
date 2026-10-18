@@ -45,6 +45,7 @@ function TabGroupChip({ group, activeId, profileLabel, onSelect, onClose, onNewI
   const [renaming, setRenaming] = React.useState(null);
   const rootRef    = React.useRef(null);
   const triggerRef = React.useRef(null);
+  const popRef     = React.useRef(null);
 
   // Focus back to the trigger: a picked row unmounts with the popover, and
   // focus would otherwise fall back to <body> (same as ProfileMenu).
@@ -54,6 +55,9 @@ function TabGroupChip({ group, activeId, profileLabel, onSelect, onClose, onNewI
   }, []);
 
   window.usePopoverDismiss(open, rootRef, close);
+  // #6: arrows / Home / End between the rows, Tab closes (menuKeyNav).
+  const onPopKey = e => window.menuKeyNav(e, popRef.current, '[role="menuitem"]', close);
+
 
   const active  = group.tabs.find(t => t.id === activeId);
   const profile = profileLabel(group.profile);
@@ -68,11 +72,17 @@ function TabGroupChip({ group, activeId, profileLabel, onSelect, onClose, onNewI
     <div ref={rootRef}
       {...reorder.itemProps("projects", group.key, "x")}
       className={`tab tab-group ${active ? "active" : ""}${reorder.dropClass("projects", group.key)}`}
+      role="tab"
+      tabIndex={0}
+      aria-selected={!!active}
       // A middle click never closes a group: it would take several tabs
       // (and their transcripts) with it. Old WebKit reports it as a `click`
       // with button 1 (see TabBar), hence the guard there too; the
       // mousedown swallow stops autoscroll / primary-selection paste.
       onClick={e => { if (e.button !== 1) onSelect(groupTarget(group, activeId)); }}
+      onKeyDown={e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(groupTarget(group, activeId)); }
+      }}
       onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
       onAuxClick={e => { if (e.button === 1) e.preventDefault(); }}>
       <span className="tab-bar-mark" style={{ background: active ? active.color : "transparent" }} />
@@ -97,7 +107,8 @@ function TabGroupChip({ group, activeId, profileLabel, onSelect, onClose, onNewI
       </button>
 
       {open && (
-        <div className="tab-group-pop" role="menu" data-no-reorder onClick={e => e.stopPropagation()}>
+        <div ref={popRef} className="tab-group-pop" role="menu" data-no-reorder
+          onClick={e => e.stopPropagation()} onKeyDown={onPopKey}>
           {membersNewestFirst(group).map(t => (
             <div key={t.id} {...reorder.itemProps(members, t.id, "y")}
               className={`tab-group-row ${t.id === activeId ? "active" : ""}${reorder.dropClass(members, t.id)}`} role="none">

@@ -32,13 +32,14 @@ const {
   EMPTY: _UT_EMPTY, openPanel: _UT_open, closePanel: _UT_close, togglePanel: _UT_toggle,
   applyStatus: _UT_applyStatus, applyExit: _UT_applyExit, spawnFailed: _UT_spawnFailed,
   needsSpawn: _UT_needsSpawn, shellLive: _UT_shellLive, canRestart: _UT_canRestart,
+  noteActivity: _UT_noteActivity, clearDirty: _UT_clearDirty,
   entryOf: _UT_entryOf,
 } = window.OMP_TERMINAL;
 const { pruneEntries: _UT_pruneEntries } = window.OMP_SESSION_UI;
 const {
   SKIPPED_LINE: _UT_SKIPPED, exitLine: _UT_exitLine, failLine: _UT_failLine, theme: _UT_theme,
   applyWindowsPty: _UT_applyWindowsPty, createXterm: _UT_createXterm, copySelection: _UT_copySelection,
-  scrollbackLines: _UT_scrollbackLines,
+  paste: _UT_pasteTerm, scrollbackLines: _UT_scrollbackLines,
 } = window.OMP_TERMINAL_XTERM;
 const {
   EMPTY: _UT_STREAM, beginSync: _UT_beginSync, onEvent: _UT_onEvent, replayCursor: _UT_replayCursor,
@@ -53,6 +54,10 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
   stateRef.current = state;
   // Bumped when a tab's initial sync settles, so the spawn effect re-checks.
   const [syncTick, setSyncTick] = React.useState(0);
+  // The active tab, read by the stream runner (a late render's closure
+  // must not own it).
+  const activeRef = React.useRef(activeSessionId);
+  activeRef.current = activeSessionId;
 
   // sid → rec: { term, fit, mounted, disposed, subs, stream, sync, spawning,
   // opened, observer, fitTimer }. `stream` = the output sync record
@@ -100,17 +105,22 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
   // with `bridge`, reached through `ops.current` by long-lived callbacks.
   const ops = React.useRef(null);
   ops.current = React.useMemo(() => {
-    /** Store the next stream record and perform its actions, in order. */
+    /** Store the next stream record and perform its actions, in order.
+     *  Output or an exit on a tab the user is not viewing marks it dirty
+     *  (terminal.js `noteActivity`) — a dot on its project tab. */
     function run(sid, rec, { stream, actions }) {
       rec.stream = stream;
+      const seen = { any: false };
       for (const a of actions) {
         if (a.type === "write") {
+          seen.any = true;
           const { ack } = a;
           if (ack) rec.term.write(a.bytes, () => bridge.terminalAck(sid, ack.instance, ack.n));
           else rec.term.write(a.bytes);
         } else if (a.type === "skipped") {
           rec.term.write(_UT_SKIPPED);
         } else if (a.type === "exit") {
+          seen.any = true;
           setState((s) => _UT_applyExit(s, sid, a.instance, a.code));
           if (_UT_entryOf(stateRef.current, sid).status?.instance !== a.instance) void refreshStatus(sid);
         } else if (a.type === "exitLine") {
@@ -121,6 +131,7 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
           replay(sid, rec);
         }
       }
+      if (seen.any) setState((s) => _UT_noteActivity(s, sid, sid === activeRef.current && _UT_entryOf(s, sid).open));
     }
 
     /** Chain `step` (async; already counted by `beginSync`) on the rec's
@@ -259,7 +270,9 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
           const { width, height: h } = entries[entries.length - 1].contentRect;
           if (width === 0 || h === 0) return;
           clearTimeout(rec.fitTimer);
-          rec.fitTimer = setTimeout(() => fit(sid), 50);
+          // Past the panel's height transition (140ms, terminal.css): a
+          // mid-transition fit locks the transition's size in.
+          rec.fitTimer = setTimeout(() => fit(sid), 160);
         });
         rec.observer.observe(node);
       });
@@ -272,7 +285,11 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
     const term = recs.current.get(sid)?.term;
     return term ? _UT_copySelection(term) : false;
   }, []);
-
+  /** Right-click paste (terminal-panel.jsx): the clipboard into the shell. */
+  const paste = React.useCallback((sid) => {
+    const term = recs.current.get(sid)?.term;
+    if (term) _UT_pasteTerm(term);
+  }, []);
   const focus = React.useCallback((sid) => recs.current.get(sid)?.term.focus(), []);
   // Hiding a panel that holds the focus (xterm's textarea, the close
   // button) would drop it on <body>, where keys reach nothing: the
@@ -296,12 +313,13 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
   // A visible panel: size the xterm to it, start the shell of a tab that has
   // none (once its initial sync settled), and focus the terminal that was
   // just opened. Runs on every open/close, tab switch, height change and
-  // settled sync.
+  // settled sync. Becoming visible clears the tab's dirty mark.
   const prevOpen = React.useRef(null);
   React.useEffect(() => {
     const entry = _UT_entryOf(state, activeSessionId);
     const rec = recs.current.get(activeSessionId);
     if (entry.open && rec?.mounted) {
+      setState((s) => _UT_clearDirty(s, activeSessionId));
       fit(activeSessionId);
       if (_UT_needsSpawn(entry) && rec.stream.syncing === 0) spawn(activeSessionId);
       if (prevOpen.current !== activeSessionId) focus(activeSessionId);
@@ -336,7 +354,14 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
     }
   }, [tweaks.theme, tweaks.accent, fontSize, scrollback, fit]);
 
-  return { state, height, toggle, close, setHeight, mountFor, copySelection };
+  // Per-tab dirty marks (output or an exit while not viewed): chrome.jsx's
+  // project tab dot reads this — the integrator wires it there.
+  const dirtyTabs = React.useMemo(() => {
+    const out = {};
+    for (const sid of Object.keys(state)) if (state[sid].dirty) out[sid] = true;
+    return out;
+  }, [state]);
+  return { state, height, toggle, close, setHeight, mountFor, copySelection, paste, respawn, dirtyTabs };
 }
 
 Object.assign(window, { useTerminal });

@@ -45,6 +45,10 @@
    `stretch` it is placed at cross-start instead. Measured in a real webview:
    button centre 11.5px vs 18.5px for the window controls and profile chip —
    a 7px offset, on every platform that renders the controls. */
+/* #9: a long project name gives way, ellipsized, before the branch chip. */
+.chrome-title .chrome-title-project {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .chrome-right { display: flex; align-items: center; gap: 6px; }
 
 /* ── Per-tab profile selector ─────────────────────────────────────────── */
@@ -185,7 +189,12 @@
   background: var(--bg-window);
   border-bottom: 1px solid var(--line);
   padding-left: 4px;
+  /* #1: many tabs overflow; the bar scrolls horizontally with no visible
+     scrollbar (same recipe as .browser-tabs-scroll, browser.css). The tabs
+     themselves never shrink (min-width), so the whole strip scrolls. */
+  overflow-x: auto; scrollbar-width: none;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   position: relative;
   display: flex; align-items: center; gap: 8px;
@@ -245,8 +254,9 @@
 .tab-run-dot.running { background: var(--accent); box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 30%, transparent); animation: tab-run-pulse 1.6s ease-in-out infinite; }
 /* The agent yielded, a background job will wake it: a hollow ring, slower. */
 .tab-run-dot.background { box-shadow: inset 0 0 0 1.5px var(--accent); animation: tab-run-pulse 2.6s ease-in-out infinite; }
-.tab-run-dot.waiting-user { background: var(--amber); }
+.tab-run-dot.waiting-user { background: var(--amber); animation: tab-run-pulse 2.6s ease-in-out infinite; }
 .tab-run-dot.failed { background: var(--rose); }
+.tab-run-dot.term-dirty { background: var(--accent); }
 /* omp is retrying a failed request: an amber ring that spins. */
 .tab-run-dot.retrying { box-sizing: border-box; border: 1.5px solid var(--amber); border-top-color: transparent; animation: spin 1s linear infinite; }
 @keyframes tab-run-pulse {
@@ -275,6 +285,8 @@
 }
 .tab-add:hover { color: var(--accent); background: var(--bg-hover); }
 .tab-add.on { color: var(--accent); }
+/* #8: not a `.btn` either, so no global focus ring. */
+.tab-add:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ── Grouped tab chip (#27) ──────────────────────────────────────────── */
 .tab-count {
@@ -290,6 +302,8 @@
 }
 .tab-group-trigger:hover,
 .tab-group-trigger[aria-expanded="true"] { background: var(--bg-active); color: var(--fg); }
+/* #8: not a `.btn`, so no global focus ring. */
+.tab-group-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Left-anchored, unlike .profile-pop: tabs start at the window's left edge,
    so growing rightward from the chip never runs into `.window`'s clipping. */
 .tab-group-pop {
@@ -323,6 +337,8 @@
 .tabs-right {
   display: flex; align-items: center; gap: 8px; padding: 0 12px;
   font-size: var(--d-text-xs);
+  /* #1: pinned right; the tabs scroll out from under it. */
+  flex: none; margin-left: auto;
 }
 
 /* Tab-bar pill announcing an available update. */

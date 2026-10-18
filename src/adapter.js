@@ -560,18 +560,19 @@
   }
 
   // ── Time helper (exported so live.js and app-live.jsx share one copy) ────
+  // Minute precision, locale-ordered: a seconds field on every bubble is
+  // noise no one reads, and HH:MM is US-only. One formatter, cached by the
+  // runtime, shared by both branches.
+  const _HM = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
   function _formatTime(ts) {
     if (!ts) return timeNow();
     const d = ts instanceof Date ? ts : new Date(ts);
     if (isNaN(d.getTime())) return timeNow();
-    return [d.getHours(), d.getMinutes(), d.getSeconds()]
-      .map(n => String(n).padStart(2, "0")).join(":");
+    return _HM.format(d);
   }
 
   function timeNow() {
-    const d = new Date();
-    return [d.getHours(), d.getMinutes(), d.getSeconds()]
-      .map(n => String(n).padStart(2, "0")).join(":");
+    return _HM.format(new Date());
   }
 
   // ── Model picker: recently used group (#11) ───────────────────────────────

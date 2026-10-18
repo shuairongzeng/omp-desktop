@@ -33,6 +33,24 @@
       : { id: el.dataset.reorderId, start: r.left, end: r.right };
   }
 
+  /** #7: nearest ancestor that actually scrolls vertically (or horizontally
+   *  for an "x" bar). `offsetParent`-free: a plain walk up, checking the
+   *  computed overflow of each element, returning the first clipper whose
+   *  scroll size exceeds its client size. */
+  function scrollableAncestor(el, axis = "y") {
+    for (let node = el?.parentElement; node; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      const overflows = axis === "y" ? /auto|scroll|overlay/.test(style.overflowY)
+                                     : /auto|scroll|overlay/.test(style.overflowX);
+      if (overflows) {
+        const canScroll = axis === "y" ? node.scrollHeight > node.clientHeight
+                                       : node.scrollWidth > node.clientWidth;
+        if (canScroll) return node;
+      }
+    }
+    return null;
+  }
+
   function useDragReorder(onDrop) {
     // `{ list, id, targetId, after }` while a drag is past the threshold.
     const [drag, setDrag] = React.useState(null);
@@ -64,6 +82,27 @@
           try { item.setPointerCapture(pointerId); } catch (_) { /* pointer already gone */ }
           document.body.classList.add("reordering");
           window.getSelection()?.removeAllRanges();
+        }
+        // #7: dragging near a scrollable ancestor's edge (top/bottom for a
+        // "y" list, left/right for an "x" bar) steps the scroll so a long
+        // list reorders without releasing. Resolved per move — scrolling
+        // can reveal a different ancestor's overflow — and stepped by how
+        // deep into the edge the pointer is.
+        const scroller = scrollableAncestor(item, axis);
+        if (scroller) {
+          const r = scroller.getBoundingClientRect();
+          const EDGE = 30;
+          if (axis === "y") {
+            const dTop = ev.clientY - r.top;
+            const dBottom = r.bottom - ev.clientY;
+            if (dTop < EDGE && dTop <= dBottom) scroller.scrollTop -= Math.max(1, EDGE - dTop);
+            else if (dBottom < EDGE) scroller.scrollTop += Math.max(1, EDGE - dBottom);
+          } else {
+            const dLeft = ev.clientX - r.left;
+            const dRight = r.right - ev.clientX;
+            if (dLeft < EDGE && dLeft <= dRight) scroller.scrollLeft -= Math.max(1, EDGE - dLeft);
+            else if (dRight < EDGE) scroller.scrollLeft += Math.max(1, EDGE - dRight);
+          }
         }
         const items = [...container.querySelectorAll("[data-reorder-id]")]
           .filter(el => el.dataset.reorderList === list)

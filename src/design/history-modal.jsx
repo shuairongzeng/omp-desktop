@@ -22,6 +22,10 @@ function formatRelativeTime(ts) {
 function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
   const [sessions, setSessions]       = React.useState([]);
   const [loading, setLoading]         = React.useState(false);
+  // null while loading/success; the error string when the fetch failed, so
+  // the failure renders its own state instead of an identical-looking
+  // "no sessions" empty list (usage-stats-panel.jsx:74-93's distinction).
+  const [error, setError]             = React.useState(null);
   // null = all, else a project key. `initialCwd` preselects that project's
   // chip (the modal remounts per open); a key with no chip falls back to
   // "all" via `activeProject` below.
@@ -30,15 +34,22 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
   const [activeIdx, setActiveIdx]     = React.useState(0);
   const inputRef                      = React.useRef(null);
   const listRef                       = React.useRef(null);
+  const panelRef                      = React.useRef(null);
+
+  // Take focus on open (so Tab walks the modal's controls, not the composer
+  // underneath) and hand it back on close (ui/use-modal-focus.js).
+  window.useModalFocus(panelRef, open);
 
   const fetchSessions = React.useCallback(async () => {
     if (!window.OMP_BRIDGE?.listSavedSessions) return;
     setLoading(true);
+    setError(null);
     try {
       const list = await window.OMP_BRIDGE.listSavedSessions();
       setSessions(list || []);
     } catch (err) {
       console.error("[HistoryModal] Failed to list sessions:", err);
+      setError("couldn't load saved sessions");
       setSessions([]);
     } finally {
       setLoading(false);
@@ -86,10 +97,19 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
     el?.scrollIntoView({ block: "nearest" });
   }, [clampedIdx]);
 
-  // Keyboard navigation
+  // Keyboard navigation + the focus guard, capture phase on `window` (not
+  // the panel's own onKeyDown, not bubble): the composer refocuses itself
+  // when a turn ends, and focus can then sit outside the modal while it is
+  // still open — a keystroke must neither type into nor Enter-send the
+  // hidden composer. Same guard as prompt-history-modal.jsx and
+  // update-modal.jsx: every unmodified key belongs to the modal and never
+  // reaches the global keymap; a key aimed outside is cancelled and focus
+  // pulled back. Ctrl/Alt/Meta chords pass through as global shortcuts.
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      e.stopPropagation();
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();
@@ -100,22 +120,28 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
         e.preventDefault();
         setActiveIdx(i => Math.max(i - 1, 0));
       } else if (e.key === "Enter") {
+        // Swallowed unconditionally (see prompt-history-modal.jsx): Enter
+        // can never reach the composer's send while the modal is open,
+        // whether or not there's a session under the cursor.
+        e.preventDefault();
         if (filtered[clampedIdx]) {
-          e.preventDefault();
           onResume?.(filtered[clampedIdx]);
           onClose();
         }
+      } else if (!panelRef.current?.contains(e.target)) {
+        e.preventDefault();
+        inputRef.current?.focus();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [open, onClose, onResume, filtered, clampedIdx]);
 
   if (!open) return null;
 
   return (
     <div className="bridge-scrim" onClick={onClose} style={{ paddingTop: "8vh" }}>
-      <div className="bridge slide-in" onClick={e => e.stopPropagation()} style={{ width: "min(740px, calc(100vw - 32px))", maxHeight: "80vh" }}>
+      <div ref={panelRef} tabIndex={-1} className="bridge slide-in" onClick={e => e.stopPropagation()} style={{ width: "min(740px, calc(100vw - 32px))", maxHeight: "80vh" }}>
         
         {/* Header */}
         <div className="bridge-input-row" style={{ padding: "12px 16px", gap: 10 }}>
@@ -171,7 +197,18 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
             <div className="bridge-empty">Scanning disk for saved sessions…</div>
           )}
 
-          {!loading && filtered.length === 0 && (
+          {!loading && error && (
+            <div className="bridge-empty">
+              {error}
+              <div style={{ marginTop: 12 }}>
+                <button className="btn ghost" onClick={fetchSessions}>
+                  <Icon name="refresh" size={11} /> try again
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!loading && !error && filtered.length === 0 && (
             <div className="bridge-empty">
               {query
                 ? `No sessions found matching "${query}"`

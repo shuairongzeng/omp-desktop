@@ -61,6 +61,13 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
   // Set by the first prev/next: from then on a newly shown image fades in
   // (the first one pops out of its thumbnail instead).
   const [navigated, setNavigated] = React.useState(false);
+  // Zoom/pan on top of the fit rect (the base geometry OMP_LIGHTBOX
+  // computes): `scale` is relative to it, `tx/ty` a viewport-pixel pan.
+  // `transform: none` in the render below means "at the fit", so a reset
+  // is just clearing this state.
+  const [zoom, setZoom] = React.useState(null); // { scale, tx, ty }
+  const zoomRef = React.useRef(zoom);
+  zoomRef.current = zoom;
 
   const size = natural?.index === index ? natural : null;
   const rect = size ? _LB_fitRect(size.w, size.h, view.w, view.h) : null;
@@ -113,8 +120,75 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
   const step = React.useCallback((delta) => {
     if (count < 2 || closingRef.current) return;
     setNavigated(true);
+    // Each image gets its own fit rect; a zoom from the previous one
+    // would misplace it, so the view resets with the navigation.
+    setZoom(null);
     onIndex(_LB_stepIndex(index, delta, count));
   }, [count, index, onIndex]);
+
+  // ── Zoom / pan (issue #15) ────────────────────────────────────────────
+  const ZOOM_MIN = 0.25, ZOOM_MAX = 4;
+  // Viewport point that must stay under `point` after a rescale: pan is
+  // adjusted so the zoom is anchored at the cursor, not the centre.
+  // Reads rectRef: the rect can change (decode, resize) between renders.
+  const zoomAt = (p, point) => {
+    const base = rectRef.current;
+    if (!base) return null;
+    const z = zoomRef.current;
+    const prev = { scale: z?.scale ?? 1, tx: z?.tx ?? 0, ty: z?.ty ?? 0 };
+    const scale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, p));
+    // Image-space anchor: where `point` sits in the un-zoomed rect.
+    const ax = point.x - prev.tx - base.left;
+    const ay = point.y - prev.ty - base.top;
+    // After rescale the anchor lands at ax*scale + tx'; solve for tx'.
+    return { scale, tx: point.x - base.left - ax * scale, ty: point.y - base.top - ay * scale };
+  };
+
+  const onWheel = (e) => {
+    if (closingRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!rect) return;
+    // Zoom around the cursor: 1:1 per notch feels right on every wheel
+    // input the webview reports (deltaMode notwithstanding, ~±10%).
+    const z = zoomRef.current;
+    const factor = Math.exp(-e.deltaY * 0.0015);
+    setZoom(zoomAt((z?.scale ?? 1) * factor, { x: e.clientX, y: e.clientY }));
+  };
+
+  // Drag pans while the pointer is down; a click that didn't move (and
+  // isn't part of a double-click) still closes via the scrim's onClick.
+  const dragRef = React.useRef(null); // { x, y, tx, ty, moved }
+  const onPointerDown = (e) => {
+    if (e.button !== 0 || closingRef.current) return;
+    const z = zoomRef.current;
+    dragRef.current = { x: e.clientX, y: e.clientY, tx: z?.tx ?? 0, ty: z?.ty ?? 0, moved: false };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    if (!d.moved && Math.hypot(dx, dy) < 3) return;
+    d.moved = true;
+    const z = zoomRef.current;
+    setZoom({ scale: z?.scale ?? 1, tx: d.tx + dx, ty: d.ty + dy });
+  };
+  const onPointerUp = (e) => {
+    if (dragRef.current?.moved) {
+      // Swallow the click the browser fires after a drag, so the scrim
+      // doesn't close over the pan that just happened.
+      e.stopPropagation();
+    }
+    dragRef.current = null;
+    e.currentTarget.hasPointerCapture?.(e.pointerId) && e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+  const onDoubleClick = (e) => {
+    e.stopPropagation();
+    if (closingRef.current) return;
+    // Reset to the fit rect (zoom state null == transform none).
+    setZoom(null);
+  };
 
   // Capture phase + preventDefault: the global keymap dispatcher skips
   // defaultPrevented events, so Escape closes the viewer instead of also
@@ -143,6 +217,10 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
   const imgStyle = rect
     ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
     : { visibility: "hidden" };
+  // Zoom/pan rides on transform: translate(tx, ty) scale(s), applied over
+  // the fit rect the geometry keeps computing (left/top/width/height).
+  // `transform-origin: 0 0` matches the FLIP transforms already in play.
+  if (zoom) imgStyle.transform = `translate(${zoom.tx}px, ${zoom.ty}px) scale(${zoom.scale})`;
   const nav = (delta) => (e) => { e.stopPropagation(); step(delta); };
 
   return ReactDOM.createPortal(
@@ -153,6 +231,7 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
       aria-modal="true"
       aria-label="Attached image"
       tabIndex={-1}
+      onWheel={onWheel}
       onClick={close}
     >
       <img
@@ -162,7 +241,12 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
         src={images[index]}
         alt={`attached image ${index + 1} of ${count}`}
         style={imgStyle}
+        draggable={false}
         onLoad={(e) => readNatural(e.currentTarget)}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onDoubleClick={onDoubleClick}
       />
       <button className="lightbox-btn lightbox-close" title="Close (Esc)" onClick={(e) => { e.stopPropagation(); close(); }}>
         <_LB_Icon name="close" size={14} />

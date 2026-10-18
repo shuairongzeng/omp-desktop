@@ -16,6 +16,24 @@
   box-shadow: inset 0 0 0 2px var(--accent);
   background: color-mix(in oklab, var(--accent) 6%, transparent);
 }
+/* The drop overlay says what the drop will do (#50): images attach as
+   bytes, everything else inserts its paths as text. `data-drop-kind` comes
+   from the hover payload's split (composer.jsx); no kind (unknown yet, or
+   the HTML5 path that can't peek before the drop) keeps the plain ring.
+   Centered over everything, but pointer-events stay none and the scrim is
+   translucent, so the chips/textarea under it remain readable. */
+.composer.drop-on[data-drop-kind="images"]::after {
+  content: "release to attach image(s)";
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: var(--d-text-sm);
+  color: var(--accent); letter-spacing: 0.04em;
+}
+.composer.drop-on[data-drop-kind="paths"]::after {
+  content: "release to insert path(s)";
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-mono); font-size: var(--d-text-sm);
+  color: var(--accent); letter-spacing: 0.04em;
+}
 .plan-strip {
   display: flex; align-items: center; gap: 8px;
   font-size: var(--d-text-sm);
@@ -39,7 +57,20 @@
   color: var(--fg-2); cursor: pointer;
 }
 .attach-remove:hover { color: var(--rose); background: color-mix(in oklab, var(--rose) 15%, color-mix(in oklab, var(--bg-elevated) 70%, black)); }
-
+/* Transient drop notice (composer.jsx droppedNotice): an over-cap or
+   decode-failure count at the end of the attach strip, self-dismissing
+   after 4s. Laid out as a chip so it lines up against the 48px
+   thumbnails; amber, not rose — it is a "these were left out" note, not
+   an error the user must act on. */
+.attach-notice {
+  display: inline-flex; align-items: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in oklab, var(--amber) 40%, var(--line));
+  background: color-mix(in oklab, var(--amber) 8%, var(--bg-elevated));
+  color: var(--amber);
+  font-size: var(--d-text-xs);
+}
 /* Collapsed long pastes (#31): a chip per token, plus the open one's text. */
 .paste-chip {
   display: flex; align-items: stretch;
@@ -118,6 +149,10 @@
   color: var(--fg);
   line-height: 1.5;
 }
+/* Prompt-history recall in progress (draft.historyNav set): a 2px accent
+   bar on the textarea's left, the visual "you are scrolling the history"
+   cue that ends with the recall (any edit, a send, a paste edit). */
+.composer-input textarea.recalling { box-shadow: inset 2px 0 0 var(--accent); }
 .composer-input textarea::placeholder { color: var(--fg-4); }
 .composer-input textarea:focus-visible { outline: none; }
 
@@ -220,6 +255,11 @@
   flex: 1; min-width: 0;
   white-space: pre; overflow: hidden; text-overflow: ellipsis;
 }
+
+/* ⌘K command bridge: the row the filter input's ↑↓ selected (composer.jsx
+   CommandBridge keyboard nav). Same surface as a hovered row (overlays.css
+   .bridge-row:hover) so the keyboard selection reads like the mouse's. */
+.bridge-row.kb-active { background: var(--bg-hover); }
 
 /* @-mention file-path autocomplete pop */
 .mention-pop {
