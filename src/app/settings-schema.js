@@ -57,6 +57,8 @@
         tweak("fontSize", "slider", "Font size", "Scales all text and icons, the terminal's font included.", "zoom scale text",
           { min: 75, max: 150, step: 5, unit: "%" }),
         tweak("monoChat", "toggle", "Monospace chat", "Show messages in the monospace font instead of the UI font.", "font"),
+        tweak("chatWidth", "seg", "Chat width", "How wide message bubbles and replies may grow when the window is stretched; standard keeps a narrow reading column, full follows the window.", "wide stretch adaptive responsive",
+          { options: opts(["standard", "wide", "full"]) }),
         tweak("textBrightness", "slider", "Text brightness", "Nudges all text toward or away from the theme's contrast pole; 0 is the theme's own.", "contrast foreground",
           { min: -20, max: 20, step: 1 }),
       ] },

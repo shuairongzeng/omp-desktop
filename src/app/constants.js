@@ -36,6 +36,7 @@
     "showSubagents": true,
     "showMinimap": true,
     "fontSize":  100,
+    "chatWidth": "wide",
     "textBrightness": 0,
     "bgImage": null,
     "bgImageDim": 40,

@@ -133,6 +133,14 @@
   flex-shrink: 0;
 }
 .ass-body { flex: 1; min-width: 0; max-width: 80ch; }
+
+/* Chat width tweak (Settings → Appearance → Chat width): the 80ch/820px
+   reading measure is a fixed column on a stretched window; wide raises it,
+   full removes it so the chat follows the window. */
+.chat-wide .ass-body { max-width: 120ch; }
+.chat-full .ass-body { max-width: none; }
+.chat-wide .user-bubble { max-width: min(1200px, 78%); }
+.chat-full .user-bubble { max-width: 100%; }
 .ass-meta {
   display: flex; align-items: center; gap: 6px;
   margin-bottom: 4px;

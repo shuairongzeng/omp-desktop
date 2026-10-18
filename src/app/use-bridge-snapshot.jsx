@@ -68,6 +68,11 @@ function useThemeEffect(t) {
     }
     if (t.fontSize) root.style.fontSize = `${t.fontSize}%`;
 
+    // Chat width: `chat-wide`/`chat-full` on <html> lift the reading
+    // column's caps (chat.css); standard is the absence of both classes.
+    root.classList.toggle("chat-wide", t.chatWidth === "wide");
+    root.classList.toggle("chat-full", t.chatWidth === "full");
+
     // Text brightness: shift the fg ladder toward the contrast pole (or
     // wash it toward the window background). Overrides come off first so
     // the computed base is the theme's own value, not a previous mix.
@@ -90,7 +95,7 @@ function useThemeEffect(t) {
     root.classList.toggle("glass-root", glass);
     root.style.setProperty("--glass-alpha", `${t.glassOpacity ?? 85}%`);
     root.style.setProperty("--glass-blur", `${t.glassBlur ?? 12}px`);
-  }, [t.theme, t.density, t.accent, t.monoChat, t.fontSize,
+  }, [t.theme, t.density, t.accent, t.monoChat, t.fontSize, t.chatWidth,
       t.textBrightness, t.glassEffect, t.glassOpacity, t.glassBlur]);
 }
 

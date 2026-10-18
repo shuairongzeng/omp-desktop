@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Chat width setting** (Settings → Appearance → Text): `standard` keeps the 80ch reading column, `wide` (new default) raises it to 120ch and lets user bubbles grow to 1200px, `full` removes the caps so messages follow a stretched window (verified live at 1440px: 539px → 809px → 1185px)
+
 ### Fixed
 
 - **Git browser no longer blacks out the whole window**: the accessibility pass dropped the `_GH_WORKTREE` constant in `git/history.jsx`, so `GitHistory` threw a `ReferenceError` on first render and — with no error boundary — React unmounted the entire tree (verified live: modal opens, history graph and inline diff render)
