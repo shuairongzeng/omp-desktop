@@ -28,6 +28,11 @@
     // regardless of where either row sits here. See `resolve`'s doc comment.
     // Must match the plan §5 table row-for-row and Rust ACTION_IDS.
     { id: "app.interrupt",           label: "Interrupt turn",          group: "Session", scope: "global",   defaultKeys: ["escape"] },
+    // `shift+tab` is bound here but *scoped to the composer* in the
+    // dispatcher (use-keymap.jsx): it only fires while the composer's
+    // textarea has focus, so Shift+Tab keeps its native backward
+    // focus-traversal everywhere else. A user rebind to any other chord
+    // makes it a plain global shortcut.
     { id: "app.thinking.cycle",      label: "Cycle thinking level",    group: "Agent",   scope: "global",   defaultKeys: ["shift+tab"] },
     { id: "app.model.cycleForward",  label: "Cycle model forward",     group: "Agent",   scope: "global",   defaultKeys: ["ctrl+p"] },
     { id: "app.model.cycleBackward", label: "Cycle model backward",    group: "Agent",   scope: "global",   defaultKeys: ["ctrl+shift+p"] },
@@ -348,6 +353,33 @@
     return false;
   }
 
+  /**
+   * True when the resolved action id + chord needs the composer-focus guard
+   * in the dispatcher: only the *default* `shift+tab` thinking-cycle chord
+   * does. Swallowing Shift+Tab app-wide would kill backward focus
+   * traversal, so `app.thinking.cycle` on its default chord fires only
+   * while the composer textarea has focus (`isComposerTarget`); anywhere
+   * else the chord falls through to native traversal. A rebind to any
+   * other chord makes the action a plain global shortcut.
+   * @param {string} id
+   * @param {string} chord
+   */
+  function isComposerScoped(id, chord) {
+    return id === "app.thinking.cycle" && chord === "shift+tab";
+  }
+
+  /**
+   * True for elements inside the composer's textarea (`.composer-input
+   * textarea`): the one focus context the default `shift+tab` chord fires
+   * in. Duck-typed on `closest` (like `isTypingTarget` on `tagName`) so a
+   * stub `{ closest: sel => … }` works in tests; a target without it (the
+   * window, a plain object) is never the composer.
+   * @param {EventTarget|null} el
+   */
+  function isComposerTarget(el) {
+    return !!el?.closest?.(".composer-input textarea");
+  }
+
   /** The platform's copy / paste chords: always the guest's. */
   const GUEST_RESERVED_MAC = new Set(["super+c", "super+v"]);
   const GUEST_RESERVED_OTHER = new Set(["ctrl+shift+c", "ctrl+shift+v"]);
@@ -495,6 +527,8 @@
     matches,
     isTypingTarget,
     allowedInInput,
+    isComposerScoped,
+    isComposerTarget,
     guestShouldBypass,
     formatChord,
     hintFor,

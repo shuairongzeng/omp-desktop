@@ -74,9 +74,15 @@ const _ICON_PATHS = {
 const Icon = ({ name, size = 14, color = "currentColor", dotColor = "var(--accent, #ff8a4c)", style, ...rest }) => {
   const def = _ICON_PATHS[name];
   if (!def) return null;
+  // Decorative by default: an icon sits beside text or inside a labelled
+  // button, so the svg is aria-hidden and no AT reads its dot-and-path
+  // soup. An icon that *is* the content gets its name at the callsite (an
+  // aria-label on the button/element around it); `{...rest}` still lets a
+  // caller override for the rare exception.
   return (
     <svg className="ui-icon" style={{ "--icon-size": `${size / 16}rem`, ...style }} viewBox="0 0 16 16" fill="none"
-      stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" {...rest}>
+      stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"
+      aria-hidden="true" {...rest}>
       <g dangerouslySetInnerHTML={{ __html: def.p.join("") }} />
       <circle cx={def.d[0]} cy={def.d[1]} r={1.6} fill={dotColor} stroke="none" />
     </svg>

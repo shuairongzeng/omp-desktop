@@ -68,7 +68,7 @@
   border-radius: 6px;
   border: 1px solid color-mix(in oklab, var(--amber) 40%, var(--line));
   background: color-mix(in oklab, var(--amber) 8%, var(--bg-elevated));
-  color: var(--amber);
+  color: var(--amber-fg, var(--amber));
   font-size: var(--d-text-xs);
 }
 /* Collapsed long pastes (#31): a chip per token, plus the open one's text. */
@@ -105,8 +105,8 @@
   font-size: var(--d-text-xs);
 }
 .queue-row.sending { opacity: .65; }
-.queue-kind { flex: none; font-family: var(--font-mono); color: var(--amber); }
-.queue-row.followUp .queue-kind { color: var(--cyan); }
+.queue-kind { flex: none; font-family: var(--font-mono); color: var(--amber-fg, var(--amber)); }
+.queue-row.followUp .queue-kind { color: var(--cyan-fg, var(--cyan)); }
 .queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-2); }
 .queue-note { flex: none; color: var(--fg-4); }
 /* `.btn.icon.ghost` (styles.css), sized down; the inset ring stays inside

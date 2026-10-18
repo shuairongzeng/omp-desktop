@@ -138,13 +138,18 @@
   border: 1px solid var(--line);
 }
 .minimap-cell {
+  /* A <button> (a jump target) with the grid look kept: the reset below
+     strips the native chrome the global `button` rule would add. */
   aspect-ratio: 1 / 1;
+  border: 0;
+  padding: 0;
   border-radius: 2px;
   cursor: pointer;
   transition: transform 80ms ease, outline-color 80ms ease;
   outline: 1px solid transparent;
   position: relative;
 }
+.minimap-cell:focus-visible { outline-color: var(--accent); outline-width: 2px; }
 .minimap-cell:hover,
 .minimap-cell.hot {
   transform: scale(1.6);

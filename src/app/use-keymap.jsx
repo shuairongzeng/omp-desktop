@@ -123,6 +123,13 @@ function useKeymapDispatch(handlersRef) {
   // re-subscribe when individual handlers change — avoids listener churn on
   // every render.
   React.useEffect(() => {
+    // Bare `shift+tab` is the composer's thinking-cycle chord, not a global
+    // one: the dispatch `preventDefault`s every bound chord, and swallowing
+    // Shift+Tab app-wide would kill backward focus traversal everywhere
+    // else. It only claims the key when the composer's textarea has focus;
+    // anywhere else the chord falls through to native traversal (the guard
+    // itself lives in keymap.js — `isComposerScoped`/`isComposerTarget` —
+    // so the tests cover the exact dispatch predicate).
     const onKey = (e) => {
       if (e.defaultPrevented) return;
       const chord = window.OMP_KEYMAP.chordFromEvent(e);
@@ -131,6 +138,8 @@ function useKeymapDispatch(handlersRef) {
       if (!id) return;
       const handler = handlersRef.current?.[id];
       if (!handler) return;
+      if (window.OMP_KEYMAP.isComposerScoped(id, chord) &&
+          !window.OMP_KEYMAP.isComposerTarget(e.target ?? document.activeElement)) return;
       if (window.OMP_KEYMAP.isTypingTarget(e.target) &&
           !window.OMP_KEYMAP.allowedInInput(chord)) return;
       // preventDefault unconditionally once a bound handler is found, even

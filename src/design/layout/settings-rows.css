@@ -79,7 +79,7 @@
   border: 1px solid var(--line); background: var(--bg-input); color: var(--fg);
   font-size: var(--d-text-sm);
 }
-.st-kb-banner { padding: 8px 16px; color: var(--amber); font-size: var(--d-text-xs); border-bottom: 1px solid var(--line); }
+.st-kb-banner { padding: 8px 16px; color: var(--amber-fg, var(--amber)); font-size: var(--d-text-xs); border-bottom: 1px solid var(--line); }
 .st-kb-path { color: var(--fg-2); overflow-wrap: anywhere; }
 .st-kb-dim { color: var(--fg-4); }
 .st-kb-empty { padding: 14px 16px; color: var(--fg-4); font-size: var(--d-text-sm); }
@@ -91,7 +91,7 @@
 .st-chords { display: flex; gap: 6px; align-items: center; flex: none; }
 .st-chords .st-kbd { font-size: var(--d-text-xs); padding: 2px 8px; }
 .st-kb-unbound { color: var(--fg-4); font-size: var(--d-text-xs); }
-.st-kb-recording { color: var(--amber); font-size: var(--d-text-xs); }
+.st-kb-recording { color: var(--amber-fg, var(--amber)); font-size: var(--d-text-xs); }
 .st-srcchip {
   flex: none; padding: 1px 7px; border-radius: 999px;
   border: 1px solid var(--line-bright); color: var(--fg-3);
@@ -100,7 +100,7 @@
 .st-srcchip.desktop { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 45%, transparent); }
 .st-srcchip.omp { color: var(--lilac); border-color: color-mix(in oklab, var(--lilac) 45%, transparent); }
 .st-kb-actions { display: flex; gap: 2px; flex: none; }
-.st-kb-warn { padding: 0 16px 8px; color: var(--amber); font-size: var(--d-text-xs); }
+.st-kb-warn { padding: 0 16px 8px; color: var(--amber-fg, var(--amber)); font-size: var(--d-text-xs); }
 .st-kb-foot {
   display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 10px 16px;
   border-top: 1px solid var(--line); color: var(--fg-4); font-size: var(--d-text-xs);

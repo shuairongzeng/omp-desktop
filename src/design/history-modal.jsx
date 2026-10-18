@@ -3,7 +3,7 @@
    Allows browsing and restoring sessions from ~/.omp/agent/sessions/
    ═════════════════════════════════════════════════════════════════════ */
 
-const { Icon } = window;
+const { Icon, useModalLayer: _HM_useModalLayer } = window;
 const { sessionProjects, normPath } = window.OMP_PROJECT_NAV;
 
 function formatRelativeTime(ts) {
@@ -35,10 +35,15 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
   const inputRef                      = React.useRef(null);
   const listRef                       = React.useRef(null);
   const panelRef                      = React.useRef(null);
-
-  // Take focus on open (so Tab walks the modal's controls, not the composer
-  // underneath) and hand it back on close (ui/use-modal-focus.js).
-  window.useModalFocus(panelRef, open);
+  const scrimRef                     = React.useRef(null);
+  // The app behind is inert while the modal is open (the shared
+  // useModalLayer, ui/use-modal-layer.js): Tab can't reach the composer
+  // or the status bar underneath, and focus comes back to whatever opened
+  // it. The modal itself is portaled onto <body> (below), so making #root
+  // inert leaves it interactive.
+  _HM_useModalLayer(scrimRef);
+  // The scrim is the initial focus target; the 50ms timer below moves
+  // focus into the search input once the panel has mounted.
 
   const fetchSessions = React.useCallback(async () => {
     if (!window.OMP_BRIDGE?.listSavedSessions) return;
@@ -154,9 +159,14 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
 
   if (!open) return null;
 
-  return (
-    <div className="bridge-scrim" onClick={onClose} style={{ paddingTop: "8vh" }}>
-      <div ref={panelRef} tabIndex={-1} className="bridge slide-in" onClick={e => e.stopPropagation()} style={{ width: "min(740px, calc(100vw - 32px))", maxHeight: "80vh" }}>
+  // Portaled onto <body> (file-preview.jsx / image-lightbox.jsx's pattern)
+  // so useModalLayer can inert #root without taking this dialog with it.
+  // The scrim also takes focus when nothing inside it has — useModalLayer's
+  // one focus call lands here, and the 50ms timer below moves it to the
+  // search input once the panel has mounted.
+  return ReactDOM.createPortal(
+    <div ref={scrimRef} tabIndex={-1} className="bridge-scrim" onClick={onClose} style={{ paddingTop: "8vh" }}>
+      <div ref={panelRef} tabIndex={-1} className="bridge slide-in" role="dialog" aria-modal="true" aria-label="Conversation history" onClick={e => e.stopPropagation()} style={{ width: "min(740px, calc(100vw - 32px))", maxHeight: "80vh" }}>
         
         {/* Header */}
         <div className="bridge-input-row" style={{ padding: "12px 16px", gap: 10 }}>
@@ -167,13 +177,18 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
             placeholder="Search saved conversations by title, query, project…"
             value={query}
             onChange={e => { setQuery(e.target.value); setActiveIdx(0); }}
+            role="combobox"
+            aria-expanded={filtered.length > 0 ? "true" : "false"}
+            aria-controls="hist-rows"
+            aria-autocomplete="list"
+            aria-activedescendant={filtered.length > 0 ? `hist-row-${clampedIdx}` : undefined}
           />
           {query && (
-            <button className="btn icon ghost" title="Clear search" onClick={() => setQuery("")}>
+            <button className="btn icon ghost" title="Clear search" aria-label="Clear search" onClick={() => setQuery("")}>
               <Icon name="close" size={10} color="var(--fg-4)" />
             </button>
           )}
-          <button className="btn icon ghost" title="Refresh from disk" onClick={fetchSessions}>
+          <button className="btn icon ghost" title="Refresh from disk" aria-label="Refresh from disk" onClick={fetchSessions}>
             <Icon name="refresh" size={11} color={loading ? "var(--accent)" : "var(--fg-3)"} />
           </button>
           <span className="kbd">esc</span>
@@ -207,7 +222,7 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
         </div>
 
         {/* List Body */}
-        <div ref={listRef} className="bridge-body" style={{ maxHeight: "56vh", padding: "6px 8px" }}>
+        <div ref={listRef} className="bridge-body" id="hist-rows" role="listbox" aria-label="Saved conversations" style={{ maxHeight: "56vh", padding: "6px 8px" }}>
           {loading && sessions.length === 0 && (
             <div className="bridge-empty">Scanning disk for saved sessions…</div>
           )}
@@ -237,6 +252,9 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
             return (
               <div
                 key={s.path || s.id || idx}
+                id={`hist-row-${idx}`}
+                role="option"
+                aria-selected={isSelected}
                 className={`bridge-row ${isSelected ? "active" : ""}`}
                 style={{
                   display: "flex", flexDirection: "column", alignItems: "stretch", gap: 5,
@@ -299,6 +317,7 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
                   <button
                     className="btn ghost accent"
                     style={{ height: 20, padding: "0 8px", fontSize: "var(--d-text-xs)", marginLeft: "auto", flexShrink: 0 }}
+                    aria-label={`resume ${s.title}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       onResume?.(s);
@@ -333,7 +352,8 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
           <span style={{ color: "var(--fg-4)" }}>~/.omp/agent/sessions</span>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

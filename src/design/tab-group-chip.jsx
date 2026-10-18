@@ -73,7 +73,8 @@ function TabGroupChip({ group, activeId, profileLabel, onSelect, onClose, onNewI
       {...reorder.itemProps("projects", group.key, "x")}
       className={`tab tab-group ${active ? "active" : ""}${reorder.dropClass("projects", group.key)}`}
       role="tab"
-      tabIndex={0}
+      tabIndex={active ? 0 : -1}
+      data-tab-id={groupTarget(group, activeId)}
       aria-selected={!!active}
       // A middle click never closes a group: it would take several tabs
       // (and their transcripts) with it. Old WebKit reports it as a `click`

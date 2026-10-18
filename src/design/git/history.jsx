@@ -13,7 +13,35 @@ const _GH_R = 3.5;
 const _GH_COLORS = ["var(--accent)", "var(--cyan)", "var(--lilac)", "var(--amber)", "var(--magenta)", "var(--lime)"];
 const _GH_laneColor = lane => _GH_COLORS[lane % _GH_COLORS.length];
 const _GH_x = lane => 10 + lane * _GH_LANE;
-const _GH_WORKTREE = "@";
+
+/** Roving-tabindex key nav for the history rows (listbox pattern, mirroring
+ *  `_ST_radioKeyNav` in settings/controls.jsx): ↑/↓ move between commits,
+ *  Home/End jump to the ends, Enter selects. Rows carry `data-idx` into
+ *  `rows`, so the DOM lookup is one query per keypress. */
+function _GH_listKeyNav(e, rows, onSelect) {
+  if (e.defaultPrevented) return;
+  if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+  const keys = ["ArrowUp", "ArrowDown", "Home", "End", "Enter"];
+  if (!keys.includes(e.key)) return;
+  const items = [...e.currentTarget.querySelectorAll("[data-idx]")];
+  if (!rows.length || items.length !== rows.length) return;
+  const i = items.indexOf(document.activeElement);
+  if (i < 0 && e.key !== "Home" && e.key !== "End") return;
+  const move = j => {
+    e.preventDefault();
+    items[Math.max(0, Math.min(j, rows.length - 1))]?.focus();
+  };
+  switch (e.key) {
+    case "ArrowUp":   return move(i - 1);
+    case "ArrowDown": return move(i + 1);
+    case "Home":      return move(0);
+    case "End":       return move(rows.length - 1);
+    case "Enter":
+      e.preventDefault();
+      if (i >= 0 && rows[i]) onSelect(rows[i].id);
+      return;
+  }
+}
 
 function _GH_Graph({ rows, w }) {
   const h = rows.length * _GH_ROW;
@@ -71,14 +99,24 @@ function GitHistory({ log, changedCount, selected, onSelect }) {
       <div className="gitb-log">
         {!log && <div className="gitb-empty">loading…</div>}
         {log && rows.length === 0 && <div className="gitb-empty">no commits yet</div>}
-        <div className="gitb-log-inner" style={{ height: rows.length * _GH_ROW }}>
+        <div className="gitb-log-inner" style={{ height: rows.length * _GH_ROW }} role="listbox"
+          aria-label="commits" onKeyDown={e => _GH_listKeyNav(e, rows, onSelect)}>
           {rows.length > 0 && <_GH_Graph rows={rows} w={graphW} />}
           {rows.map((c, i) => {
             const wt = c.id === _GH_WORKTREE;
+            const active = c.id === selected;
             return (
-              <div key={c.id} className={`gitb-commit ${c.id === selected ? "active" : ""} ${wt ? "worktree" : ""}`}
+              <div key={c.id} className={`gitb-commit ${active ? "active" : ""} ${wt ? "worktree" : ""}`}
+                role="option" aria-selected={active} data-idx={i}
+                tabIndex={active || i === 0 ? 0 : -1}
                 style={{ top: i * _GH_ROW, height: _GH_ROW, paddingLeft: graphW + 4 }}
                 onClick={() => onSelect(c.id)}
+                onKeyDown={e => {
+                  // Space selects the focused row; Enter is the container
+                  // keynav's (move+select), and plain Space there is a
+                  // scroll key, so claim only Space here.
+                  if (e.key === " ") { e.preventDefault(); onSelect(c.id); }
+                }}
                 title={wt ? undefined : `${c.id}\n${c.author} · ${new Date(c.at * 1000).toLocaleString()}`}>
                 <div className="gitb-commit-top">
                   {c.refs.map(r => <_GH_Ref key={r.kind + r.name} r={r} />)}

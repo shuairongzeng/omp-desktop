@@ -51,7 +51,7 @@
   --fg: #E6E9F2;
   --fg-2: #B7BDD0;
   --fg-3: #7B8298;
-  --fg-4: #60677D;
+  --fg-4: #767C90;
   --fg-5: #393E54;
 
   --accent: #8AF0C8;            /* liquid mint */
@@ -99,7 +99,7 @@
   --fg: #B5FF8A;
   --fg-2: #7CD968;
   --fg-3: #4F9C49;
-  --fg-4: #3E773C;
+  --fg-4: #548B52;
   --fg-5: #244524;
 
   --accent: #C4FF3F;
@@ -147,8 +147,13 @@
   --fg: #14181F;
   --fg-2: #34394A;
   --fg-3: #5E6478;
-  --fg-4: #8A8FA0;
+  --fg-4: #6A6E7B;
   --fg-5: #B6BAC7;
+
+  /* Text-safe status hues (darkened for ≥4.5:1 on the light surfaces the
+     informational text sits on): chips, banners, queue kinds, cache labels. */
+  --amber-fg: #966917;
+  --lime-fg: #537C1C;
 
   --accent: #1F8A5B;
   --accent-deep: #145C3D;
@@ -195,11 +200,11 @@
   --fg: #ECEFF4;
   --fg-2: #D8DEE9;
   --fg-3: #AEB9CC;
-  --fg-4: #8F9BB2;
+  --fg-4: #939FB5;
   --fg-5: #55617A;
 
   --accent: #88C0D0;
-  --accent-deep: #5E81AC;
+  --accent-deep: #6889B1;
   --accent-soft: rgba(136, 192, 208, 0.12);
   --accent-glow: rgba(136, 192, 208, 0.4);
 
@@ -207,9 +212,12 @@
   --cyan: #8FBCBB;
   --amber: #EBCB8B;
   --lilac: #81A1C1;
-  --rose: #BF616A;
+  --rose: #EAAEB3;
   --lime: #A3BE8C;
 
+  /* Text-safe lime/cyan for the tree's cache readout on --bg-elevated. */
+  --lime-fg: #ACC598;
+  --cyan-fg: #9CC4C3;
   --syntax-comment: #616E88;
   --syntax-key: #81A1C1;
   --syntax-str: #A3BE8C;
@@ -241,9 +249,9 @@
   --line-bright: #1A4B58;
 
   --fg: #93A1A1;
-  --fg-2: #839496;
-  --fg-3: #657B83;
-  --fg-4: #768A8E;
+  --fg-2: #8B9CA0;
+  --fg-3: #87989A;
+  --fg-4: #809296;
   --fg-5: #3E545B;
 
   --accent: #B58900;
@@ -251,12 +259,12 @@
   --accent-soft: rgba(181, 137, 0, 0.14);
   --accent-glow: rgba(181, 137, 0, 0.4);
 
-  --magenta: #D33682;
-  --cyan: #2AA198;
-  --amber: #CB4B16;
-  --lilac: #6C71C4;
-  --rose: #DC322F;
-  --lime: #859900;
+  --magenta: #EA8FBE;
+  --cyan: #5BB7B0;
+  --amber: #E8936B;
+  --lilac: #A5A8DC;
+  --rose: #F08D8A;
+  --lime: #A1B03B;
 
   --syntax-comment: #586E75;
   --syntax-key: #268BD2;
@@ -291,8 +299,17 @@
   --fg: #3B2A32;
   --fg-2: #5A4350;
   --fg-3: #8A6478;
-  --fg-4: #A27C8F;
+  --fg-4: #866778;
   --fg-5: #D8C4CD;
+
+  /* Text-safe status hues (darkened for ≥4.5:1 on the light surfaces the
+     informational text sits on): chips, banners, queue kinds, cache labels. */
+  --amber-fg: #9B6218;
+  --lime-fg: #557A24;
+  --cyan-fg: #287A85;
+  --rose-fg: #C53F54;
+  --magenta-fg: #A74BA7;
+  --lilac-fg: #7355E9;
 
   --accent: #D6336C;
   --accent-deep: #A82553;
@@ -339,7 +356,7 @@
   --fg: #E8E8F2;
   --fg-2: #B8B8CC;
   --fg-3: #7A7A92;
-  --fg-4: #606079;
+  --fg-4: #78788D;
   --fg-5: #34344A;
 
   --accent: #7C6CFA;
@@ -590,8 +607,8 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
   letter-spacing: 0.01em;
 }
 .chip.accent { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 30%, var(--line)); background: var(--accent-soft); }
-.chip.warn { color: var(--amber); border-color: color-mix(in oklab, var(--amber) 30%, var(--line)); }
-.chip.danger { color: var(--rose); border-color: color-mix(in oklab, var(--rose) 30%, var(--line)); }
+.chip.warn { color: var(--amber-fg, var(--amber)); border-color: color-mix(in oklab, var(--amber) 30%, var(--line)); }
+.chip.danger { color: var(--rose-fg, var(--rose)); border-color: color-mix(in oklab, var(--rose) 30%, var(--line)); }
 .chip.muted { color: var(--fg-3); }
 
 /* dot */
@@ -675,8 +692,12 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
 .theme-daylight .btn.primary { color: #FAF7EF; }
 .theme-sakura .btn.primary { color: #FFF5F7; }
 .theme-midnight .btn.primary { color: #F2F0FF; }
-.btn.primary:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); color: #06241B; }
-.btn.outlined { border-color: var(--line); }
+/* Hover keeps the theme's own primary text on the deepened accent: the
+   hard-coded #06241B sank to 2.06:1 on daylight's deep green. Solarized's
+   deep amber inverts the pairing (its idle text is near-black), so its
+   hover flips to light text. */
+.btn.primary:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); }
+.theme-solarized .btn.primary:hover:not(:disabled) { color: #FDF6E3; }
 .btn.outlined:hover:not(:disabled) { border-color: var(--line-bright); }
 .btn.icon {
   width: 1.5rem; height: 1.5rem; padding: 0; justify-content: center;
@@ -688,4 +709,18 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
 .btn:focus-visible, input:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* Visually hidden, still announced: the chat's live digest node
+   (chat/chat-view.jsx `sr-live`) and any future screen-reader-only text.
+   The standard sr-only recipe — off-screen, one line tall, no overflow —
+   so a DOM text swap can never scroll or repaint the layout. Contrast
+   rules never see it (it is not rendered), which is the point. */
+.sr-live {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

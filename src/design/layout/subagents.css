@@ -99,7 +99,7 @@
 .sa-lane-span { position: absolute; top: 0; bottom: 0; background: color-mix(in oklab, var(--sa-hue) 16%, transparent); }
 .sa-lane-tick { position: absolute; top: 2px; bottom: 2px; width: 3px; margin-left: -1px; border-radius: 1px; box-shadow: 0 0 4px currentColor; }
 .sa-lane-run { position: absolute; top: 1px; bottom: 1px; border-radius: 2px; opacity: 0.85; animation: pulseDot 1.6s ease-in-out infinite; }
-.sa-lane-axis { display: flex; justify-content: space-between; padding-left: 80px; font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-5); }
+.sa-lane-axis { display: flex; justify-content: space-between; padding-left: 80px; font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-4); }
 
 .sa-filters { display: flex; gap: 4px; flex-wrap: wrap; }
 .sa-filter { cursor: pointer; }
@@ -160,7 +160,7 @@
 }
 .sa-tab:hover { color: var(--fg); }
 .sa-tab.on { color: var(--fg); border-bottom-color: var(--sa-hue, var(--accent)); }
-.sa-tab .sa-count { margin-left: 4px; color: var(--fg-5); font-family: var(--font-mono); }
+.sa-tab .sa-count { margin-left: 4px; color: var(--fg-4); font-family: var(--font-mono); }
 .sa-insp-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
 .sa-insp-foot { display: flex; gap: 4px; flex-wrap: wrap; padding: 8px 10px; border-top: 1px solid var(--line); }
 
@@ -183,7 +183,7 @@
 .sa-timeline { display: flex; flex-direction: column; }
 .sa-tl-row { display: grid; grid-template-columns: 34px auto minmax(0, 1fr); align-items: center; gap: 6px; padding: 3px 0; border-bottom: 1px dashed var(--line-soft); animation: fadeUp 240ms var(--ease-out) both; }
 .sa-tl-row:last-child { border-bottom: 0; }
-.sa-tl-t { font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-5); text-align: right; font-variant-numeric: tabular-nums; }
+.sa-tl-t { font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-4); text-align: right; font-variant-numeric: tabular-nums; }
 
 .sa-out {
   margin: 0; padding: 6px 0; border: 1px solid var(--line); border-radius: var(--r-1);

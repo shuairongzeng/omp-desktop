@@ -236,6 +236,91 @@ check("isTypingTarget: contentEditable is a typing target", () =>
 check("isTypingTarget: DIV is not a typing target", () =>
   assert.equal(K.isTypingTarget({ tagName: "DIV" }), false));
 
+// ── Shift+Tab composer scoping (dispatch guard) ──────────────────────────────
+//
+// The default `app.thinking.cycle` chord (shift+tab) is scoped to the
+// composer textarea in useKeymapDispatch: it must not preventDefault
+// (and so must not steal backward focus traversal) anywhere else. The
+// predicates the dispatcher consults are `isComposerScoped` and
+// `isComposerTarget`; `fires` mirrors the dispatcher's exact guard order.
+
+/** Minimal Element-shaped stub: `closest` walks a fixed ancestor chain of
+ *  selector strings (the composer textarea is `.composer-input textarea`). */
+const stubEl = (chain) => ({
+  closest: (sel) => (chain.includes(sel) ? { chain } : null),
+});
+const COMPOSER_TA = stubEl(["textarea", ".composer-input textarea"]);
+const CHAT_TEXT  = stubEl(["div", ".chat-wrap"]);
+const STUB_BODY  = stubEl(["body"]);
+
+// The dispatcher's guard, verbatim: composer-scoped chords fire only
+// inside the composer; everything else fires wherever focus is.
+const fires = (e, chord = K.chordFromEvent(e)) => {
+  if (!chord) return false;
+  const id = K.lookup(chord);
+  if (!id) return false;
+  if (K.isComposerScoped(id, chord) && !K.isComposerTarget(e.target)) return false;
+  return true;
+};
+const shiftTab = { key: "Tab", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false, isComposing: false };
+
+check("shift+tab: default binding resolves to the thinking cycle", () =>
+  assert.equal(K.lookup("shift+tab"), "app.thinking.cycle"));
+
+check("shift+tab: isComposerScoped is the thinking cycle on its default chord only", () => {
+  assert.equal(K.isComposerScoped("app.thinking.cycle", "shift+tab"), true);
+  // Any other action, or the same action on a rebound chord, is global.
+  assert.equal(K.isComposerScoped("desktop.tab.prev", "ctrl+shift+tab"), false);
+  assert.equal(K.isComposerScoped("app.thinking.cycle", "ctrl+shift+t"), false);
+  assert.equal(K.isComposerScoped("app.plan.toggle", "shift+alt+p"), false);
+});
+
+check("shift+tab: isComposerTarget accepts only the composer textarea", () => {
+  assert.equal(K.isComposerTarget(COMPOSER_TA), true);
+  assert.equal(K.isComposerTarget(CHAT_TEXT), false);
+  assert.equal(K.isComposerTarget(STUB_BODY), false);
+  assert.equal(K.isComposerTarget(null), false);
+  // The window itself (target is not an Element) is not the composer.
+  assert.equal(K.isComposerTarget({ tagName: "WINDOW" }), false);
+});
+
+check("shift+tab: fires with the composer textarea focused", () =>
+  assert.equal(fires({ ...shiftTab, target: COMPOSER_TA }), true));
+
+check("shift+tab: falls through everywhere else (chat, body, window)", () => {
+  assert.equal(fires({ ...shiftTab, target: CHAT_TEXT }), false);
+  assert.equal(fires({ ...shiftTab, target: STUB_BODY }), false);
+  assert.equal(fires({ ...shiftTab, target: null }), false);
+  assert.equal(fires({ ...shiftTab, target: { tagName: "WINDOW" } }), false);
+});
+
+check("shift+tab: a rebound thinking cycle is a plain global — fires off the composer too", () => {
+  withBindings({ "app.thinking.cycle": ["ctrl+shift+t"] }, () => {
+    const ev = { key: "T", shiftKey: true, ctrlKey: true, altKey: false, metaKey: false, isComposing: false };
+    assert.equal(K.chordFromEvent(ev), "ctrl+shift+t");
+    assert.equal(fires({ ...ev, target: CHAT_TEXT }), true);
+    // And the default chord is no longer claimed: native Shift+Tab
+    // traversal works everywhere, composer included.
+    assert.equal(fires({ ...shiftTab, target: COMPOSER_TA }), false);
+  });
+});
+
+check("shift+tab: unbinding the thinking cycle leaves the chord native everywhere", () => {
+  withBindings({ "app.thinking.cycle": [] }, () => {
+    assert.equal(fires({ ...shiftTab, target: COMPOSER_TA }), false);
+    assert.equal(fires({ ...shiftTab, target: CHAT_TEXT }), false);
+  });
+});
+
+check("shift+tab: other actions keep firing outside the composer", () => {
+  // The guard is chord-specific, not a blanket Shift+Tab swallow.
+  withBindings({ "app.plan.toggle": ["shift+alt+p"] }, () => {
+    const ev = { key: "P", shiftKey: true, altKey: true, ctrlKey: false, metaKey: false, isComposing: false };
+    assert.equal(fires({ ...ev, target: CHAT_TEXT }), true);
+    assert.equal(fires({ ...ev, target: COMPOSER_TA }), true);
+  });
+});
+ 
 // ── formatChord ───────────────────────────────────────────────────────────────
 
 check("formatChord: shift+alt+p on non-Mac", () =>

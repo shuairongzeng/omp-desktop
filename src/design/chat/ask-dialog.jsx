@@ -33,6 +33,31 @@ function _AD_Text({ text }) {
   );
 }
 
+/** Roving-tabindex arrows for one question's option group (ARIA radio and
+ *  checkbox patterns, mirroring `_ST_radioKeyNav` in settings/controls.jsx):
+ *  the checked option (or the first, when none is) is the tab stop; ↑/↓/←/→
+ *  move between options, wrapping. A radio group's arrows also *select* the
+ *  option moved to (the ARIA radio pattern's "move + select", via the
+ *  button's own click); a checkbox group's only move focus — Space toggles,
+ *  as on any button. The row buttons are native <button>s, so Enter/Space
+ *  still click them. */
+function _AD_optionKeyNav(e, multi) {
+  if (e.defaultPrevented) return;
+  if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+  const items = [...e.currentTarget.querySelectorAll('[role="radio"], [role="checkbox"]')];
+  if (!items.length) return;
+  const i = items.indexOf(document.activeElement);
+  // Only act when an option itself has focus (not the free-text box or a
+  // preview link between the rows).
+  if (i < 0) return;
+  e.preventDefault();
+  const step = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
+  const next = items[(i + step + items.length) % items.length];
+  next.focus();
+  if (!multi) next.click();
+}
+
 function AskQuestion({ q, qi, total, entry, onPick, onType, onEnter }) {
   const needsAnswer = total > 1 && _AD.unanswered(q, entry);
   const placeholder = q.options.length === 0 ? "Type your answer…"
@@ -48,15 +73,22 @@ function AskQuestion({ q, qi, total, entry, onPick, onType, onEnter }) {
           </span>
         </div>
       )}
-      <div className="ask-question"><_AD_Markdown text={q.question} /></div>
+      <div className="ask-question" role="alert"><_AD_Markdown text={q.question} /></div>
       {q.options.length > 0 && (
-        <div className="ask-rows" role={q.multi ? "group" : "radiogroup"} aria-label={q.header ?? `Question ${qi + 1}`}>
+        <div className="ask-rows" role={q.multi ? "group" : "radiogroup"} aria-label={q.header ?? `Question ${qi + 1}`}
+          onKeyDown={e => _AD_optionKeyNav(e, q.multi)}>
           {q.options.map((o, oi) => {
             const on = entry.picks.includes(oi);
+            // Roving tabindex: the checked option is the tab stop (or the
+            // first, when none is checked).
+            const focusIdx = entry.picks.length
+              ? Math.min(entry.picks[0], q.options.length - 1)
+              : 0;
             return (
               <div key={oi} className={`ask-row${on ? " selected" : ""}`}>
                 <button type="button" className="ask-row-btn" role={q.multi ? "checkbox" : "radio"}
-                  aria-checked={on} onClick={() => onPick(qi, oi)}>
+                  aria-checked={on} tabIndex={oi === focusIdx ? 0 : -1}
+                  onClick={() => onPick(qi, oi)}>
                   <span className={`ask-mark ${q.multi ? "box" : "radio"}`}>{q.multi && on && <_AD_Check />}</span>
                   <span className="ask-row-text">
                     <span className="ask-row-label">
@@ -135,15 +167,14 @@ function AskDialog({ msg, onSubmit, onCancel }) {
       ? `${missing} question${missing === 1 ? "" : "s"} still need${missing === 1 ? "s" : ""} an answer`
       : "Ready to send";
 
-  // Bare Shift+Tab is a window shortcut (thinking level) even inside text
-  // fields; here it has to move focus back through the dialog instead.
-  // Other chords with Tab (Ctrl+Shift+Tab: previous tab) pass through.
-  const keepShiftTab = (e) => {
-    if (e.key === "Tab" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) e.stopPropagation();
-  };
+  // Bare Shift+Tab used to need a stopPropagation guard here: it was a
+  // window shortcut (thinking level) that fired even inside this dialog.
+  // The dispatcher now scopes that chord to the composer textarea
+  // (use-keymap.jsx), so backward focus traversal is native again — no
+  // dialog-level guard. Ctrl+Tab chords still pass to the window keymap.
 
   return (
-    <div className="ask-dialog" onKeyDown={keepShiftTab}>
+    <div className="ask-dialog">
       {questions.map((q, qi) => (
         <AskQuestion key={qi} q={q} qi={qi} total={questions.length} entry={draft[qi]}
           onPick={pick}

@@ -138,8 +138,42 @@ function unreadSince(messages, horizonId, hidden = m => window.OMP_TURN_STATUS.i
   return messages.filter(m => m._id != null && m._id > horizonId && !hidden(m)).length;
 }
 
+// The screen-reader digest of a finished turn (the visually-hidden live
+// node below): one short line per `message_END`, never per delta — a
+// streaming reply re-renders many times a second, and a live region read
+// aloud that often is worse than nothing. Scans back past tool cards and
+// other rows that can follow the reply in the same run, to the last
+// assistant message: mid-run it is still streaming (nothing to announce);
+// at its end it says what happened, the failure's own headline when the
+// request failed for good.
+function liveSummary(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.kind !== "assistant") continue;
+    if (m.streaming) return "";
+    if (m.failure)   return m.failure.headline ? `reply failed: ${m.failure.headline}` : "reply failed";
+    if (m.aborted)   return "reply stopped";
+    return "assistant replied";
+  }
+  return "";
+}
+
+// The memo key for `liveSummary`: changes exactly when the last assistant
+// message's outcome does — its id (a new turn's bubble), its streaming
+// flag (the message_END flip), a failure or abort landing on it. A
+// `message_update` delta rewrites the array every frame but never this
+// key, so the memo bails, the node's text stays identical, and no screen
+// reader re-announces mid-stream.
+function liveKey(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.kind !== "assistant") continue;
+    return `${m._id}:${m.streaming ? "live" : "end"}:${m.failure ? "fail" : ""}${m.aborted ? "abort" : ""}`;
+  }
+  return "none";
+}
+
 // Collapsible blocks (#44, #43): `foldModes` (`{ thinking, tool }`) and
-// `collapseAfter` are the tweaks, `collapseOverrides` this tab's
 // `_id → collapsed` toggles, and `onToggleCollapse(id, collapsed)` flips one
 // (app/chat-collapse.js). `followOutput` and `submitKey` are tweaks too: the
 // first lets new output move a view at the bottom, the second is the ask
@@ -163,6 +197,10 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
   // horizon message, visible ones only (the button counts what a jump
   // would actually reveal). Streaming updates keep it growing live.
   const unread = React.useMemo(() => unreadSince(messages, collapseHorizon), [messages, collapseHorizon]);
+  // What the live node says (see `liveSummary`/`liveKey`): keyed on the
+  // last assistant message's outcome, so only a settled turn — not every
+  // streaming delta — swaps the announcement.
+  const liveText = React.useMemo(() => liveSummary(messages), [liveKey(messages)]);
 
   const setPinned = (val) => {
     pinnedRef.current = val;
@@ -249,7 +287,7 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
 
   return (
     <div className="chat-wrap">
-      <div className="chat-scroll selectable" ref={scrollRef} onScroll={onScroll}>
+      <div className="chat-scroll selectable" ref={scrollRef} onScroll={onScroll} role="log" aria-label="conversation">
         <div className="chat-pad" style={_CV_PAD_STYLE}>
           {messages.length === 0 && (
             <div className="chat-welcome" aria-label="empty conversation">
@@ -289,6 +327,12 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
           <div style={{ height: 24 }} />
         </div>
       </div>
+      {/* Screen-reader digest (see `liveSummary`): role="log" on the scroll
+          region already exposes append-only growth politely, but a settled
+          turn's *outcome* — replied, failed, stopped — is what a blind user
+          needs announced, and this is the node that says it. Kept out of the
+          scroll region so its DOM text changes don't scroll the transcript. */}
+      <div className="sr-live" role="status" aria-live="polite">{liveText}</div>
       {showJump && (
         <button type="button" className="chat-jump-latest" onClick={jumpToLatest}>
           <_CV_Icon name="chev" size={12} />
@@ -299,4 +343,4 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
   );
 }
 
-Object.assign(window, { ChatView, unreadSince });
+Object.assign(window, { ChatView, unreadSince, liveSummary, liveKey });

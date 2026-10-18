@@ -18,8 +18,8 @@
 /* `.chip` is inline-flex, on which `text-overflow` is inert: block-level text so the chips ellipsize. */
 .tree-head .chip { display: inline-block; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tree-summary { padding: 4px 14px 10px; border-bottom: 1px solid var(--line); font-size: var(--d-text-sm); color: var(--fg-2); }
-.tree-summary .lime { color: var(--lime); }
-.tree-summary .cyan { color: var(--cyan); }
+.tree-summary .lime { color: var(--lime-fg, var(--lime)); }
+.tree-summary .cyan { color: var(--cyan-fg, var(--cyan)); }
 .tree-legend { display: flex; gap: 12px; margin-top: 6px; font-size: var(--d-text-xs); color: var(--fg-3); }
 .tree-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .tree-legend .muted { margin-left: auto; color: var(--fg-4); }
@@ -44,6 +44,7 @@
 .tree-row.s-cold, .tree-row.s-unknown { border-left-color: var(--line); }
 .tree-row.s-cold .tree-text { opacity: 0.5; }
 .tree-row.selected { outline: 1px solid color-mix(in oklab, var(--accent) 60%, transparent); outline-offset: -1px; }
+.tree-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .tree-graph { flex: none; }
 .tree-text { flex: 1; min-width: 0; padding: 9px 0 8px; }
 .tree-prompt { color: var(--fg); font-size: var(--d-text-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -72,9 +73,9 @@
   justify-content: center; align-items: flex-end; gap: 4px; font-family: var(--font-mono);
 }
 .cache-label { font-size: 10px; color: var(--fg-4); }
-.cache-meter.warm .cache-label { color: var(--lime); }
-.cache-meter.expiring .cache-label { color: var(--amber); }
-.cache-meter.partial .cache-label { color: var(--cyan); }
+.cache-meter.warm .cache-label { color: var(--lime-fg, var(--lime)); }
+.cache-meter.expiring .cache-label { color: var(--amber-fg, var(--amber)); }
+.cache-meter.partial .cache-label { color: var(--cyan-fg, var(--cyan)); }
 .cache-bar { width: 100%; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .cache-bar span { display: block; height: 100%; border-radius: 3px; }
 .cache-meter.warm .cache-bar span { background: var(--lime); }
@@ -82,10 +83,10 @@
 .cache-bar.split { background: color-mix(in oklab, var(--rose) 35%, var(--line)); }
 .cache-bar.split span { background: var(--cyan); border-radius: 3px 0 0 3px; }
 .cache-price { font-size: var(--d-text-sm); font-weight: 600; color: var(--fg-2); }
-.cache-price.read { color: var(--lime); }
-.cache-meter.expiring .cache-price.read { color: var(--amber); }
-.cache-price.part { color: var(--cyan); }
-.cache-price.write { color: var(--rose); opacity: .85; }
+.cache-price.read { color: var(--lime-fg, var(--lime)); }
+.cache-meter.expiring .cache-price.read { color: var(--amber-fg, var(--amber)); }
+.cache-price.part { color: var(--cyan-fg, var(--cyan)); }
+.cache-price.write { color: var(--rose-fg, var(--rose)); opacity: .85; }
 
 .tree-compaction {
   display: flex; justify-content: space-between; gap: 10px; margin: 6px 10px; padding: 5px 8px;

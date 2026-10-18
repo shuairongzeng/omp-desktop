@@ -1097,14 +1097,18 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
     else onClose();
   }, open);
 
-  // Take focus on open and hand it back on close (ui/use-modal-focus.js),
-  // so closing the bridge returns focus to the composer (or whatever had
-  // it — the status bar's cell, a chat link) instead of dropping it to
-  // <body>, where the next Tab restarts from the top of the document.
-  // The panel itself is not a focus target (the filter input takes focus
-  // on open, below) — the ref only anchors the restore.
+  // The app behind is inert while the bridge is open (the shared
+  // useModalLayer, ui/use-modal-layer.js — same behaviour as the history
+  // modal and the lightbox): Tab can't reach the composer underneath, and
+  // focus comes back to whatever had it. The bridge is always mounted, so
+  // the hook's `open` dependency (its addition over image-lightbox.jsx's
+  // copy) is what re-runs the effect per open; the views below render in a
+  // portal on <body> so inerting #root leaves them interactive. The scrim
+  // is the initial focus target; the 30ms timer above moves focus into the
+  // filter input (the login view's rows take it via its own key handler).
   const panelRef = React.useRef(null);
-  window.useModalFocus(panelRef, open);
+  const scrimRef = React.useRef(null);
+  window.useModalLayer(scrimRef, open);
   React.useEffect(() => {
     if (!open || view !== "models") return undefined;
     let live = true;
@@ -1188,9 +1192,9 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
       </button>
       );
     };
-    return (
-      <div className="bridge-scrim" onClick={onClose}>
-        <div ref={panelRef} tabIndex={-1} className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
+    return ReactDOM.createPortal(
+        <div ref={scrimRef} tabIndex={-1} className="bridge-scrim" onClick={onClose}>
+          <div ref={panelRef} tabIndex={-1} className="bridge slide-in" role="dialog" aria-modal="true" aria-label="command bridge" onClick={(e) => e.stopPropagation()}>
           <div className="bridge-input-row">
             <button className="btn icon ghost" title="back" aria-label="back to commands"
               onClick={() => { setView("commands"); setQ(""); }}
@@ -1235,16 +1239,17 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
             <span className="kbd">esc</span> back
           </div>
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
 
   if (view === "login") {
     const providers = loginProviders ?? [];
     const clampedIdx = Math.min(activeIdx, providers.length - 1);
-    return (
-      <div className="bridge-scrim" onClick={onClose}>
-        <div ref={panelRef} tabIndex={-1} className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
+    return ReactDOM.createPortal(
+      <div ref={scrimRef} tabIndex={-1} className="bridge-scrim" onClick={onClose}>
+        <div ref={panelRef} tabIndex={-1} className="bridge slide-in" role="dialog" aria-modal="true" aria-label="command bridge" onClick={(e) => e.stopPropagation()}>
           <div className="bridge-input-row">
             <button className="btn icon ghost" title="back" aria-label="back to commands"
               onClick={() => { setView("commands"); setQ(""); }}
@@ -1292,7 +1297,8 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
             <span className="kbd">esc</span> back
           </div>
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
 
@@ -1316,9 +1322,9 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
   const inputKeyNav = makeInputKeyNav(flatCmds.length, (i) => runCmd(flatCmds[i]));
   const cmdRowIdx = (c) => flatCmds.indexOf(c);
 
-  return (
-    <div className="bridge-scrim" onClick={onClose}>
-      <div ref={panelRef} tabIndex={-1} className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
+  return ReactDOM.createPortal(
+    <div ref={scrimRef} tabIndex={-1} className="bridge-scrim" onClick={onClose}>
+      <div ref={panelRef} tabIndex={-1} className="bridge slide-in" role="dialog" aria-modal="true" aria-label="command bridge" onClick={(e) => e.stopPropagation()}>
         <div className="bridge-input-row">
           <Icon name="command" size={14} color="var(--accent)" />
           <input ref={inputRef} className="bridge-input mono"
@@ -1367,7 +1373,8 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
           <span style={{ marginLeft: "auto", color: "var(--fg-4)" }}>{(window.OMP_DATA.microcopy?.paletteTip ?? "").replace(/\{[^}]*\}/g, "").trim() || "type / to give orders"}</span>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

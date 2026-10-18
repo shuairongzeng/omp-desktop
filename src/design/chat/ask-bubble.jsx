@@ -64,7 +64,7 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
     const confirmedNo  = msg.answered && msg.answer === "Deny";
     body = (
       <>
-        <div className="ask-question">{msg.title}</div>
+        <div className="ask-question" role="alert">{msg.title}</div>
         {msg.message && <div className="ask-confirm-message selectable">{msg.message}</div>}
         <div className="ask-options">
           <button
@@ -88,7 +88,7 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
   } else if (method === "editor") {
     body = (
       <>
-        <div className="ask-question">{msg.title}</div>
+        <div className="ask-question" role="alert">{msg.title}</div>
         <textarea
           className="ask-editor-textarea selectable"
           value={done ? (msg.answer ?? "") : draft}
@@ -110,7 +110,7 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
   } else if (method === "input") {
     body = (
       <>
-        <div className="ask-question">{msg.title}</div>
+        <div className="ask-question" role="alert">{msg.title}</div>
         <div className="ask-other">
           <input
             className="ask-other-input"
@@ -136,7 +136,7 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
     // select (default — also covers any legacy message without a `method`)
     body = (
       <>
-        <div className="ask-question">{approval ? approval.head : msg.title}</div>
+        <div className="ask-question" role="alert">{approval ? approval.head : msg.title}</div>
 
         {/* Detail lines omp appends to the title (origin/reason, path,
             command, content preview). Capped + scrollable in CSS so a

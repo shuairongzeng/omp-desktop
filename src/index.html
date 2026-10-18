@@ -303,6 +303,11 @@
        prompt-history-modal.jsx, update-modal.jsx and confirm-close.jsx
        call window.useModalFocus at render time. -->
   <script src="design/ui/use-modal-focus.js"></script>
+  <!-- A portal modal inerts the app behind while open and returns focus on
+       close: history-modal.jsx and composer.jsx (CommandBridge) call
+       window.useModalLayer at render time; chat/image-lightbox.jsx keeps
+       its own identical copy for the lightbox/file-preview pair. -->
+  <script src="design/ui/use-modal-layer.js"></script>
   <!-- The column resize line (#41); destructures
        window.OMP_LAYOUT_WIDTHS at top level; browser-dock.jsx and
        app-live.jsx destructure ResizeHandle at top level. -->

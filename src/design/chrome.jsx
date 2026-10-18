@@ -135,6 +135,36 @@ function tabClickProps(onSelect, onClose) {
     },
   };
 }
+/** Roving-tabindex arrows for the tab bar's `role=tablist` (ARIA tabs
+ *  pattern with automatic activation): ←/→ move focus between the
+ *  `role=tab` entries and select the one landed on; Home/End jump to the
+ *  first/last. The add/history buttons and the trailing spacer are not
+ *  tabs, so they are skipped — Tab (and Shift+Tab) still reaches them as
+ *  its own tab stops. Keeps tabClickProps' Enter/Space activation. */
+function tablistKeyNav(e, onSelect) {
+  // An open group popover handles its own arrows (menuKeyNav) — and its
+  // menuitems are not tabs, so the focus check below already skips those.
+  // The defaultPrevented guard covers a popover that claimed the key first.
+  if (e.defaultPrevented) return;
+  if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;
+  const tabs = [...e.currentTarget.querySelectorAll('[role="tab"]')];
+  if (!tabs.length) return;
+  // Only act when a tab itself has focus: keys from elsewhere in the bar
+  // (an open popover's menuitems, the inline rename field, a tab-close
+  // button) are those elements' own.
+  const i = tabs.indexOf(document.activeElement);
+  if (i < 0) return;
+  const target = e.key === "Home" ? 0
+    : e.key === "End" ? tabs.length - 1
+    : (i + (e.key === "ArrowLeft" ? -1 : 1) + tabs.length) % tabs.length;
+  e.preventDefault();
+  tabs[target].focus();
+  // Automatic activation: focus and selection move together. The tab's own
+  // Enter/Space handler (tabClickProps) selects on click; arrows select
+  // directly here — id is either the project id or the settings sentinel.
+  onSelect(tabs[target].dataset.tabId);
+}
 
 function TabBar({
   projects, activeId, onSelect, onClose, onRename, onNew, onHistory, onNewInProject, onReorder,
@@ -166,8 +196,15 @@ function TabBar({
     barRef.current?.querySelector('[role="tab"][aria-selected="true"]')
       ?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [activeId, settings?.active]);
+  // The tablist's arrow nav routes its pick: a project id goes to onSelect,
+  // the settings sentinel (data-tab-id="__settings__") to onSelectSettings.
+  const selectById = id => {
+    if (id === "__settings__") onSelectSettings?.();
+    else if (id) onSelect?.(id);
+  };
   return (
-    <div ref={barRef} className="tabs" role="tablist" aria-label="projects" onPointerDown={reorder.onPointerDown}>
+    <div ref={barRef} className="tabs" role="tablist" aria-label="projects" onPointerDown={reorder.onPointerDown}
+      onKeyDown={e => tablistKeyNav(e, selectById)}>
       <button className={`tab-add ${sidebarOpen ? "on" : ""}`}
         title={`project sidebar (${hintFor("desktop.sidebar.toggle", "Ctrl+B")})`}
         aria-pressed={!!sidebarOpen}
@@ -200,7 +237,8 @@ function TabBar({
             {...reorder.itemProps("projects", group.key, "x")}
             className={`tab ${active ? "active" : ""}${reorder.dropClass("projects", group.key)}`}
             role="tab"
-            tabIndex={0}
+            tabIndex={active ? 0 : -1}
+            data-tab-id={p.id}
             aria-selected={active}
             {...tabClickProps(() => onSelect(p.id), () => onClose?.(p.id))}
             // The first click of the pair already selected the tab.
@@ -219,7 +257,8 @@ function TabBar({
             {profile && (
               <span className="chip muted tab-profile" title={`profile: ${profile}`}>{profile}</span>
             )}
-            <button className="tab-close" onClick={e => { e.stopPropagation(); onClose?.(p.id); }}><Icon name="close" size={9} /></button>
+            <button className="tab-close" aria-label={`close ${p.name}`} title={`close ${p.name}`}
+              onClick={e => { e.stopPropagation(); onClose?.(p.id); }}><Icon name="close" size={9} /></button>
           </div>
         );
       })}
@@ -227,7 +266,8 @@ function TabBar({
           dragged; `changed` counts settings off their default. */}
       {settings?.open && (
         <div className={`tab app-tab ${settings.active ? "active" : ""}`}
-          role="tab" tabIndex={0} aria-selected={!!settings.active}
+          role="tab" tabIndex={settings.active ? 0 : -1} data-tab-id="__settings__"
+          aria-selected={!!settings.active}
           title={`settings (${hintFor("desktop.settings.open", "Ctrl+,")})`}
           {...tabClickProps(onSelectSettings, onCloseSettings)}>
           <span className="tab-bar-mark" style={{ background: settings.active ? "var(--fg-3)" : "transparent" }} />
@@ -514,10 +554,14 @@ const SessionMinimap = React.memo(function SessionMinimap({ messages, onClick, t
           const cls = `minimap-cell ${m.kind} ${m.streaming ? "live" : ""} ${hot === i ? "hot" : ""}`.trim();
 
           return (
-            <div key={m._id ?? i}
+            <button type="button" key={m._id ?? i}
               className={cls}
               style={{ background: hue, opacity }}
+              // The cell is a button (a jump target) whose tooltip doubles
+              // as its accessible name; rail.css resets the native chrome
+              // so the grid look stays.
               title={title}
+              aria-label={title}
               onMouseEnter={() => setHot(i)}
               onMouseLeave={() => setHot(h => (h === i ? null : h))}
               onClick={() => onClick?.(i)} />

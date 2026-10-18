@@ -438,7 +438,7 @@
   font-size: 10px;
   border-bottom: 1px solid var(--line);
 }
-.eval-lang { color: var(--rose); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.eval-lang { color: var(--rose-fg, var(--rose)); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .eval-title { color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .eval-dur { color: var(--fg-4); }
 .eval-code {

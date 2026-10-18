@@ -187,9 +187,21 @@ function treeTags(row, model, now, since, currentFile, onOpenTip) {
 const TreeRow = React.memo(function TreeRow({ row, model, now, since, selected, currentFile, onSelect, onOpenTip }) {
   const tags = treeTags(row, model, now, since, currentFile, onOpenTip);
   const height = tags.length ? TREE_ROW_H_TAGGED : TREE_ROW_H;
+  const select = () => onSelect(row.id);
   return (
     <div className={`tree-row s-${row.state}${selected ? " selected" : ""}`} style={{ height }}
-      onClick={() => onSelect(row.id)}>
+      // Roving tabindex: the selected row is the tab stop (the container
+      // passes `selected`), every other row is reached by ↑/↓ on the list
+      // (conversation-tree.jsx, `role="list"`). A row is a button per the
+      // CompactRow precedent (chat-view.jsx): Enter and Space select.
+      role="button" tabIndex={selected ? 0 : -1}
+      aria-current={selected ? "true" : undefined}
+      onClick={select}
+      onKeyDown={e => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        select();
+      }}>
       <TreeGraph graph={row.graph} state={row.state} lanes={model.lanes} height={height} />
       <div className="tree-text">
         <div className="tree-prompt" title={row.text}>
@@ -205,7 +217,7 @@ const TreeRow = React.memo(function TreeRow({ row, model, now, since, selected, 
 
 const TreeCompaction = React.memo(function TreeCompaction({ row, now }) {
   return (
-    <div className="tree-compaction">
+    <div className="tree-compaction" role="listitem">
       <span>context compacted · {TreeFmt.when(row.ts, now)}</span>
       <span>prompts above re-ask the full earlier context</span>
     </div>

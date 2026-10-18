@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Accessibility pass: Shift+Tab is backward focus traversal again (the thinking-level cycle now only fires with the composer focused), the git browser's file tree/history and the conversation tree are fully keyboard-operable, the chat transcript is a `role=log` live region that announces settled replies/failures, the history modal and command bridge are proper modal dialogs (combobox/listbox semantics, inert background), tab lists got arrow-key navigation, minimap cells are real buttons, and tab-close buttons have accessible names
+- Contrast: fg-4 lifted to ≈4.6:1 in all 7 themes (placeholders pass with it), solarized's inverted fg ramp straightened, status-hue text on light themes uses new darkened `--*-fg` variants, and the primary button no longer becomes unreadable on hover
 - Performance pass: streaming no longer re-parses/re-highlights the whole bubble per token (highlight once on settle), `notify()` coalesces to one snapshot per animation frame, memoized chat bubbles/rail cards/StatusBar stay memoized (stable callbacks and props), xterm.js (478 KB) loads on first terminal open instead of at startup, and the reader thread scans with memchr + a 64 KiB buffer with a zero-copy fast path
 
 ### Fixed

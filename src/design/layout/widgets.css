@@ -22,7 +22,7 @@
 .wdg-text { color: var(--fg-3); font-size: var(--d-text-sm); white-space: pre-wrap; word-break: break-word; }
 .wdg-kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; }
 .wdg-list { display: flex; flex-direction: column; gap: 3px; max-height: 220px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-bright) transparent; }
-.wdg-count { margin-left: 6px; color: var(--fg-5); letter-spacing: 0; }
+.wdg-count { margin-left: 6px; color: var(--fg-3); letter-spacing: 0; }
 .wdg-more { justify-content: flex-start; height: 22px; }
 .wdg-item-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .wdg-item-label { color: var(--fg-2); font-size: var(--d-text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -34,7 +34,7 @@
 .wdg-link { justify-content: flex-start; height: 22px; max-width: 100%; min-width: 0; }
 .wdg-link-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wdg-error { color: var(--rose); font-size: var(--d-text-xs); font-family: var(--font-mono); white-space: pre-wrap; word-break: break-word; }
-.wdg-note { color: var(--fg-5); font-size: var(--d-text-xs); }
+.wdg-note { color: var(--fg-3); font-size: var(--d-text-xs); }
 .wdg-section { color: var(--fg-3); font-size: var(--d-text-xs); letter-spacing: .04em; text-transform: uppercase; margin-top: 2px; }
 .wdg-item-time { color: var(--fg-4); font-size: var(--d-text-xs); white-space: nowrap; flex: none; }
 .wdg-text-row { display: flex; align-items: flex-start; gap: 4px; }
@@ -44,7 +44,7 @@
 .wdg-approval .rail-card-head .wdg-dot { background: var(--amber); }
 .rail-card.wdg-approval-changed { border-color: color-mix(in oklab, var(--rose) 36%, var(--line)); }
 .wdg-approval-changed .rail-card-head .wdg-dot { background: var(--rose); }
-.wdg-approval > .wdg-note { color: var(--fg-3); line-height: var(--d-leading); }
+.wdg-approval > .wdg-note { line-height: var(--d-leading); }
 .wdg-argv {
   display: flex; flex-direction: column; gap: 1px;
   padding: 6px 8px; border-radius: var(--r-1);

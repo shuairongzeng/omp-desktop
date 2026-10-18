@@ -92,7 +92,22 @@ function ConversationTree({
         </button>
       </div>
       {model && prompts.length > 0 && <TreeSummary model={model} />}
-      <div className="tree-list" ref={listRef}>
+      <div className="tree-list" ref={listRef} role="list" aria-label="conversation prompts"
+        // ↑/↓ move focus between prompt rows (roving tabindex: the
+        // selected row is the tab stop — TreeRow, conversation-tree-rows.jsx).
+        onKeyDown={e => {
+          // Keys an inner control already claimed are its (a row's buttons
+          // — branch-tip "open" links below — run before this).
+          if (e.defaultPrevented) return;
+          if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+          if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+          const rows = [...e.currentTarget.querySelectorAll(".tree-row")];
+          if (!rows.length) return;
+          const i = rows.indexOf(document.activeElement);
+          if (i < 0) return;
+          e.preventDefault();
+          rows[(i + (e.key === "ArrowUp" ? -1 : 1) + rows.length) % rows.length].focus();
+        }}>
         {empty && <div className="tree-empty">{empty}</div>}
         {model && model.rows.map(row => row.kind === "compaction"
           ? <_CT_Compaction key={row.id} row={row} now={now} />

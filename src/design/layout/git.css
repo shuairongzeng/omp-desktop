@@ -113,6 +113,8 @@
 .gitb-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .gitb-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--amber); flex: none; margin-right: 4px; }
 .gitb-mark { width: 12px; text-align: center; font-size: 10px; font-weight: 600; flex: none; }
+.gitb-row:focus-visible,
+.gitb-commit:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* ── File view ──────────────────────────────────────────────────────────── */
 .gitb-view-head { gap: 10px; }
