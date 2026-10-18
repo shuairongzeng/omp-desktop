@@ -63,15 +63,18 @@
   content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px;
   background: var(--accent); box-shadow: 0 0 10px var(--accent-glow);
 }
-/* Section strip labels. Every tab always lays out its label (visibility,
-   not display) so each tab keeps one constant width — switching a section
-   (or entering search) never shifts the strip. Below 56rem the labels of
+/* Section strip labels. Every tab always lays out its label (opacity, not
+   display) so each tab keeps one constant width — switching a section (or
+   entering search) never shifts the strip. Below 56rem the labels of
    unselected tabs hide: the strip goes icon-only, and only the selected
-   tab's label is reserved. */
-.st-tab-lbl { display: block; visibility: hidden; white-space: nowrap; }
-.st-tab[aria-selected="true"] .st-tab-lbl { visibility: visible; }
+   tab's label is reserved. Opacity, not visibility, because a descendant's
+   `visibility: visible` overrides an ancestor's `visibility: hidden`, and
+   .st-host hides the inactive Settings page exactly that way — labels set
+   with visibility:visible leaked through and painted over the chat. */
+.st-tab-lbl { display: block; opacity: 0; white-space: nowrap; }
+.st-tab[aria-selected="true"] .st-tab-lbl { opacity: 1; }
 @container settings (min-width: 56rem) {
-  .st-tab .st-tab-lbl { visibility: visible; }
+  .st-tab .st-tab-lbl { opacity: 1; }
 }
 .st-tab.dim { opacity: 0.35; }
 .st-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
