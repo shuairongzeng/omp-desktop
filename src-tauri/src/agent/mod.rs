@@ -107,6 +107,11 @@ const ALLOWED_COMMAND_TYPES: &[&str] = &[
     "fork",
     // Goal mode: omp's `goal` command (get/create/resume/pause/drop).
     "goal",
+    // Settings → Agent (#37): omp's session-scoped automatic compaction and
+    // retry switches: sent to a new process when turned off, and to every
+    // open tab on change.
+    "set_auto_compaction",
+    "set_auto_retry",
 ];
 
 /// What one omp process is started with (`start_session` → `spawn_omp`).
@@ -402,9 +407,9 @@ impl AgentBridge {
     /// `pick` applied to `session_id`'s map entry, holding the `sessions`
     /// lock only while `pick` runs: callers take an `Arc` handle out and lock
     /// or write through it after the map lock is released, so a slow pipe or
-    /// a busy reader never blocks management calls (`grant_approval` instead
-    /// makes a session grant in `pick`: a set insert that must not outlive
-    /// the entry). `Ok(None)` for an unknown session.
+    /// a busy reader never blocks management calls (`approve_and_grant`
+    /// instead makes a session grant in `pick`: a set insert that must not
+    /// outlive the entry). `Ok(None)` for an unknown session.
     fn with_entry<T>(
         &self,
         session_id: &str,
@@ -601,7 +606,7 @@ mod tests {
         };
         let live = flat(include_str!("../../../src/live.js"));
         let mut checked = 0;
-        for callee in ["_send(", "_sendWithResponse("] {
+        for callee in ["_send(", "_sendWithResponse(", "_sendToAll("] {
             for (idx, _) in live.match_indices(callee) {
                 let args = &live[idx + callee.len()..];
                 if let Some(rest) = args.strip_prefix("{type:\"") {
@@ -707,19 +712,22 @@ mod tests {
 
     #[test]
     fn an_answer_omp_never_received_leaves_the_prompt_open() {
-        struct Broken;
-        impl Write for Broken {
-            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-                Err(std::io::ErrorKind::BrokenPipe.into())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
         let open = open_prompt("req-1");
         let line = r#"{"type":"extension_ui_response","id":"req-1","value":"Approve"}"#;
         assert!(write_command(&Mutex::new(Broken), line, Some(("req-1", &open))).is_err());
         assert_eq!(open.lock().unwrap().tool("req-1"), Some("bash"));
+    }
+
+    /// A stdin whose every write fails, as a pipe omp closed does.
+    pub(super) struct Broken;
+
+    impl Write for Broken {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     /// omp's tool-approval prompt `id` for `tool`, as the reader sees it.

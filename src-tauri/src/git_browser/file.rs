@@ -68,7 +68,7 @@ pub struct FileView {
 /// `git_browser_file(path, rel_path)`: the work-tree file against its
 /// `HEAD` blob — the rename source's blob for a renamed file.
 pub fn file(path: &Path, rel_path: &str) -> Result<FileView, String> {
-    let (mut repo, work_dir) = open(path)?;
+    let (_gate, mut repo, work_dir) = open(path)?;
     // `core.safecrlf=true` makes the filter pipeline refuse a file whose line
     // endings would not survive a round trip; `git diff` downgrades that to a
     // warning when it reads a file to show it, and so does this view.
@@ -182,7 +182,9 @@ fn read_worktree(repo: &gix::Repository, work_dir: &Path, rel: &str) -> Result<S
     })
 }
 
-fn is_binary(bytes: &[u8]) -> bool {
+/// Whether `bytes` look binary: a NUL in the first [`BINARY_SNIFF_BYTES`]
+/// (also the file preview's test, `project_file.rs`).
+pub fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(BINARY_SNIFF_BYTES)].contains(&0)
 }
 

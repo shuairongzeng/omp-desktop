@@ -25,7 +25,7 @@ mod log;
 mod status;
 
 pub use commit::{commit, commit_file, CommitView};
-pub use file::{file, FileView};
+pub use file::{file, is_binary, FileView};
 pub use log::{log, LogView};
 pub use status::{status, StatusView};
 
@@ -44,8 +44,12 @@ use std::path::{Path, PathBuf};
 /// commands are the user's own choice, as they are for `git status`. The
 /// built-in conversions (`eol`, `text`, `ident`, `working-tree-encoding`)
 /// run no command and are kept too.
-fn open(path: &Path) -> Result<(gix::Repository, PathBuf), String> {
-    let (mut repo, work_dir) = crate::workspace::discover(path)?;
+///
+/// The drivers that stay are commands gix runs: the returned guard holds
+/// the spawn gate ([`crate::spawn_gate`]) and must live as long as the
+/// reads on the repository.
+fn open(path: &Path) -> Result<(crate::spawn_gate::Shared, gix::Repository, PathBuf), String> {
+    let (gate, mut repo, work_dir) = crate::workspace::discover(path)?;
     // Collected first: the read borrows the config the removal replaces.
     let local: Vec<_> = repo
         .config_snapshot()
@@ -66,7 +70,7 @@ fn open(path: &Path) -> Result<(gix::Repository, PathBuf), String> {
             .commit()
             .map_err(fail("failed to configure git filters"))?;
     }
-    Ok((repo, work_dir))
+    Ok((gate, repo, work_dir))
 }
 
 /// Files a tree carries before it is cut off and marked `truncated` —
@@ -114,7 +118,7 @@ fn fail<E: std::fmt::Display>(what: &'static str) -> impl FnOnce(E) -> String {
 /// lies inside the work dir: its parent is canonicalised as far as it exists
 /// ([`crate::workspace::weakly_canonicalize`], so a symlinked project folder
 /// still matches) and the remainder validated the same way.
-fn project_relative(work_dir: &Path, rel_path: &str) -> Result<String, String> {
+pub fn project_relative(work_dir: &Path, rel_path: &str) -> Result<String, String> {
     let given = Path::new(rel_path);
     if !given.is_absolute() {
         return crate::workspace::validate_relative_path(work_dir, rel_path).map(|(_, rel)| rel);

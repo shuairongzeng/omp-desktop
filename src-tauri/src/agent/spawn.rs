@@ -1,6 +1,5 @@
 use crate::approval_mode::ApprovalMode;
-use crate::child_path::{child_path_dirs, join_dirs};
-use crate::program_setting::is_executable_file;
+use crate::child_path::{child_path_dirs, locate_program, TrustedProgram};
 use std::ffi::{OsStr, OsString};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -19,10 +18,6 @@ use std::sync::Mutex;
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// omp's file name in a PATH folder. Windows: only `omp.exe` — `Command`
-/// appended `.exe` to a bare `omp` anyway, so nothing else ever ran.
-const OMP_FILE: &str = if cfg!(windows) { "omp.exe" } else { "omp" };
-
 /// The omp binary every run uses, and the PATH it runs with.
 ///
 /// Located once per run as an absolute path and spawned by that path, never
@@ -40,16 +35,8 @@ struct Omp {
 
 impl Omp {
     fn locate() -> Result<Self, String> {
-        let dirs = child_path_dirs();
-        let binary = find_program(&dirs, OMP_FILE, is_executable_file).ok_or_else(|| {
-            "omp was not found in any absolute PATH folder (relative entries are ignored). \
-             Make sure omp is installed and on PATH."
-                .to_string()
-        })?;
-        Ok(Self {
-            binary,
-            path: join_dirs(&dirs),
-        })
+        let TrustedProgram { binary, path } = locate_program(&child_path_dirs(), "omp")?;
+        Ok(Self { binary, path })
     }
 
     /// A `Command` for this binary with every cross-cutting concern a run of
@@ -62,11 +49,12 @@ impl Omp {
     /// flash a console window.
     ///
     /// The `.stdin(Stdio::null())` default only matters for a
-    /// `.spawn()`-based caller: `Command::spawn()`/`.status()` default to
+    /// `spawn`-based caller: `spawn_gate::spawn`/`status` default to
     /// *inheriting* the parent's stdin, where a child that tries to read
     /// from it could block — concretely reachable under `tauri dev`, where
-    /// the parent's stdin is the terminal. [`omp_output`]'s `.output()` would
-    /// not inherit it anyway; [`spawn_omp`] overrides it with a pipe.
+    /// the parent's stdin is the terminal. [`omp_output`]'s
+    /// `spawn_gate::output` nulls it anyway; [`spawn_omp`] overrides it with
+    /// a pipe.
     fn command(&self) -> Command {
         let mut cmd = Command::new(&self.binary);
         cmd.stdin(Stdio::null());
@@ -81,22 +69,9 @@ impl Omp {
     /// regardless of exit status — each caller decides how to interpret a
     /// non-zero exit.
     fn output<S: AsRef<OsStr>>(&self, args: &[S]) -> Result<std::process::Output, String> {
-        self.command()
-            .args(args)
-            .output()
+        crate::spawn_gate::output(self.command().args(args))
             .map_err(|e| format!("failed to run {}: {e}", self.binary.display()))
     }
-}
-
-/// The first `name` that `is_executable` accepts in `dirs`, in order.
-fn find_program(
-    dirs: &[PathBuf],
-    name: &str,
-    is_executable: impl Fn(&Path) -> bool,
-) -> Option<PathBuf> {
-    dirs.iter()
-        .map(|dir| dir.join(name))
-        .find(|candidate| is_executable(candidate))
 }
 
 /// Run `omp <args>` to completion (see [`Omp::output`]). Used by
@@ -377,8 +352,7 @@ pub(super) fn spawn_omp(
     // Unix: must run before spawn() (installs the child as its own
     // process-group leader). Windows: only `CREATE_NO_WINDOW` again.
     crate::supervisor::ProcessSupervisor::prepare(&mut cmd);
-    let child = cmd
-        .spawn()
+    let child = crate::spawn_gate::spawn(&mut cmd)
         .map_err(|e| format!("failed to spawn {}: {e}", omp.binary.display()))?;
     let supervisor = crate::supervisor::ProcessSupervisor::attach(&child);
     Ok((child, supervisor))
@@ -389,30 +363,10 @@ pub(super) fn spawn_omp(
 #[cfg(test)]
 mod tests {
     use super::{
-        find_program, fmt_version, omp_args, parse_version_line, resolve_cwd, sanitize_child_env,
+        fmt_version, omp_args, parse_version_line, resolve_cwd, sanitize_child_env,
         version_refusal, ApprovalMode, Command, MIN_OMP_VERSION,
     };
-    use crate::program_setting::is_executable_file;
-    use crate::test_support::{executable, TempDir};
     use std::path::Path;
-
-    #[test]
-    fn find_program_takes_the_first_absolute_folder_holding_it() {
-        let dir = TempDir::new("spawn", "find-program");
-        let [none, first, second] = ["a", "b", "c"].map(|name| dir.path().join(name));
-        std::fs::create_dir_all(&none).unwrap();
-        let found = executable(&first.join("omp-test"), "");
-        executable(&second.join("omp-test"), "");
-        let dirs = [none, first, second];
-        assert_eq!(
-            find_program(&dirs, "omp-test", is_executable_file),
-            Some(found)
-        );
-        assert_eq!(
-            find_program(&dirs[..1], "omp-test", is_executable_file),
-            None
-        );
-    }
 
     /// The desktop's default mode; the `omp_args` tests below are about
     /// the other flags.

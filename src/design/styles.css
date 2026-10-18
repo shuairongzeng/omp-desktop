@@ -489,7 +489,7 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
 .has-bg-image.glass .window { background: color-mix(in oklab, var(--bg-window) 45%, transparent); }
 .glass .project-sidebar,
 .glass .bridge,
-.glass .twk-panel {
+.glass .settings {
   background-color: color-mix(in oklab, var(--bg-surface) var(--glass-alpha, 85%), transparent);
   backdrop-filter: blur(var(--glass-blur, 12px));
 }

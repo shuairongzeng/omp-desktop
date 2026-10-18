@@ -15,6 +15,7 @@
   const { LOCAL_COMMANDS, adaptAvailableCommands, mergeSlashCommands, isCommandInvocation, queuedFrame } = window.OMP_SLASH;
   const SUB = window.OMP_SUBAGENTS;
   const STITLE = window.OMP_SESSION_TITLE;
+  const PREFS = window.OMP_SESSION_PREFS;
   const QUEUE = window.OMP_QUEUE;
   const ASK = window.OMP_ASK_DIALOG;
   const APPROVAL = window.OMP_APPROVAL;
@@ -202,6 +203,20 @@
   let recentProjects = [];
   let _recentsProfile = null;
 
+  // Settings → Session / Agent (#37, app/session-prefs.js): app-wide prefs,
+  // read from the stored tweaks at load so the boot restore sees
+  // `restoreTabs` before React mounts; `setSessionPrefs` keeps them current.
+  let sessionPrefs = PREFS.fromTweaks(window.OMP_TWEAKS_STORE.read(), window.TWEAK_DEFAULTS);
+  // The busy-close confirmation on screen (`PREFS.tabCloseConfirm` /
+  // `quitConfirm` shape), or null; `_closeConfirmAnswer` settles it.
+  let closeConfirm = null;
+  let _closeConfirmAnswer = null;
+  // Last armed state handed to Rust's close guard (null = none sent yet),
+  // and whether a confirmed quit is closing the window: the guard then
+  // stays disarmed, or a notify would re-arm it under the closing window.
+  let _closeGuardSent = null;
+  let _quitting = false;
+
   let activeSessionId  = null;
   let activeListeners  = [];          // unlisten functions for current session
 
@@ -352,6 +367,7 @@
       noTabProfileId:  _noTabProfile(),
       recentProjects,
       workspaceNotes,
+      closeConfirm,
     };
   }
 
@@ -520,6 +536,19 @@
     return settled;
   }
 
+  // Undo a local `_settleAsk` whose answer never reached omp: the bubble
+  // with this id that reads answered (and was not cancelled by omp since)
+  // takes input again. The caller publishes.
+  function _reopenAsk(id) {
+    state.messages = state.messages.map(m => {
+      if (m.kind === "ask" && m.id === id && m.answered && !m.cancelled) {
+        const { answered: _a, answer: _v, ...open } = m;
+        return open;
+      }
+      return m;
+    });
+  }
+
   // Resolve a pending ask bubble: settle it, then send `payload` back to
   // omp — only if it was still open, so a re-answer sends nothing.
   // Proven with an eval-kernel cell (7/7 cases: patch applied, array
@@ -645,7 +674,7 @@
     }
     const snap = _buildSnapshot();
     subscribers.forEach(cb => cb(snap));
-
+    _syncCloseGuard(snap.sessions);
     // Keep OMP_DATA in sync for design components that read it directly
     window.OMP_DATA.messages  = state.messages;
     window.OMP_DATA.models    = state.models;
@@ -1752,6 +1781,11 @@
     const restored = []; // ids this restore registered, in order
     let autoActive = null; // the restored tab this restore activated
     try {
+      // Settings → Session "Reopen tabs" off: open nothing and leave the
+      // file as it is. The arming below adopts the empty layout as
+      // written, so open-tabs.json is first rewritten at the first real
+      // tab change, and normal persistence goes on from there.
+      if (!sessionPrefs.restoreTabs) return;
       const saved = await _invokeSafe("open_tabs_load", undefined, null);
       if (!saved) return;
       if (saved.skipped.length > 0) {
@@ -2748,13 +2782,16 @@
         };
         sessionRegistry.set(activeSessionId, entry);
       }
-      if (STITLE.shouldAutoRename(rpcState, entry.autoRenameArmed, lastTurnOk)) {
+      // Settings → Session "Name tabs automatically" off: neither the first
+      // title nor a refresh is sent. Tabs stay armed, so turning it back on
+      // titles the ones still untitled at their next settled turn.
+      if (sessionPrefs.autoName && STITLE.shouldAutoRename(rpcState, entry.autoRenameArmed, lastTurnOk)) {
         sessionRegistry.set(activeSessionId, {
           ...entry, autoRenameArmed: false, autoRenameInFlight: true,
           autoRenameLeft: STITLE.REFINE_MAX, autoRenameTurns: 0,
         });
         _send({ type: "prompt", message: "/rename" });
-      } else if (!entry.autoRenameInFlight &&
+      } else if (sessionPrefs.autoName && !entry.autoRenameInFlight &&
                  STITLE.shouldRefineTitle(rpcState, entry.autoRenameTurns ?? 0,
                                           entry.autoRenameLeft ?? 0, lastTurnOk)) {
         // Budget is spent at send, not at confirmation: a low-signal or
@@ -2796,6 +2833,13 @@
         // process falls back to one `select` per question until told again.
         _sendWithResponse({ type: "set_ask_dialog", enabled: true })
           .catch(err => console.warn("[live] set_ask_dialog failed:", err));
+        // Settings → Agent: on (the default) leaves omp's own
+        // compaction/retry config in charge, so a fresh process is only
+        // told when the user turned one off (session-scoped, per process
+        // like the ask dialog). A live change goes to every open tab either
+        // way (`setSessionPrefs`).
+        if (!sessionPrefs.autoCompaction) _send({ type: "set_auto_compaction", enabled: false });
+        if (!sessionPrefs.autoRetry) _send({ type: "set_auto_retry", enabled: false });
         _send({ type: "get_state" });
         _send({ type: "get_messages" });
         _send({ type: "get_available_models" });
@@ -2818,6 +2862,20 @@
   function _invokeSend(cmd) {
     return window.__TAURI__.core
       .invoke("send_command", { sessionId: activeSessionId, json: JSON.stringify(cmd) });
+  }
+
+  /** Send `cmd` to every open tab's omp, uncorrelated (no `id`: a response
+   *  replayed into a tab later is ignored by `_handleResponse`). A tab
+   *  whose process is gone or still starting misses it; its new process
+   *  starts from omp's own config plus `_initFetch`'s "off" overrides. */
+  function _sendToAll(cmd) {
+    if (!window.__TAURI__) return;
+    const json = JSON.stringify(cmd);
+    // A warning, not `_invokeSafe`'s error: a tab missing it is expected.
+    for (const sessionId of sessionRegistry.keys()) {
+      window.__TAURI__.core.invoke("send_command", { sessionId, json })
+        .catch(e => console.warn(`[live] ${cmd.type} for '${sessionId}' not sent:`, e));
+    }
   }
 
   function _logSendError(e) { console.error("[live] send error:", e); }
@@ -2976,16 +3034,70 @@
       document.addEventListener("click", e => {
         if (e.target.closest(".win-min"))        win.minimize();
         else if (e.target.closest(".win-max"))   win.isMaximized().then(m => m ? win.unmaximize() : win.maximize());
-        else if (e.target.closest(".win-close")) win.close();
+        else if (e.target.closest(".win-close")) void _requestQuit();
       });
     } else {
       document.addEventListener("click", e => {
         const t = e.target.closest(".light");
         if (!t) return;
-        if (t.classList.contains("red"))        win.close();
+        if (t.classList.contains("red"))        void _requestQuit();
         else if (t.classList.contains("amber")) win.minimize();
         else if (t.classList.contains("green")) win.isMaximized().then(m => m ? win.unmaximize() : win.maximize());
       });
+    }
+  }
+
+  // ── Busy-close confirmation (#37) ─────────────────────────────────────────
+  // Settings → Session "Ask before closing a busy tab". Closing a tab
+  // (`closeSessionGuarded`) or the window (our close button, or an OS close
+  // Rust holds while the guard is armed and forwards as
+  // `window://close-requested`) asks first while a tab is busy; the dialog
+  // renders the snapshot's `closeConfirm`. Decisions: app/session-prefs.js.
+
+  /** Arm Rust's close guard exactly while a close would need confirming;
+   *  called on every notify, so it only sends a change. */
+  function _syncCloseGuard(sessions) {
+    if (_quitting) return;
+    const armed = PREFS.closeGuardArmed(sessionPrefs, sessions);
+    if (armed === _closeGuardSent) return;
+    _closeGuardSent = armed;
+    void _invokeSafe("set_close_guard", { armed });
+  }
+
+  /** Show `confirm` and resolve to the user's answer. A newer request
+   *  replaces one still on screen, which then resolves to false. */
+  function _askClose(confirm) {
+    _closeConfirmAnswer?.(false);
+    return new Promise(resolve => {
+      _closeConfirmAnswer = ok => {
+        _closeConfirmAnswer = null;
+        closeConfirm = null;
+        notify();
+        resolve(ok);
+      };
+      closeConfirm = confirm;
+      notify();
+    });
+  }
+
+  /** Close the window — and with it the app, through Rust's usual exit
+   *  path (`kill_child_processes`) — after confirming busy tabs. The guard
+   *  is disarmed first, so Rust lets this close through. */
+  async function _requestQuit() {
+    if (_quitting || !window.__TAURI__) return;
+    const confirm = PREFS.quitConfirm(sessionPrefs, _sessionsView());
+    if (confirm && !(await _askClose(confirm))) return;
+    if (_quitting) return; // a second request confirmed meanwhile
+    _quitting = true;
+    try {
+      await window.__TAURI__.core.invoke("set_close_guard", { armed: false });
+      _closeGuardSent = false;
+      await window.__TAURI__.window.getCurrentWindow().close();
+    } catch (e) {
+      console.error("[live] closing the window failed:", e);
+      _quitting = false;
+      _closeGuardSent = null;
+      _syncCloseGuard(_sessionsView());
     }
   }
 
@@ -3579,26 +3691,42 @@
 
     /** Approve tool-approval prompt `prompt` (its ask bubble: `sessionId` +
      *  request `id`) and grant standing approval for its tool, `scope`
-     *  `"session"` or `"project"`. Rust takes the tool and the project from
-     *  the prompt that session's process forwarded and has not seen
-     *  answered, and refuses any other, so a grant never lands on another
-     *  tab's scope. The bubble settles at once (its buttons go inert); the
-     *  answer goes out only after the grant — an answer settles the prompt
-     *  in Rust — and to the prompt's own process, whichever tab is active
-     *  by then. A prompt not in the active tab is left alone. Proven with
-     *  an eval-kernel cell that loads this file into a stubbed-Tauri VM
-     *  (3/3 cases: the bubble reads answered before the grant resolves, a
-     *  second click sends no second grant, and a tab switch while the
-     *  grant is held still sends one "Approve" to the prompt's session). */
+     *  `"session"` or `"project"`, in ONE call: `approval_approve_and_grant`
+     *  answers the prompt on the stdin of the process that asked and saves
+     *  the rule only once that answer was written, so no rule outlives an
+     *  unanswered prompt and no answer reaches a respawned process. Rust
+     *  takes the tool and the project from the prompt that session's
+     *  process forwarded and has not seen answered, and refuses any other,
+     *  so a grant never lands on another tab's scope. The bubble settles at
+     *  once (its buttons go inert, so a second click sends nothing), and
+     *  the call names the prompt's own session, whichever tab is active by
+     *  the time it runs. A prompt not in the active tab is left alone.
+     *  A rejection means nothing reached omp (prompt unknown to Rust: past
+     *  the 64-prompt cap, an id too long to record, no running process), so
+     *  the bubble is reopened for a plain Approve/Deny and a note says why —
+     *  never a fallback `send_command` Approve, which would answer whatever
+     *  process now holds the id. A non-null value means the prompt was
+     *  approved but the rule was not saved. Both only while this activation
+     *  of the tab is still the one shown (the bubble lives in its state). */
     async approveAndRemember(prompt, scope) {
       const sessionId = prompt?.sessionId;
       if (!sessionId || sessionId !== activeSessionId || !prompt.id) return;
       if (!_settleAsk(prompt.id, { answered: true, answer: "Approve" })) return;
-      await _invokeSafe("approval_rules_grant", { sessionId, requestId: prompt.id, scope });
-      await _invokeSafe("send_command", {
-        sessionId,
-        json: JSON.stringify({ type: "extension_ui_response", id: prompt.id, value: "Approve" }),
-      });
+      const gen = _switchGen;
+      const res = await _invokeResult("approval_approve_and_grant", { sessionId, requestId: prompt.id, scope });
+      const unsaved = res.ok ? res.value : null;
+      if (res.ok && !unsaved) return;
+      if (_switchGen !== gen || activeSessionId !== sessionId) {
+        console.warn(`[live] approve and remember for '${sessionId}':`, res.ok ? unsaved : res.error);
+        return;
+      }
+      if (!res.ok) {
+        _reopenAsk(prompt.id);
+        _pushAssistantNote(`**Approve and remember failed:** ${res.error}. The prompt is open again.`);
+      } else {
+        _pushAssistantNote(`**Approved, but the rule was not saved:** ${unsaved}`);
+      }
+      notify();
     },
 
     /** Revoke a previously granted rule. No-op if it wasn't granted. */
@@ -3648,6 +3776,15 @@
     /** A file as of commit `sha` with that commit's change inline: `FileView`. */
     gitBrowserCommitFile(sha, relPath) {
       return _gitBrowserInvoke("git_browser_commit_file", { sha, relPath });
+    },
+
+    /** A file of the active tab's project for the preview (issue #39):
+     *  `FilePreview` from src-tauri/src/project_file.rs, as `{ok, value |
+     *  error}`; null with no tab. Rust takes the folder from the tab, so only
+     *  the tab id and the path cross. `path` may be absolute inside it. */
+    readProjectFile(path) {
+      if (!activeSessionId) return Promise.resolve(null);
+      return _invokeResult("project_file_read", { sessionId: activeSessionId, path });
     },
 
     /** Stage a file's changes (`git add`). */
@@ -4163,7 +4300,9 @@
       return _setApprovalModes("approval_mode_set_project", { projectRoot: path, mode: mode ?? null });
     },
 
-    /** Close a tab: Rust ends its omp process, git watcher, widgets and shell. */
+    /** Close a tab: Rust ends its omp process, git watcher, widgets and
+     *  shell. Unconditional; the tab bar goes through
+     *  `closeSessionGuarded`. */
     async closeSession(id) {
       _closeTab(id);
       sessionRegistry.delete(id);
@@ -4183,6 +4322,40 @@
       } else {
         notify(); // tab list changed
       }
+    },
+
+    /** `closeSession`, after asking when Settings → Session "Ask before
+     *  closing a busy tab" is on and the tab's agent is busy. Resolves to
+     *  whether the tab was closed. */
+    async closeSessionGuarded(id) {
+      const confirm = PREFS.tabCloseConfirm(sessionPrefs, _sessionsView(), id);
+      if (confirm && !(await _askClose(confirm))) return false;
+      if (!sessionRegistry.has(id)) return false; // closed meanwhile
+      await window.OMP_BRIDGE.closeSession(id);
+      return true;
+    },
+
+    /** Answer the busy-close confirmation on screen (snapshot
+     *  `closeConfirm`): `true` closes / quits, `false` keeps everything. */
+    resolveCloseConfirm(ok) {
+      _closeConfirmAnswer?.(ok === true);
+    },
+
+    /** Apply Settings → Session / Agent prefs (`restoreTabs`,
+     *  `confirmBusyClose`, `autoName`, `autoCompaction`, `autoRetry`; any
+     *  subset, the rest kept). Idempotent: only a changed value acts.
+     *  `restoreTabs` only matters at launch (read from the stored tweaks
+     *  then) and `autoName` at each auto-title check, so neither sends
+     *  anything here. */
+    setSessionPrefs(values) {
+      // fromTweaks keeps only PREFS.KEYS, so the whole tweaks object may come in.
+      const next = PREFS.fromTweaks({ ...sessionPrefs, ...values }, window.TWEAK_DEFAULTS);
+      const changed = PREFS.changedKeys(sessionPrefs, next);
+      if (changed.length === 0) return;
+      sessionPrefs = next;
+      if (changed.includes("autoCompaction")) _sendToAll({ type: "set_auto_compaction", enabled: next.autoCompaction });
+      if (changed.includes("autoRetry")) _sendToAll({ type: "set_auto_retry", enabled: next.autoRetry });
+      if (changed.includes("confirmBusyClose")) _syncCloseGuard(_sessionsView());
     },
 
     /** Put the tabs in `ids` order (#40): a drag in the tab bar, the group
@@ -4258,7 +4431,7 @@
       return _invokeResult("open_url_external", { url });
     },
 
-    /** Update the in-memory prompt-history cap (tweaks panel setting,
+    /** Update the in-memory prompt-history cap (Settings → Composer,
      *  default OMP_PROMPT_HISTORY.DEFAULT_LIMIT). Trims every tab's list
      *  eagerly, not just on the next record/backfill — otherwise lowering
      *  the slider wouldn't affect the picker (open via Ctrl+Up) until the
@@ -4311,6 +4484,13 @@
       .then(() => _restoreOpenTabs())
       .catch(e => console.error("[live] restoring the open tabs failed:", e))
       .finally(_setupExternalOpens);
+
+    // Busy-close confirmation for an OS close Rust held (`_requestQuit`),
+    // and the guard's real state: a reloaded webview may find it armed by
+    // the previous document.
+    window.__TAURI__.event.listen("window://close-requested", () => { void _requestQuit(); })
+      .catch(e => console.error("[live] failed to listen for window close requests:", e));
+    _syncCloseGuard(_sessionsView());
 
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", _setupWindowChrome);
