@@ -9,9 +9,12 @@
 //! past [`STDOUT_CAP_BYTES`]; the wait sees it and kills the tree. When the
 //! plugin itself exits, the tree is killed at once: a background child still
 //! holding stdout (`git fetch & echo '{…}'`) would otherwise hold the result
-//! until the deadline. Bytes already in a pipe survive the writer's death. A
-//! descendant that escaped the tree (`setsid`) can only delay the result until
-//! the deadline, never past it.
+//! until the deadline. Bytes already in a pipe survive the writer's death;
+//! the drains then run with a short grace ([`DRAIN_GRACE`]) past the spent
+//! deadline, so a plugin that finishes at its deadline is reported by its
+//! real exit, not as a timeout, and a failing run keeps its real stderr. A
+//! descendant that escaped the tree (`setsid`) can only delay the result
+//! until the deadline plus the grace, never past it.
 //!
 //! The context goes to stdin from a detached thread; the payload is bounded
 //! (see `context.rs`) and the write fails as soon as the tree is killed.
@@ -40,6 +43,11 @@ const STDERR_KEEP_BYTES: usize = 64 * 1024;
 const ERR_TAIL_CHARS: usize = 300;
 /// How much of a non-JSON stdout the error shows.
 const NOT_JSON_PREVIEW_CHARS: usize = 120;
+/// Drain grace after the plugin's exit is decided: bytes already in the pipe
+/// survive the writer's death but still need a moment to reach the reader
+/// thread, and a plugin that finishes at its deadline must not be reported
+/// "timed out" when it did exit (nor drop its real stderr on a failing run).
+const DRAIN_GRACE: Duration = Duration::from_millis(200);
 
 /// Run `entry` as `argv` (its command, or the snapshot of it the approval
 /// check hashed) with `ctx`. `on_spawn` receives the run's supervisor right
@@ -97,14 +105,19 @@ fn run_inner<A: AsRef<OsStr>>(
     // the supervisor drops, so a background holder of a pipe cannot stall
     // the readers until the deadline.
     supervisor.kill_tree();
-    let out = recv_until(&stdout_rx, deadline)
+    // Draining past `deadline`, not up to it: the exit was already decided,
+    // so `deadline`'s remaining budget (often zero — a plugin finishing at
+    // its deadline) must not be reused as the drain window, or the run is
+    // misreported "timed out" and the failing run's real stderr is dropped.
+    let grace = Instant::now() + DRAIN_GRACE;
+    let out = recv_until(&stdout_rx, grace)
         .ok_or_else(|| timeout_error(entry.timeout_ms))?
         .map_err(|e| format!("could not read stdout: {e}"))?;
     if overflow.load(Ordering::Relaxed) {
         return Err(cap_error());
     }
     if !status.success() {
-        let stderr = recv_until(&stderr_rx, deadline)
+        let stderr = recv_until(&stderr_rx, grace)
             .and_then(Result::ok)
             .unwrap_or_default();
         let tail_src = if stderr.is_empty() { &out } else { &stderr };
@@ -420,6 +433,36 @@ mod tests {
             "{r:?}"
         );
         assert!(r.result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_plugin_finishing_at_its_deadline_is_not_reported_timed_out() {
+        // The plugin sleeps exactly the timeout, so `try_wait` observes its
+        // exit right at the deadline. Before the drain grace this misfired
+        // as "timed out after N ms" — the exit had been decided, but the
+        // stdout drain had (near-)zero budget left. The grace window exists
+        // for exactly this finish, so the run must succeed with its stdout.
+        // `sleep 0.9` with a 1s timeout: the exit lands *just before* the
+        // deadline more often than not, but the drain budget is then
+        // ~100 ms — under both a slow pipe flush and the grace, which is
+        // the misreport window this pins.
+        let r = run(&["sh", "-c", "sleep 0.9; echo '{}'"], 1_000);
+        assert!(r.result.is_ok(), "{r:?}");
+        assert_eq!(r.result.as_deref().ok().map(str::trim), Some("{}"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_plugin_at_its_deadline_keeps_its_stderr() {
+        // Same near-deadline exit, failing path: the real stderr ("boom")
+        // must reach the error message, not be dropped by an exhausted
+        // drain budget that left the error with only the (empty) stdout
+        // tail.
+        let r = run(&["sh", "-c", "sleep 0.9; echo boom >&2; exit 3"], 1_000);
+        let e = r.result.expect_err("error");
+        assert!(e.contains("exit 3"), "{e}");
+        assert!(e.contains("boom"), "{e}");
     }
 
     #[cfg(unix)]

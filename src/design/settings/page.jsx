@@ -7,8 +7,9 @@
    (settings/rows-*.jsx) as <Comp row ctx query modified onReset />.
 
    Keys while the page is active: Ctrl+F focuses the search, ←/→ switch
-   sections outside text fields and radio/switch groups (those own their
-   arrows, controls.jsx), Escape clears the search. Escape is
+   sections outside text fields and the arrow-owning groups (data-st-arrows,
+   controls.jsx; a group without keynav — switches, the approvals mode seg
+   — leaves ←/→ to the page), Escape clears the search. Escape is
    default-prevented (capture phase) so the window keymap never sees it
    (no agent interrupt), but not stopped, so an open row menu or the
    shortcut recorder still gets it: such an element carries
@@ -23,9 +24,12 @@ const {
 
 const _SP_IS_MAC = window.OMP_KEYMAP?.detectMac?.() ?? false;
 const _SP_FIELD = "input, textarea, select, [contenteditable='true'], [role='slider']";
-// A radio/switch control owns ←/→ itself (roving within its group);
-// the page's section switching must not steal them.
-const _SP_RADIO = "[role='radio'], [role='switch'], [role='option'], [role='checkbox']";
+// A control that actually owns ←/→: the radiogroups with keynav
+// (SettingsSeg, ThemeCards, AccentSwatches — `data-st-arrows`, controls.jsx)
+// and listbox options; the page's section switching must not steal their
+// arrows. A radio group without keynav (the approvals mode seg), a switch
+// or a checkbox owns none, so ←/→ there stays the page's.
+const _SP_RADIO = "[data-st-arrows], [role='option']";
 
 function _SP_TweakRow({ row, ctx, query }) {
   const S = window.OMP_SETTINGS;
@@ -158,8 +162,13 @@ function SettingsPage({ ctx }) {
       const el = lastFocus.current && rootRef.current?.querySelector(`#${CSS.escape(lastFocus.current)}, [data-st-focus="${CSS.escape(lastFocus.current)}"]`);
       (el ?? searchRef.current)?.focus({ preventScroll: true });
     } else {
-      const el = rootRef.current?.querySelector(":focus");
-      lastFocus.current = el ? el.id || el.dataset.stFocus || null : null;
+      // visibility:hidden does not blur, and the page stays mounted behind
+      // a project tab: an element still holding focus keeps acting on keys
+      // invisibly (Space flips a switch, arrows run radio nav). Record
+      // where focus was (for the restore above), then drop it to the body.
+      const el = rootRef.current?.querySelector(":focus") ?? document.activeElement;
+      lastFocus.current = el && rootRef.current?.contains(el) ? el.id || el.dataset.stFocus || null : null;
+      if (el && rootRef.current?.contains(el)) el.blur?.();
     }
   }, [active]);
 
@@ -169,8 +178,14 @@ function SettingsPage({ ctx }) {
       const root = rootRef.current;
       const target = e.target;
       // Only keys aimed at the page (or at nothing): a dialog opened on top
-      // handles its own.
+      // handles its own. That includes an overlay in a .bridge-scrim (the
+      // approvals panel opened from "Manage rules"): its capture-phase
+      // guard on window runs after this same-node listener, so stopPropagation
+      // there can never un-run this one — the page bails by the scrim's
+      // mere presence, before a section switch or a Ctrl+F into the
+      // covered search.
       if (!root || !(root.contains(target) || target === document.body || target === document.documentElement)) return;
+      if (document.querySelector(".bridge-scrim")) return;
       const mod = e.ctrlKey || e.metaKey;
       const claimed = root.querySelector("[data-st-esc]");
       if (e.key === "Escape") {

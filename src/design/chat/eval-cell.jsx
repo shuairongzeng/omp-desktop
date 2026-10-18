@@ -23,7 +23,7 @@ function EvalCell({ cell }) {
         <span className="eval-lang">{cell.language}</span>
         {cell.title && <span className="eval-title">{cell.title}</span>}
         {cell.durationMs != null
-          ? <span className="eval-dur" style={{ marginLeft: "auto" }}>{cell.durationMs}ms</span>
+          ? <span className="eval-dur" style={{ marginLeft: "auto" }}>{window.OMP_SUBAGENTS.fmtDuration(cell.durationMs)}</span>
           : cell.status === "running" && <span className="shimmer-text" style={{ marginLeft: "auto", fontSize: 10 }}>running…</span>
         }
       </div>

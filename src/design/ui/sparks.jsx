@@ -61,8 +61,12 @@ const TokenGauge = ({ used, total, pct, label, sub }) => {
 };
 
 // ── Activity radar — 60s strip of tool calls colored by kind ─────────
+// `activity` items are `{t, k}` with `t` seconds-ago (0 = now, 59 = oldest);
+// the strip reads left→right as old→new (−60s … now), so cell `i` holds the
+// sample at `59 - i`. A `t` can exceed 59 (a boundary sample just outside
+// the window); it simply matches no cell, same as one that was never there.
 const ActivityRadar = ({ activity, tps }) => {
-  const cells = Array.from({ length: 60 }, (_, i) => activity.find((a) => a.t === i));
+  const cells = Array.from({ length: 60 }, (_, i) => activity.find((a) => a.t === 59 - i));
   return (
     <div className="radar">
       <div className="radar-row">
@@ -77,7 +81,7 @@ const ActivityRadar = ({ activity, tps }) => {
               color: c ? _SP_TOOL_META[c.k]?.color : undefined,
               animationDelay: `${i * 30}ms`,
             }}
-            title={c ? `t-${60 - i}s · ${c.k}` : ""} />
+            title={c ? `-${c.t}s · ${c.k}` : ""} />
         ))}
       </div>
       <div className="radar-foot">

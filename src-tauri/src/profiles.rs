@@ -29,6 +29,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
+use std::time::Duration;
 
 /// Reserved id of the built-in profile: omp's own agent directory, spawned
 /// without a `--profile` flag.
@@ -42,6 +43,12 @@ const MAX_NAME_LEN: usize = 48;
 /// exists so a runaway caller can't grow the file (or the profile list in
 /// every snapshot pushed to the UI) without limit.
 const MAX_PROFILES: usize = 64;
+
+/// Pause before [`read_or_recover_retrying`]'s second attempt: long enough
+/// for a transient open handle on `profiles.json` (an AV scan, a
+/// cloud-sync agent) to clear, short enough not to visibly delay startup,
+/// where `load` runs.
+const RETRY_DELAY_MS: u64 = 100;
 
 /// One selectable profile. `id` is the `--profile` value (and the directory
 /// name under `~/.omp/profiles/`); `name` is the user-facing label.
@@ -447,7 +454,9 @@ impl ProfileStore {
     /// Load the store at `path` (`<app_config_dir>/profiles.json`; `None`:
     /// memory only, starting with just the built-in profile). A missing
     /// file yields just the built-in profile - the list is UI convenience
-    /// state, never worth failing startup over. A *corrupt* file is recovered
+    /// state, never worth failing startup over. An *unreadable* file is
+    /// retried once after a short delay, then logged and treated the same
+    /// way; see [`read_or_recover_retrying`]. A *corrupt* file is recovered
     /// from the snapshot ring; see [`read_or_recover`]. The corrupt primary
     /// is deliberately left on disk here — `load` has no upcoming write to
     /// quarantine it before, and renaming it away with nothing to replace it
@@ -462,8 +471,11 @@ impl ProfileStore {
             path,
         });
         // Normalised either way: that is what puts the built-in profile first.
+        // An unreadable file gets one delayed retry ([`read_or_recover_retrying`])
+        // before the built-in-only fallback: a whole run's worth of respawns
+        // would otherwise land under the wrong profile.
         let file = normalize_file(files.as_ref().map_or_else(ProfilesFile::default, |files| {
-            read_or_recover(&files.path, &Self::snapshot_ring(&files.snapshots))
+            read_or_recover_retrying(&files.path, &Self::snapshot_ring(&files.snapshots))
                 .unwrap_or_default()
                 .0
         }));
@@ -850,6 +862,32 @@ fn read_or_recover(
             .unwrap_or_default(),
         true,
     ))
+}
+
+/// [`read_or_recover`] with one delayed retry for an unreadable primary: a
+/// transient open handle on `profiles.json` (an AV scan, a sync agent
+/// mid-write) is the common cause, and it clears in well under
+/// [`RETRY_DELAY_MS`]. Only the *unreadable* error is retried — a corrupt
+/// primary is recovered from the ring immediately, and a missing one is not
+/// an error at all. The failure is logged (following this crate's
+/// `eprintln!("[omp-desktop] …")` style) before the retry, so a genuinely
+/// broken file leaves a trace even though `load` then falls back to the
+/// built-in profile rather than failing startup.
+fn read_or_recover_retrying(
+    path: &Path,
+    ring: &crate::json_store::SnapshotRing,
+) -> Result<(ProfilesFile, bool), String> {
+    match read_or_recover(path, ring) {
+        Ok(recovered) => Ok(recovered),
+        Err(first) => {
+            eprintln!("[omp-desktop] {first}, retrying");
+            std::thread::sleep(Duration::from_millis(RETRY_DELAY_MS));
+            read_or_recover(path, ring).map_err(|retry| {
+                eprintln!("[omp-desktop] {retry}, starting with the built-in profile only");
+                retry
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1763,5 +1801,51 @@ mod tests {
         assert!(store.remove("ghost").is_err());
         assert_eq!(store.startup_id(), work.id);
         assert_eq!(store.snapshot().0.len(), 2);
+    }
+
+    #[test]
+    fn an_unreadable_store_falls_back_to_builtin_only_after_a_retry() {
+        // A directory at the store path fails to read on every platform and
+        // never becomes readable: both attempts fail, the store degrades to
+        // the built-in profile only — and `load` still succeeds (never
+        // fails startup), while `mutate` keeps refusing to persist over it.
+        let (store, _scratch) = scratch_store();
+        let path = store.into_path();
+        std::fs::create_dir_all(&path).expect("occupy the store path");
+
+        let store = ProfileStore::load(Some(path));
+        assert_eq!(store.snapshot().0, vec![builtin()]);
+        assert!(store.create("Work").is_err());
+    }
+
+    #[test]
+    fn a_recoverable_read_within_the_retry_window_succeeds() {
+        // The retry's raison d'être: the first read fails transiently and
+        // the file is fine by the second attempt. Simulated at the level the
+        // retry operates on — `read_or_recover_retrying` itself: a corrupt
+        // primary with a live snapshot ring is *not* the retried case (it
+        // recovers immediately), while an unreadable one is. This pins that
+        // only the unreadable branch takes the retry path, i.e. that the
+        // retry never masks a recovery (the corrupt-file path must not
+        // sleep+retry before consulting the ring).
+        let (store, _scratch) = scratch_store();
+        store.create("Work").expect("create work");
+        let ring = ProfileStore::snapshot_ring(&store.files().snapshots);
+        std::fs::write(store.path(), b"not json").expect("corrupt the primary");
+        // Corrupt: recovered from the ring immediately (first attempt), no
+        // retry delay incurred, and the recovered list is intact.
+        let (file, corrupt) =
+            read_or_recover_retrying(store.path(), &ring).expect("recovered from the ring");
+        assert!(corrupt);
+        let ids: Vec<String> = file.profiles.into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, vec![DEFAULT_PROFILE_ID, "work"]);
+
+        // Unreadable (a directory where the file should be): retried once
+        // (the 100 ms sleep runs — this test costs that much), then the
+        // error is returned — `load`'s caller falls back to the built-in
+        // profile, and `mutate` refuses to persist.
+        let unreadable = store.files().snapshots.join("unreadable.json");
+        std::fs::create_dir_all(&unreadable).expect("occupy the path");
+        assert!(read_or_recover_retrying(&unreadable, &ring).is_err());
     }
 }

@@ -198,15 +198,29 @@ function ToolCard({ msg, idx, highlighted, onInspectSubagent, onOpenFile, onPrev
   const running = msg.status === "running";
   const failed  = !running && msg.isError;
   const bashLines = collapsed && msg.output ? _TC_bashPreview(msg.output) : msg.output;
-  // Live tail of a running bash/eval card: keeps the newest output line in
-  // view, the same auto-scroll TaskAgentRow applies to its own body. For
-  // eval the scrollable element is the last running cell's .eval-output
-  // (EvalCell renders its own <pre>, so query inside the container).
+// Live tail of a running bash/eval card: keeps the newest output line in
+// view, the same auto-scroll TaskAgentRow applies to its own body. For
+// eval the scrollable element is the last running cell's .eval-output
+// (EvalCell renders its own <pre>, so query inside the container);
+// `:last-of-type` can't pick it — every cell's output is last-of-type
+// inside its own .copy-host — so we take the last node explicitly.
+// When the card settles (running -> false on the same DOM node) the
+// tail position is stale: once, on that edge, scroll back to the top.
   const outputRef = React.useRef(null);
+  const wasRunning = React.useRef(false);
   React.useEffect(() => {
-    if (!running || !outputRef.current) return;
+    if (!outputRef.current) return;
     const el = outputRef.current;
-    const target = msg.tool === "eval" ? el.querySelector(".eval-output:last-of-type") : el;
+    const outs = el.querySelectorAll(".eval-output");
+    const target = msg.tool === "eval" ? outs[outs.length - 1] : el;
+    if (!running) {
+      // React reuses the DOM node across the running -> settled edge:
+      // the tailed scroll position is stale, so snap back to the top once.
+      if (wasRunning.current && target) target.scrollTop = 0;
+      wasRunning.current = false;
+      return;
+    }
+    wasRunning.current = true;
     if (target) target.scrollTop = target.scrollHeight;
   }, [msg.output, msg.cells, running, msg.tool]);
   return (

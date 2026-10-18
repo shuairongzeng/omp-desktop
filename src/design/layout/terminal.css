@@ -13,6 +13,10 @@
   transition: height 140ms var(--ease-out), opacity 140ms var(--ease-out);
 }
 .term-panel[hidden] { display: none; }
+/* While the top edge is dragged the height is rewritten every move: the
+   collapse/expand transition would trail the pointer, so it is off until
+   the drag ends (the handle carries `.dragging`, terminal-panel.jsx). */
+.term-panel:has(.term-handle.dragging) { transition: none; }
 
 .term-handle {
   position: absolute; top: -3px; left: 0; right: 0; height: 6px;

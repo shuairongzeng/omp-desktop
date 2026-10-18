@@ -127,7 +127,10 @@ pub struct ConfigView {
     pub config_path: Option<String>,
     /// File-level problem: nothing runs.
     pub fatal: Option<String>,
-    /// Per-entry problems; the other entries still load.
+    /// Non-fatal problems: per-entry `widgets.json` issues (the other
+    /// entries still load) plus an approvals file that cannot be read —
+    /// nothing runs unapproved either way, but the user must see why every
+    /// card re-asks for approval.
     pub errors: Vec<String>,
     pub plugins: Vec<PluginView>,
 }
@@ -625,7 +628,7 @@ impl<E: HostEmitter, R: PluginRunner> Core<E, R> {
                 self.feed(Event::View(view));
             }
             Msg::Reload(reply) => {
-                self.approvals.reload();
+                // `load_config` re-reads the approvals file itself.
                 self.load_config();
                 self.sync_active();
                 let _ = reply.send(self.shared.snapshot());
@@ -756,15 +759,25 @@ impl<E: HostEmitter, R: PluginRunner> Core<E, R> {
         }
     }
 
+    /// Re-read the approvals file, then `widgets.json`, and rebuild the
+    /// config view. An approvals file that cannot be used approves nothing and
+    /// its error joins `ConfigView::errors` (the rail's existing non-fatal
+    /// error cards) — `ConfigView::fatal` is reserved for a `widgets.json`
+    /// that cannot be read at all, and an approvals problem must not blank
+    /// the plugin list.
     fn load_config(&mut self) {
+        let approvals_error = self.approvals.reload().err();
         let loaded = self
             .config_path
             .as_deref()
             .map_or_else(|| Err(NO_CONFIG_DIR.to_owned()), config::load);
-        let (plugins, errors, fatal) = match loaded {
+        let (plugins, mut errors, fatal) = match loaded {
             Ok(c) => (c.plugins, c.errors, None),
             Err(e) => (Vec::new(), Vec::new(), Some(e)),
         };
+        if let Some(e) = approvals_error {
+            errors.push(e);
+        }
         self.config.config_path = self
             .config_path
             .as_deref()
@@ -1169,6 +1182,40 @@ mod tests {
         assert_eq!(config["fatal"], NO_CONFIG_DIR);
         assert!(config.get("runs").is_none(), "config events carry no runs");
         assert!(host.approve("probe", &"0".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn a_malformed_approvals_file_surfaces_as_an_error_card_not_a_fatal() {
+        let fx = Fixture::new("approvals-broken");
+        fx.config(vec![("probe", "echo '{}'\n", json!({}))]);
+        // A revoke that left a trailing comma: unreadable JSON, so no
+        // plugin is approved — the rail must say why rather than silently
+        // flipping every card back to "needs approval".
+        std::fs::write(
+            fx.path("widget-approvals.json"),
+            r#"{"version":1,"approved":{"a":"aa",}}"#,
+        )
+        .unwrap();
+        let (host, capture) = fx.host();
+        let snap = host.reload();
+        assert_eq!(snap.config.fatal, None);
+        // One error naming the approvals file (message text is serde's, so
+        // match on the stable part: the path prefix and that it is a parse
+        // failure, not a file-level `fatal`).
+        assert_eq!(snap.config.errors.len(), 1);
+        let error = &snap.config.errors[0];
+        assert!(
+            error.starts_with(&fx.path("widget-approvals.json").display().to_string()),
+            "{error}"
+        );
+        assert_eq!(plugin(&snap, "probe").approval, Approval::Pending);
+        let config = capture.wait_for(CONFIG_EVENT, |_| true);
+        assert_eq!(config["errors"][0], *error);
+
+        // A reload after the user fixes the file clears the error.
+        std::fs::remove_file(fx.path("widget-approvals.json")).unwrap();
+        let snap = host.reload();
+        assert_eq!(snap.config.errors, Vec::<String>::new());
     }
 
     #[test]

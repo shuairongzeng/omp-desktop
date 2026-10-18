@@ -231,13 +231,14 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
     <div className="chat-wrap">
       <div className="chat-scroll selectable" ref={scrollRef} onScroll={onScroll}>
         <div className="chat-pad" style={_CV_PAD_STYLE}>
-          {messages.length === 0 && !messages.some(m => m.streaming) && (
+          {messages.length === 0 && (
             <div className="chat-welcome" aria-label="empty conversation">
               <_CV_Icon name="sparkle" size={20} color="var(--fg-3)" />
               <div className="chat-welcome-title">Ask anything</div>
               <div className="chat-welcome-sub">
                 Send a message to start the conversation.<br />
-                Attach images, open a project, or switch models from the composer.
+                Attach images, open a project, or switch models from the composer.<br />
+                Type <span className="mono">/new</span> for a fresh session or <span className="mono">/history</span> to resume one.
               </div>
             </div>
           )}

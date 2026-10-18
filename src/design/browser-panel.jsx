@@ -22,8 +22,11 @@ const _bpPct = (v, whole) => `${(v / whole) * 100}%`;
 const _BP_POP_W = "min(260px, 100% - 16px)";
 const _BP_POP_MARGIN = 8; // px, the view margin the popover keeps
 
-function BrowserPopover({ pick, page, failed, draft, onSave, onCancel }) {
-  const [text, setText] = React.useState(draft ?? "");
+function BrowserPopover({ pick, page, failed, draft, onNote, onSave, onCancel }) {
+  // `draft` is the hook's controlled text (use-browser.jsx `pendingDraft` /
+  // `noteDraft`): it is stashed live, so the popover itself keeps no state
+  // and no dismissal path can lose it.
+  const text = draft;
   // The popover's and the view's heights in px, measured before paint and
   // again when either resizes: the vertical placement needs both.
   const ref = React.useRef(null);
@@ -54,7 +57,7 @@ function BrowserPopover({ pick, page, failed, draft, onSave, onCancel }) {
     // Escape that ends an IME composition belongs to the IME.
     if (e.key === "Escape" && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      onCancel(text);
+      onCancel();
     } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       onSave(text);
@@ -75,7 +78,7 @@ function BrowserPopover({ pick, page, failed, draft, onSave, onCancel }) {
         rows={3}
         value={text}
         placeholder="comment — Enter saves, Shift+Enter new line, Esc cancels"
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => onNote(e.target.value)}
         onKeyDown={onKeyDown}
       />
       <div className="browser-popover-actions">
@@ -84,7 +87,7 @@ function BrowserPopover({ pick, page, failed, draft, onSave, onCancel }) {
           save
         </button>
         <button type="button" className="btn ghost" title="discard (Esc)"
-          onClick={() => onCancel(text)}>
+          onClick={() => onCancel()}>
           cancel
         </button>
       </div>
@@ -120,7 +123,7 @@ function BrowserPanel({ ui }) {
             </span>
           ))}
           {pending && page && (
-            <BrowserPopover key={pending.pick.rect.x + ":" + pending.pick.rect.y} pick={pending.pick} page={page} failed={pending.image == null} draft={ui.pendingDraft} onSave={ui.savePending} onCancel={ui.cancelPending} />
+            <BrowserPopover key={pending.pick.rect.x + ":" + pending.pick.rect.y} pick={pending.pick} page={page} failed={pending.image == null} draft={ui.pendingDraft} onNote={ui.noteDraft} onSave={ui.savePending} onCancel={ui.cancelPending} />
           )}
           {message && (
             <div className={`browser-status ${state.status}${state.error ? " failed" : ""}${strip ? " strip" : ""}`}

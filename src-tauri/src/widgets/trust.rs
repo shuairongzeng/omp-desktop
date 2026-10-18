@@ -181,27 +181,32 @@ pub struct ApprovalStore {
 }
 
 impl ApprovalStore {
-    /// Read the store at `path` (missing or unreadable file = empty).
+    /// Read the store at `path` (missing file = empty; an unusable file
+    /// approves nothing and is reported, see [`Self::reload`]).
     pub fn load(path: Option<PathBuf>) -> Self {
         let mut store = Self {
             path,
             approved: BTreeMap::new(),
         };
-        store.reload();
+        let _ = store.reload();
         store
     }
 
-    /// Re-read the file, replacing the in-memory approvals. A file that cannot
-    /// be used approves nothing.
-    pub fn reload(&mut self) {
-        let Some(path) = &self.path else {
-            self.approved.clear();
-            return;
+    /// Re-read the file, replacing the in-memory approvals. A file that
+    /// cannot be used approves nothing; its error is returned so the caller
+    /// (`widgets::host`) can surface it in the rail — a silently un-approved
+    /// every-plugin state is otherwise indistinguishable from the user never
+    /// having approved anything.
+    ///
+    /// # Errors
+    /// The error `read_file` produced: the file is unreadable, malformed or
+    /// an unsupported version.
+    pub fn reload(&mut self) -> Result<(), String> {
+        self.approved = match &self.path {
+            None => BTreeMap::new(),
+            Some(path) => read_file(path)?,
         };
-        self.approved = read_file(path).unwrap_or_else(|e| {
-            eprintln!("[omp-desktop] {e}, no widget is approved");
-            BTreeMap::new()
-        });
+        Ok(())
     }
 
     /// The fingerprint `id` was approved under, if any.
@@ -421,6 +426,24 @@ mod tests {
     }
 
     #[test]
+    fn reload_returns_the_error_of_an_unusable_file() {
+        let dir = Scratch::new("reload-error");
+        let path = || dir.0.join("widget-approvals.json");
+        fs::write(path(), "not json").unwrap();
+        let mut store = ApprovalStore::load(Some(path()));
+        // The message names the file (serde's parse detail is the tail).
+        let err = store.reload().unwrap_err();
+        assert!(err.starts_with(&path().display().to_string()), "{err}");
+        assert_eq!(store.status("probe", "aa"), Approval::Pending);
+
+        // Deleting the file returns to the clean missing-file state: the
+        // error clears and a later reload succeeds.
+        fs::remove_file(path()).unwrap();
+        store.reload().unwrap();
+        assert_eq!(store.status("probe", "aa"), Approval::Pending);
+    }
+
+    #[test]
     fn approving_keeps_a_revocation_made_on_disk() {
         let dir = Scratch::new("revoke");
         let path = || dir.0.join("widget-approvals.json");
@@ -436,7 +459,7 @@ mod tests {
             raw,
             serde_json::json!({ "version": 1, "approved": { "a": "aa", "c": "cc" } })
         );
-        store.reload();
+        let _ = store.reload();
         assert_eq!(store.status("b", "bb"), Approval::Pending);
         assert_eq!(store.status("c", "cc"), Approval::Approved);
     }

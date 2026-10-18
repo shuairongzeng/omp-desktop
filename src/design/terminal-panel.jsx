@@ -10,8 +10,8 @@
    column, which may be less than the saved tweak after the window
    shrank — and reports the final height once (`onHeight`,
    ui/use-edge-drag.js). Right-click on the body copies a selection, else
-   pastes. `TerminalPanels` renders the panels of every tab for
-   app-live.jsx.
+   pastes; Shift+Right-click passes through to the WebView's own menu.
+   `TerminalPanels` renders the panels of every tab for app-live.jsx.
    ═════════════════════════════════════════════════════════════════════ */
 
 const { Icon: _TP_Icon } = window;
@@ -124,7 +124,10 @@ function TerminalPanels({ sessions, activeId, terminal }) {
             onContextMenu={(e) => {
               // No selection: right-click pastes (the terminal's own paste
               // path); with one it copies. Either way the page's menu stays
-              // out — the body is the terminal's whole surface.
+              // out — the body is the terminal's whole surface. Shift held:
+              // the WebView's own menu is wanted after all, so the event
+              // passes through untouched.
+              if (e.shiftKey) return;
               e.preventDefault();
               if (!terminal.copySelection(s.id)) terminal.paste(s.id);
             }}

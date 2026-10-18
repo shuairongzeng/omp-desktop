@@ -131,7 +131,12 @@
       total,
       pct,
       label: `${formatTokens(used)} / ${formatTokens(total)}`,
-      cost: sessionCost != null ? `$${sessionCost.toFixed(2)}` : "$0.00",
+      // A 0/absent cost with tokens on the counter reads as "free?" —
+      // "$0.00 · N tok" says what happened: the turn ran, nothing was
+      // billed (no rate table, or a free tier).
+      cost: sessionCost != null && sessionCost !== 0
+        ? `$${sessionCost.toFixed(2)}`
+        : used > 0 ? `$0.00 · ${formatTokens(used)} tok` : "$0.00",
       tokensPerSec: Math.round(tps ?? 0),
     };
   }

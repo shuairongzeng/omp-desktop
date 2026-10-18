@@ -11,8 +11,12 @@
 
    menuKeyNav(e, menu, selector, close): a menu's onKeyDown. Arrows, Home
    and End move focus between the `selector` items in `menu`; Tab closes the
-   menu, prevented so Shift+Tab does nothing else. Ctrl/Alt/Meta chords are
-   left to the window keymap (Ctrl+Tab, …). */
+   menu, prevented so Shift+Tab does nothing else. A single-character key
+   types ahead: the first item whose text starts with the typed letter
+   (cycling past the focused one on a repeat of the same letter). Keys
+   from an inline text field inside the menu (an item being renamed) stay
+   the field's. Ctrl/Alt/Meta chords are left to the window keymap
+   (Ctrl+Tab, …). */
 
 (function () {
   function usePopoverDismiss(open, rootRef, onOutside, onEscape = onOutside) {
@@ -33,6 +37,9 @@
   }
 
   function menuKeyNav(e, menu, selector, close) {
+    // Keys typed into an inline text field (a group row being renamed)
+    // are the field's, never menu navigation.
+    if (e.target instanceof Element && e.target.closest("input, textarea, [contenteditable]")) return;
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key === "Tab") { e.preventDefault(); close(); return; }
     const all = [...menu.querySelectorAll(selector)];
@@ -43,9 +50,26 @@
       : e.key === "Home" ? all[0]
       : e.key === "End" ? all[all.length - 1]
       : null;
-    if (!next) return;
-    e.preventDefault();
-    next.focus();
+    if (next) {
+      e.preventDefault();
+      next.focus();
+      return;
+    }
+    // Character typeahead: one printable key jumps to the first item whose
+    // text starts with it; repeating the same letter cycles to the next
+    // item with that letter, wrapping, as browser menus do. Space is
+    // skipped (a scroll key, and a "select" key on menus elsewhere), and
+    // so is Shift (the browser's caret shortcuts, not menu letters).
+    if (e.key.length === 1 && e.key !== " " && !e.shiftKey) {
+      const prefix = e.key.toLowerCase();
+      const texts = all.map(el => (el.textContent || "").trim().toLowerCase());
+      let hit = texts.findIndex((text, j) => text.startsWith(prefix) && j > i);
+      if (hit < 0) hit = texts.findIndex(text => text.startsWith(prefix));
+      if (hit >= 0 && hit !== i) {
+        e.preventDefault();
+        all[hit].focus();
+      }
+    }
   }
 
   window.usePopoverDismiss = usePopoverDismiss;

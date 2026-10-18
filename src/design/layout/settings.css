@@ -118,8 +118,14 @@
 .st-row.stack { flex-direction: column; align-items: stretch; gap: 10px; }
 .st-rhead { display: flex; align-items: center; gap: 20px; }
 /* A row appearing (a `visibleIf` row turned on) fades/slides in; a leaving
-   row just unmounts, which CSS-only mount animation covers well enough. */
-.st-row { animation: st-row-in 150ms var(--ease-out); }
+   row just unmounts, which CSS-only mount animation covers well enough.
+   st-row-in rides the one-shot `st-fresh` class, dropped when that
+   animation ends (controls.jsx): the reset flash swaps animation-name on
+   the same element, so a rule the flash's clear re-matches (a plain
+   `.st-row`, or `:not(.flash)`) restarts the finished mount animation —
+   the row collapsing and re-sliding after every reset. With the class
+   gone, nothing is left to re-match and the flash can come and go. */
+.st-row.st-fresh { animation: st-row-in 150ms var(--ease-out); }
 .st-row.flash { animation: st-flash 1.4s var(--ease-out); }
 @keyframes st-flash {
   0%, 30% { background: var(--accent-soft); }
@@ -130,7 +136,7 @@
   to { opacity: 1; max-height: 200px; transform: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .st-row.flash, .st-row { animation: none; }
+  .st-row.flash, .st-row.st-fresh { animation: none; }
 }
 .st-rt { flex: 1; min-width: 0; }
 .st-rl { display: flex; align-items: center; gap: 8px; color: var(--fg); font-weight: 500; }

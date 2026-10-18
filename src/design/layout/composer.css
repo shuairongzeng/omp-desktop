@@ -144,6 +144,10 @@
   width: 100%;
   min-height: 22px; max-height: 180px;
   overflow-y: hidden;
+  /* Wheel at the max draft height must not chain-scroll the chat log
+     behind the composer (scroll chaining through the textarea's own
+     scrollport). */
+  overscroll-behavior: contain;
   resize: none;
   font: inherit; font-size: var(--d-text);
   color: var(--fg);

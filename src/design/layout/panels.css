@@ -120,7 +120,7 @@
   cursor: default;
 }
 .mode-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.mode-seg button:hover { color: var(--fg); }
+.mode-seg button:hover:not(:disabled) { color: var(--fg); }
 .mode-seg button:disabled { opacity: .6; }
 .mode-seg button[aria-checked="true"] {
   background: var(--bg-elevated); color: var(--fg);

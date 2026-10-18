@@ -16,7 +16,10 @@ const _ST_escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Roving-tabindex arrows for a `role=radiogroup`: ←/→ (plus ↑/↓ for a
  *  vertical group) move between its `role=radio` buttons, wrapping; the
  *  focused one is also the checked one, per the ARIA radio pattern. Returns
- *  the group's onKeyDown. */
+ *  the group's onKeyDown. The group carries `data-st-arrows` so the page's
+ *  section-switching key guard can tell these (arrows are theirs) from a
+ *  radio group without keynav (the approvals mode seg), where ←/→ must
+ *  stay the page's. */
 function _ST_radioKeyNav(e) {
   if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
@@ -38,11 +41,20 @@ function _ST_radioTabIndex(items, value, get) {
 }
 
 function SettingsMark({ text, query }) {
-  const q = (query ?? "").trim();
-  if (!q || !text) return text ?? null;
-  // A capturing split puts the matches at the odd indices.
-  const parts = String(text).split(new RegExp(`(${_ST_escapeRe(q)})`, "i"));
-  return parts.map((p, i) => (i % 2 ? <mark className="st-mark" key={i}>{p}</mark> : p));
+  const tokens = (query ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length || !text) return text ?? null;
+  // `search()` is a tokenised AND: "font mono" matches a row whose label
+  // says "font" and whose desc says "mono". Highlight the same way — each
+  // token on its own — or those rows would show plain text next to a hit
+  // count that says they matched. A split per token, each capturing split
+  // putting its matches at the odd indices; regex chars are escaped.
+  return tokens.reduce((nodes, tok, ti) => nodes.flatMap((p, pi) => {
+    if (typeof p !== "string") return [p];
+    const parts = p.split(new RegExp(`(${_ST_escapeRe(tok)})`, "i"));
+    return parts.map((s, i) => (i % 2
+      ? <mark className="st-mark" key={`${ti}-${pi}-${i}`}>{s}</mark>
+      : s));
+  }), [String(text)]);
 }
 
 /** A schema description: `backtick` segments as <code>, all highlighted. */
@@ -61,7 +73,15 @@ function SettingsRow({ label, desc, modified, resettable, onReset, stack, aside,
   // Flash the row once it is reset, as feedback for a click on a control
   // that vanishes with the change.
   const [flash, setFlash] = React.useState(false);
-  const reset = () => { setFlash(true); onReset(); };
+  // One-shot mount class: dropped when st-row-in ends. The flash swaps
+  // animation-name on this same element, so a mount rule still matched
+  // when .flash clears would restart the finished entrance (the st-fresh
+  // comment in settings.css); with the class gone, the flash can re-run.
+  const [fresh, setFresh] = React.useState(true);
+  // Starting a flash cancels a still-running entrance (same `animation`
+  // shorthand slot), whose animationend then never fires: drop st-fresh
+  // here too, or the flash's clear would re-match it and replay the mount.
+  const reset = () => { setFlash(true); setFresh(false); onReset(); };
   const head = (
     <div className="st-rt">
       <div className="st-rl">
@@ -79,9 +99,16 @@ function SettingsRow({ label, desc, modified, resettable, onReset, stack, aside,
       )}
     </div>
   );
-  const cls = `st-row${stack ? " stack" : ""}${flash ? " flash" : ""}${className ? ` ${className}` : ""}`;
+  const cls = `st-row${stack ? " stack" : ""}${fresh ? " st-fresh" : ""}${flash ? " flash" : ""}${className ? ` ${className}` : ""}`;
+  // Only the row's own animations, by name: an end event bubbling from a
+  // child (a control's spin) must not clear a flash in progress, and the
+  // flash's clear must not re-arm st-fresh.
   return (
-    <div className={cls} onAnimationEnd={() => setFlash(false)}>
+    <div className={cls} onAnimationEnd={e => {
+      if (e.target !== e.currentTarget) return;
+      if (e.animationName === "st-flash") setFlash(false);
+      else if (e.animationName === "st-row-in") setFresh(false);
+    }}>
       {stack ? <div className="st-rhead">{head}{aside}</div> : head}
       {children}
     </div>
@@ -103,7 +130,7 @@ function SettingsToggle({ value, onChange, label, className = "", disabled }) {
 function SettingsSeg({ value, options, onChange, label }) {
   const idx = _ST_radioTabIndex(options, value, o => o.value);
   return (
-    <div className="st-seg" role="radiogroup" aria-label={label} onKeyDown={_ST_radioKeyNav}>
+    <div className="st-seg" role="radiogroup" aria-label={label} data-st-arrows="" onKeyDown={_ST_radioKeyNav}>
       {options.map((o, i) => (
         <button type="button" key={String(o.value)} role="radio" aria-checked={o.value === value}
           tabIndex={idx(i)} onClick={() => onChange(o.value)}>
@@ -174,7 +201,7 @@ const _ST_cap = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
 function ThemeCards({ value, themes, onChange }) {
   const idx = _ST_radioTabIndex(themes, value, th => th.id);
   return (
-    <div className="st-themes" role="radiogroup" aria-label="Theme" onKeyDown={_ST_radioKeyNav}>
+    <div className="st-themes" role="radiogroup" aria-label="Theme" data-st-arrows="" onKeyDown={_ST_radioKeyNav}>
       {themes.map((th, i) => (
         <button type="button" key={th.id} className={`st-th theme-${th.id}`} role="radio"
           aria-checked={value === th.id} tabIndex={idx(i)} onClick={() => onChange(th.id)}>
@@ -202,7 +229,7 @@ function AccentSwatches({ value, themeAccent, colors, onChange }) {
   const own = sameColor(value, themeAccent);
   const idx = _ST_radioTabIndex(colors, own ? themeAccent : value, c => c);
   return (
-    <div className="st-sw" role="radiogroup" aria-label="Accent" onKeyDown={_ST_radioKeyNav}>
+    <div className="st-sw" role="radiogroup" aria-label="Accent" data-st-arrows="" onKeyDown={_ST_radioKeyNav}>
       <button type="button" className="st-sw-theme" role="radio" aria-checked={own}
         aria-label={`theme accent ${themeAccent}`} title={`theme accent ${themeAccent}`}
         tabIndex={own ? 0 : -1} onClick={() => onChange(themeAccent)}>theme</button>

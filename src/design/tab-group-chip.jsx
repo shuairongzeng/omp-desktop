@@ -39,7 +39,7 @@ function TabLabel({ tab, className, title }) {
   );
 }
 
-function TabGroupChip({ group, activeId, profileLabel, onSelect, onClose, onNewInProject, onRename, reorder }) {
+function TabGroupChip({ group, activeId, profileLabel, onSelect, onClose, onNewInProject, onRename, reorder, terminalDirty }) {
   const [open, setOpen] = React.useState(false);
   // Member tab whose name is being edited inline (#32).
   const [renaming, setRenaming] = React.useState(null);
@@ -80,7 +80,11 @@ function TabGroupChip({ group, activeId, profileLabel, onSelect, onClose, onNewI
       // with button 1 (see TabBar), hence the guard there too; the
       // mousedown swallow stops autoscroll / primary-selection paste.
       onClick={e => { if (e.button !== 1) onSelect(groupTarget(group, activeId)); }}
+      // The rename field (#32) renders inside the chip's dropdown and its
+      // popover: its keys are the field's — Enter commits the name instead
+      // of re-selecting, Space types instead of activating the chip.
       onKeyDown={e => {
+        if (e.target.closest("input, textarea")) return;
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(groupTarget(group, activeId)); }
       }}
       onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
@@ -88,6 +92,9 @@ function TabGroupChip({ group, activeId, profileLabel, onSelect, onClose, onNewI
       <span className="tab-bar-mark" style={{ background: active ? active.color : "transparent" }} />
       <Icon name="folder" size={11} color={active ? active.color : "var(--fg-4)"} />
       <TabRunDot state={groupRunState(group.tabs)} />
+      {group.tabs.some(t => terminalDirty?.[t.id]) && (
+        <span className="tab-run-dot term-dirty" title="terminal has new output" />
+      )}
       <span className="tab-name" title={group.path}>{group.name}</span>
       <span className="tab-count">{group.tabs.length}</span>
       {profile && (

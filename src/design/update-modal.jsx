@@ -37,14 +37,15 @@ function UpdateModal({ updater, busyTabs }) {
   // Tab/Enter/Space on the buttons intact. Escape closes except mid-install;
   // a key aimed outside the panel is cancelled and focus pulled back.
   // Ctrl/Alt/Meta chords pass through as global shortcuts.
+  // Escape closes through the shared stack (app/use-esc-close.js); the
+  // effect below keeps key containment only. Never mid-install.
+  window.useEscClose(() => { if (!inFlight) close(); });
   React.useEffect(() => {
     const onKey = e => {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
       e.stopPropagation();
-      if (e.key === "Escape") {
-        e.preventDefault();
-        if (!inFlight) close();
-      } else if (!panelRef.current?.contains(e.target)) {
+      if (e.key === "Escape") return; // the shared Esc stack closes us
+      if (!panelRef.current?.contains(e.target)) {
         e.preventDefault();
         panelRef.current?.focus();
       }

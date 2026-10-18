@@ -99,7 +99,7 @@
   --fg: #B5FF8A;
   --fg-2: #7CD968;
   --fg-3: #4F9C49;
-  --fg-4: #386B36;
+  --fg-4: #3E773C;
   --fg-5: #244524;
 
   --accent: #C4FF3F;
@@ -291,7 +291,7 @@
   --fg: #3B2A32;
   --fg-2: #5A4350;
   --fg-3: #8A6478;
-  --fg-4: #B597A6;
+  --fg-4: #A27C8F;
   --fg-5: #D8C4CD;
 
   --accent: #D6336C;
@@ -661,14 +661,14 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
 .theme-daylight .btn.primary { color: #FAF7EF; }
 .theme-sakura .btn.primary { color: #FFF5F7; }
 .theme-midnight .btn.primary { color: #F2F0FF; }
-.btn.primary:hover { background: var(--accent-deep); border-color: var(--accent-deep); color: #06241B; }
+.btn.primary:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); color: #06241B; }
 .btn.outlined { border-color: var(--line); }
-.btn.outlined:hover { border-color: var(--line-bright); }
+.btn.outlined:hover:not(:disabled) { border-color: var(--line-bright); }
 .btn.icon {
   width: 1.5rem; height: 1.5rem; padding: 0; justify-content: center;
 }
 .btn.danger { color: var(--rose); }
-.btn.danger:hover { background: color-mix(in oklab, var(--rose) 15%, transparent); }
+.btn.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--rose) 15%, transparent); }
 
 /* focus ring */
 .btn:focus-visible, input:focus-visible, textarea:focus-visible {

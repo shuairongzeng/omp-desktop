@@ -45,7 +45,7 @@ const CommentForm = ({ block, initial, onSave, onCancel }) => {
         <div style={{ flex: 1 }} />
         <button className="btn ghost" onClick={onCancel}>cancel</button>
         <button className="btn outlined" onClick={() => onSave(text.trim())} disabled={!text.trim() && !initial}>
-          save <span className="kbd" style={{ marginLeft: 2 }}>⌘↵</span>
+        save <span className="kbd" style={{ marginLeft: 2 }}>{window.OMP_KEYMAP?.detectMac?.() ? "⌘↵" : "Ctrl+↵"}</span>
         </button>
       </div>
     </div>
@@ -106,8 +106,5 @@ const AnnotablePlan = ({ text, annotations, onAnnotate }) => {
     </div>
   );
 };
-
-Object.assign(window, { Icon, TOOL_META, Sparkline, TokenGauge, ActivityRadar, MarkdownContent, AnnotablePlan });
-
 
 Object.assign(window, { AnnotablePlan, segmentPlan });

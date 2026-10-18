@@ -210,6 +210,13 @@
        app-live.jsx destructure window.OMP_WIDGETS at top level; composer.jsx
        reads it late-bound. -->
   <script src="app/widgets.js"></script>
+  <!-- Shared Escape stack (#round-1): one capture-phase window listener
+       dispatches a bare Escape to the topmost *active* registration.
+       design/panels.jsx (kanban), approval-rules-panel.jsx,
+       usage-stats-panel.jsx, history-modal.jsx, update-modal.jsx and
+       composer.jsx (CommandBridge) call window.useEscClose at render
+       time; plain IIFE, so it only has to precede the Babel files. -->
+  <script src="app/use-esc-close.js"></script>
 
   <!-- omp extension status lines and text widgets (#52): pure keyed state,
        escape stripping, card models. IIFE; live.js reads

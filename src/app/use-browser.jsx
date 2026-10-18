@@ -10,8 +10,9 @@
    element must stay mounted while `open` (the effect binds the
    `viewRef`/`canvasRef`/`sinkRef` elements of the commit that opened it).
    A navigation that fails restarts the panel's screencast and retries once
-   (`navigate`), its error surfacing as `navError` for the toolbar; comment
-   drafts of unsubmitted picks are kept per element (`pendingDraft`). */
+   (`navigate`), its error surfacing as `navError` for the toolbar. The
+   comment popover is controlled (`noteDraft` / `pendingDraft`): its text
+   is stashed as it is typed, so no dismissal path can lose it. */
 
 const { OMP_BROWSER: _UB, OMP_BROWSER_SCREEN: _UBS } = window;
 const _UB_IDLE = Object.freeze({ status: "idle", error: null, url: "", loading: false, canBack: false, canForward: false, annotate: false });
@@ -207,12 +208,26 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
   // A pick left unsubmitted keeps its comment as a draft, stored per tab
   // under the element's key (OMP_BROWSER.pickKey): picked again — this tab,
   // another one, after a restart — the text comes back. Saving drops it.
-  const stashDraft = (text) => {
-    if (!pending || !text) return;
+  // The popover's comment field is controlled (browser-panel.jsx): its
+  // onChange is `ui.noteDraft`, and the text is stashed as it is typed, so
+  // every path that dismisses the pick — the popover's own Esc / cancel,
+  // the panel's Esc (`onEscape("cancelPick")`), a new pick replacing it,
+  // annotate off (by hand, by Rust, on leaving the panel or switching
+  // tabs), a restart, closing the panel — leaves the draft on the element,
+  // and picking it again restores it (`pendingDraft`). A cleared field
+  // spends it.
+  const noteDraft = (text) => {
+    if (!pending) return;
     const key = _UB.pickKey(pending.pick);
     setDrafts((s) => {
       const tab = window.OMP_SESSION_UI.entryOf(s, pending.sid, _UB.EMPTY);
-      return { ...s, [pending.sid]: { ...tab, [key]: text } };
+      if (text) return tab[key] === text ? s : { ...s, [pending.sid]: { ...tab, [key]: text } };
+      if (!(key in tab)) return s;
+      const { [key]: _cleared, ...rest } = tab;
+      const next = { ...s };
+      if (Object.keys(rest).length) next[pending.sid] = rest;
+      else delete next[pending.sid];
+      return next;
     });
   };
   const savePending = React.useCallback((comment) => {
@@ -233,9 +248,9 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
     });
     setPending(null);
   }, [pending, sessionIds]);
-  // `text` is the popover's current comment (Esc, a new pick, a restart).
-  const cancelPending = React.useCallback((text = "") => { stashDraft(text); setPending(null); },
-    [pending, stashDraft]);
+  // The draft is already stashed as it was typed (`noteDraft`): every
+  // dismissal path just closes the popover.
+  const cancelPending = React.useCallback(() => setPending(null), []);
   // A submit takes its chips with the rest of the draft (`takeChips`: those
   // ids only, chips added since stay); a goal start that fails hands them
   // back with the draft (`restoreChips`). `id` defaults to the tab shown.
@@ -292,10 +307,13 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
     width: tweaks?.browserWidth ?? 0, // px; 0 = default (half the stage) — see OMP_BROWSER.clampWidth
     setWidth: (px) => setTweak("browserWidth", Math.round(px)),
     state, tabs, page, annotate, setAnnotate, navError,
-    // The popover's starting text: the draft of the element picked before.
+    // The popover's text is controlled: `noteDraft(text)` stashes it as it
+    // is typed, `pendingDraft` is what a reopened popover starts from (the
+    // same drafts map, so both read the same truth).
     pendingDraft: pending
       ? window.OMP_SESSION_UI.entryOf(draftsAny, pending.sid, _UB.EMPTY)[_UB.pickKey(pending.pick)] ?? ""
       : "",
+    noteDraft,
     pending, savePending, cancelPending,
     chips: _UB.chipsOf(chips, sid),
     ...chipActions, canvasRef, viewRef, sinkRef, ...act,

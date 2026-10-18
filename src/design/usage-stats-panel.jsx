@@ -101,23 +101,10 @@ function UsageStatsPanel({ onClose, profileLabel }) {
 
   React.useEffect(() => { refresh(); }, [refresh]);
 
-  // Capture phase on `window`, not the panel's own onKeyDown: Escape must
-  // close the panel even when focus sits on the refresh button, and must
-  // not fall through to the global keymap's `app.interrupt` (app-live.jsx's
-  // guard skips abort while this overlay is open, so the key would
-  // otherwise do nothing). Same pattern as update-modal.jsx. Ctrl/Alt/Meta
-  // chords pass through as global shortcuts.
-  React.useEffect(() => {
-    const onKey = e => {
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      onClose();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [onClose]);
+  // Escape goes through the shared stack (app/use-esc-close.js): capture
+  // phase, topmost-active wins, and the key never reaches the global
+  // keymap's `app.interrupt`.
+  window.useEscClose(onClose);
 
   const overall = data.overall;
 

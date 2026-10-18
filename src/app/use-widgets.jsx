@@ -119,13 +119,19 @@ function useWidgets({ bridge, activeSessionId, railVisible, tweaks }) {
 
   // #20: approvals the user dismissed with "Not now" — hidden for this
   // browser session only (component state, never the backend's config).
-  // A changed fingerprint re-lists the plugin: `changed` cards are urgent
-  // (a previously approved command mutated), not nagging.
+  // Keyed by `${id}:${fingerprint}`, not the bare id: a changed fingerprint
+  // re-lists the plugin (a previously approved command mutated), and that
+  // urgent re-approval must not stay swallowed by the earlier "Not now".
+  // `changed` cards (approval === "changed") bypass dismissal for the same
+  // reason — they re-list even when the id alone was dismissed.
+  const configRef = React.useRef(config);
+  configRef.current = config;
   const [dismissed, setDismissed] = React.useState(new Set());
   const dismissApproval = React.useCallback((pluginId) => {
+    const fingerprint = configRef.current.plugins.find(p => p.id === pluginId)?.fingerprint;
     setDismissed(prev => {
       const next = new Set(prev);
-      next.add(pluginId);
+      next.add(fingerprint != null ? `${pluginId}:${fingerprint}` : pluginId);
       return next;
     });
   }, []);
@@ -133,7 +139,7 @@ function useWidgets({ bridge, activeSessionId, railVisible, tweaks }) {
   // Approval is per plugin, not per tab: shown whatever the active project.
   const approvals = React.useMemo(() => config.plugins
     .filter(p => p.enabled && p.approval !== "approved" && !hiddenIds.includes(p.id)
-      && !dismissed.has(p.id))
+      && !(dismissed.has(`${p.id}:${p.fingerprint}`) && p.approval !== "changed"))
     .map(p => ({ id: p.id, title: p.title, command: p.command, changed: p.approval === "changed" })),
   [config.plugins, hiddenIds, dismissed]);
   const refresh = React.useCallback((pluginId) => bridge?.widgetsRefresh(pluginId), [bridge]);
@@ -143,8 +149,6 @@ function useWidgets({ bridge, activeSessionId, railVisible, tweaks }) {
   // Approves the fingerprint the card was rendered for. A stale card (the
   // command or script changed meanwhile) re-reads the state so the card
   // shows what would now be approved, and rejects so the card re-enables.
-  const configRef = React.useRef(config);
-  configRef.current = config;
   const approve = React.useCallback(async (pluginId) => {
     if (!bridge) return;
     const fingerprint = configRef.current.plugins.find(p => p.id === pluginId)?.fingerprint;

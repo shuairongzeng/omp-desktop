@@ -126,7 +126,11 @@ function tabClickProps(onSelect, onClose) {
     // #3: the div is role="tab" + tabIndex={0}, so Enter and Space must
     // activate it like the native button it isn't. `key === " "` is Space
     // (and isSubmitEnter's IME guard lives in profile-menu's input, not here).
+    // Keys typed into the inline rename field (#32) are the field's: it
+    // renders inside this tab, and swallowing its Space made names
+    // untypeable while Enter re-fired onSelect on top of the field's commit.
     onKeyDown: e => {
+      if (e.target.closest("input, textarea")) return;
       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect?.(); }
     },
   };
@@ -150,8 +154,20 @@ function TabBar({
   // Drag to reorder (#40): projects along the bar ("projects", keyed by
   // group), and a group chip's members in its dropdown (see TabGroupChip).
   const reorder = window.useDragReorder(onReorder);
+  // Scroll the selected tab into view: picking a tab off-screen (keyboard,
+  // minimap, sidebar) must not leave it hidden behind the bar's overflow.
+  // Found by `[aria-selected="true"]` on the bar root, so a plain tab, a
+  // group chip holding it and the Settings app tab all match — the bar
+  // re-renders on every activeId change before the effect runs.
+  // `block/inline: "nearest"` only ever nudges, so a tab already in view
+  // (the common case) never moves.
+  const barRef = React.useRef(null);
+  React.useEffect(() => {
+    barRef.current?.querySelector('[role="tab"][aria-selected="true"]')
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeId, settings?.active]);
   return (
-    <div className="tabs" role="tablist" aria-label="projects" onPointerDown={reorder.onPointerDown}>
+    <div ref={barRef} className="tabs" role="tablist" aria-label="projects" onPointerDown={reorder.onPointerDown}>
       <button className={`tab-add ${sidebarOpen ? "on" : ""}`}
         title={`project sidebar (${hintFor("desktop.sidebar.toggle", "Ctrl+B")})`}
         aria-pressed={!!sidebarOpen}
@@ -172,6 +188,7 @@ function TabBar({
               onNewInProject={onNewInProject}
               onRename={onRename}
               reorder={reorder}
+              terminalDirty={terminalDirty}
             />
           );
         }

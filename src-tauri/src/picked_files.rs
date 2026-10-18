@@ -41,21 +41,22 @@ pub struct DroppedFile {
 /// too, so refusing non-files is a guard, not a feature.
 pub fn read(path: String) -> Result<DroppedFile, String> {
     let path = std::path::PathBuf::from(path);
-    let meta = fs::metadata(&path)
-        .map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let meta =
+        fs::metadata(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
     if !meta.is_file() {
         return Err(format!("not a file: {}", path.display()));
     }
     if meta.len() > MAX_DROPPED_FILE_BYTES {
         return Err(format!("file too large: {}", path.display()));
     }
-    let bytes =
-        fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    let bytes = fs::read(&path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
     let name = path
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    Ok(DroppedFile { name, data: STANDARD.encode(bytes) })
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    Ok(DroppedFile {
+        name,
+        data: STANDARD.encode(bytes),
+    })
 }
 
 /// Paths of the files/folders a file manager has on the clipboard, or an
@@ -80,7 +81,11 @@ pub fn copy_background(config_dir: &Path, src: &Path) -> Result<String, String> 
     fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     for entry in fs::read_dir(&dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))? {
         let entry = entry.map_err(|e| format!("cannot read entry: {e}"))?;
-        if entry.file_name().to_string_lossy().starts_with("background.") {
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("background.")
+        {
             let _ = fs::remove_file(entry.path());
         }
     }
@@ -112,7 +117,7 @@ mod imp {
             let handle = GetClipboardData(CF_HDROP);
             if !handle.is_null() {
                 // For CF_HDROP the returned handle *is* the HDROP; no lock.
-                let hdrop = handle as _;
+                let hdrop = handle.cast();
                 let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, std::ptr::null_mut(), 0);
                 for i in 0..count {
                     let len = DragQueryFileW(hdrop, i, std::ptr::null_mut(), 0);
@@ -162,8 +167,7 @@ mod tests {
 
     #[test]
     fn read_file_bytes_refuses_a_directory() {
-        let err = read(std::env::temp_dir().to_string_lossy().into_owned())
-            .unwrap_err();
+        let err = read(std::env::temp_dir().to_string_lossy().into_owned()).unwrap_err();
         assert!(err.contains("not a file"), "unexpected error: {err}");
     }
 

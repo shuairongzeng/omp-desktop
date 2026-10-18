@@ -99,56 +99,78 @@ struct StartSessionArgs {
 /// approval-mode restart) keeps its shell. The approval mode is resolved here
 /// for the tab's folder, never sent by the frontend; `Ok` is the mode omp was
 /// started with (`"always-ask" | "write" | "yolo"`).
+///
+/// Runs `async` + `spawn_blocking`, following [`close_tab`]'s shape: the
+/// PATH walk for omp, a first-run `omp --version`, the browser overlay's
+/// socket bind and the omp `CreateProcess` itself all block, and running
+/// them on the IPC thread froze the whole webview for their duration.
 #[tauri::command]
-fn start_session(
-    args: StartSessionArgs,
-    bridge: State<'_, AgentBridge>,
-    rule_book: State<'_, Arc<RuleBook>>,
-    store: State<'_, Arc<profiles::ProfileStore>>,
-    widget_host: State<'_, Arc<widgets::WidgetHost>>,
-    terminal: State<'_, Arc<terminal::TerminalManager>>,
+async fn start_session(
+    mut args: StartSessionArgs,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let profile = store.resolve(args.profile.as_deref())?;
-    if let Some(r) = args.resume.as_deref() {
-        saved_sessions::validate_resume(&app, r, profile)?;
-    }
-    let cwd_opt = if args.cwd.is_empty() {
-        None
-    } else {
-        Some(args.cwd.as_str())
-    };
-    // Through `app` rather than an eighth `State` parameter (clippy's
-    // `too_many_arguments`); `app` is moved into the bridge below.
-    let mode = app
-        .state::<Arc<ApprovalModeStore>>()
-        .resolve(cwd_opt.map(Path::new));
-    terminal.register_tab(&args.session_id, cwd_opt.map(Path::new));
-    // The tab's browser (idempotent: a respawn under the same tab id reuses
-    // it). Which Chromium it runs is Rust's `browser.json` setting, read at
-    // launch time. Only an app run with no managed browsers at all starts omp
-    // without `--config`; a tab whose browser can't be set up (a respawn
-    // racing the tab's close: "still closing") fails to start, and the
-    // frontend's rollback closes it.
-    let overlay = app
-        .state::<browser::BrowserManager>()
-        .allocate_if_available(&args.session_id)
-        .map_err(|e| format!("browser: {e}"))?;
-    bridge.start_session(
-        // Owned by the bridge's map; the widget hook below still needs the id.
-        args.session_id.clone(),
-        agent::Launch {
-            cwd: cwd_opt,
-            resume: args.resume.as_deref(),
-            profile,
-            mode,
-            config: overlay.as_deref(),
-        },
-        app,
-        Arc::clone(rule_book.inner()),
-    )?;
-    widget_host.session_started(&args.session_id, cwd_opt.map(Path::new));
-    Ok(mode.as_str().to_string())
+    // Resolved before the off-thread block so a fast rejection (unknown
+    // profile) needs no thread hop — it reads only the in-memory cache.
+    // The `resume` validation stays inside the block: it canonicalises
+    // paths on disk.
+    let profile = app
+        .state::<Arc<profiles::ProfileStore>>()
+        .resolve_owned(args.profile.take())?;
+    off_ipc(move || {
+        let StartSessionArgs {
+            session_id,
+            cwd,
+            resume,
+            profile: _,
+        } = args;
+        if let Some(r) = resume.as_deref() {
+            saved_sessions::validate_resume(&app, r, profile.as_deref())?;
+        }
+        let cwd_opt = if cwd.is_empty() {
+            None
+        } else {
+            Some(cwd.as_str())
+        };
+        // Every state below is resolved through `app` rather than `State`
+        // parameters: `State<'_, T>` borrows cannot cross into the
+        // `'static` blocking closure, and this command already needed the
+        // `app`-state route for `ApprovalModeStore` and `BrowserManager`
+        // before it went async.
+        let mode = app
+            .state::<Arc<ApprovalModeStore>>()
+            .resolve(cwd_opt.map(Path::new));
+        app.state::<Arc<terminal::TerminalManager>>()
+            .register_tab(&session_id, cwd_opt.map(Path::new));
+        // The tab's browser (idempotent: a respawn under the same tab id reuses
+        // it). Which Chromium it runs is Rust's `browser.json` setting, read at
+        // launch time. Only an app run with no managed browsers at all starts omp
+        // without `--config`; a tab whose browser can't be set up (a respawn
+        // racing the tab's close: "still closing") fails to start, and the
+        // frontend's rollback closes it. Inner errors are already browser-
+        // specific ("browser of session … is still closing", "browser proxy: …"),
+        // so no outer prefix is added here.
+        let overlay = app
+            .state::<browser::BrowserManager>()
+            .allocate_if_available(&session_id)?;
+        let rule_book = Arc::clone(app.state::<Arc<RuleBook>>().inner());
+        app.state::<AgentBridge>().start_session(
+            // Owned by the bridge's map; the widget hook below still needs the id.
+            session_id.clone(),
+            agent::Launch {
+                cwd: cwd_opt,
+                resume: resume.as_deref(),
+                profile: profile.as_deref(),
+                mode,
+                config: overlay.as_deref(),
+            },
+            app.clone(),
+            rule_book,
+        )?;
+        app.state::<Arc<widgets::WidgetHost>>()
+            .session_started(&session_id, cwd_opt.map(Path::new));
+        Ok(mode.as_str().to_string())
+    })
+    .await?
 }
 
 /// Run blocking `work` (file or process I/O, a long scan) off Tauri's IPC
@@ -340,7 +362,12 @@ async fn pick_background_image(
         .file()
         .set_title("Choose a Background Image")
         .set_parent(&window)
-        .add_filter("Images", &["png", "jpg", "jpeg", "jfif", "webp", "gif", "bmp", "avif", "svg"])
+        .add_filter(
+            "Images",
+            &[
+                "png", "jpg", "jpeg", "jfif", "webp", "gif", "bmp", "avif", "svg",
+            ],
+        )
         .pick_file(move |result| {
             let _ = tx.send(result);
         });

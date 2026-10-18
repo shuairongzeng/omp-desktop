@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Round-2 regression pass: the rail's ✕/sparkline/minimap-highlight props are wired again, the browser panel keeps its flex width, tab rename accepts spaces, widget dismissal re-arms on fingerprint change, and the activity radar's time axis matches its labels
+- Escape now closes the topmost overlay (shared stack), the history modal's Enter no longer swallows its buttons, and hidden Settings stops acting on keys — a turn end can no longer send an invisible composer draft
+- Paste/drop path insertion no longer clobbers keystrokes typed mid-IPC or leaks into another tab; eval cards auto-scroll the growing cell and reset on settle; search result rows lose their UA button chrome
+- `start_session` no longer freezes the window (moved off the IPC thread), a widget finishing at its deadline is no longer misreported as timed out, a malformed `widget-approvals.json` surfaces as a rail error card, and an unreadable `profiles.json` retries once before degrading
+
 ### Added
 
 - A trash button floats at the prompt box's top right while the draft has text, clearing it in one click (attachments are untouched — they keep their own per-chip remove).

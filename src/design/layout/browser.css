@@ -191,6 +191,14 @@
 .stage.browser-full > :not(.browser-dock) { display: none; }
 .browser-dock { position: relative; display: flex; min-width: 0; min-height: 0;
   transition: width 140ms var(--ease-out), opacity 140ms var(--ease-out); }
+/* The panel takes the dock's width (the dock is the stage column; without
+   this the panel collapses to its content's width, leaving the dock's
+   remaining space dead). */
+.browser-dock > .browser-panel { flex: 1; }
+/* While the edge is dragged the width is rewritten every move: the resize
+   transition would trail the pointer, so it is off until the drag ends
+   (the handle carries `.dragging`, ui/resize-handle.jsx). */
+.browser-dock:has(.pane-resize.dragging) { transition: none; }
 
 /* ── Composer: annotation chips ────────────────────────────────────── */
 /* `.paste-chip` / `.paste-chip-label` (composer.css) plus these deltas:

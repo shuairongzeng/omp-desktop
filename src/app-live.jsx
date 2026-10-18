@@ -30,7 +30,7 @@ const {
 } = window;
 const { routeSubmit: _routeSubmit } = window.OMP_SLASH;
 const { mergeIntoMessage: _mergeBrowserChips, browserCommand: _browserCommand, MIN_WIDTH: _AL_BROWSER_MIN } = window.OMP_BROWSER;
-const { recentRows, groupKey, moveGroup, moveMember, shiftGroup } = window.OMP_PROJECT_NAV;
+const { recentRows, groupKey, moveGroup, moveMember, shiftGroup, basename: _AL_basename } = window.OMP_PROJECT_NAV;
 const {
   entryOf, updateEntry, pruneEntries, seedEntries,
   PLAN_IDLE, togglePlan, enterPlan, approvePlan, annotatePlan, markPlanSent,
@@ -217,14 +217,20 @@ function App() {
   // usage-stats panel's header label, instead of a second copy.
   const activeProfileId    = activeProject.id ? activeProject.profile : noTabProfileId;
 // #10: the window title follows the active tab, with a run marker while a
-// turn is live; no tab (and unmount) restores the plain app name.
+// turn is live; no tab (and unmount) restores the plain app name. The
+// folder comes from the tab's path (`OMP_PROJECT_NAV.basename`, the same
+// segment the tab bar shows) and only when it is not already the name — a
+// fresh tab is named after its folder, and "omp-desktop · omp-desktop"
+// says nothing.
 React.useEffect(() => {
   const prev = document.title;
+  const folder = activeProject.path ? _AL_basename(activeProject.path) : "";
+  const withFolder = folder && folder !== activeProject.name ? `${activeProject.name} · ${folder}` : activeProject.name;
   document.title = activeProject.id
-    ? `${streaming ? "● " : ""}${activeProject.name} — OMP Desktop`
+    ? `${streaming ? "● " : ""}${withFolder} — OMP Desktop`
     : "OMP Desktop";
   return () => { document.title = prev; };
-}, [activeProject.id, activeProject.name, streaming]);
+}, [activeProject.id, activeProject.name, activeProject.path, streaming]);
   const activeProfileLabel = profiles.find(p => p.id === activeProfileId)?.name ?? activeProfileId;
   // Status-bar approvals cell: the mode the rendered tab's omp runs, or
   // `running ⇢ target` while a change waits for its turn to end. Read
@@ -1046,13 +1052,16 @@ React.useEffect(() => {
                 <AmbientRail
                   ctx={liveCtx}
                   activity={activity}
+                  sparklineValues={sparkline}
                   subagents={subagentList}
                   subagentPaneOpen={showSplit}
                   onOpenSubagent={subagentUi.open}
                   onToggleSubagentPane={subagentUi.togglePane}
                   onOpenTree={() => setSide("tree")}
+                  onClose={toggleRail}
                   messages={messages}
                   microcopy={data.microcopy}
+                  hoveredMsgIdx={hoveredMsgIdx}
                   onMinimapHover={setHoveredMsgIdx}
                   onMinimapClick={handleMinimapClick}
                   trimmedCount={trimmedCount}

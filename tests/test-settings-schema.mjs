@@ -3,13 +3,16 @@
 // rows (#37): every tweak row names a real TWEAK_DEFAULTS key, bounds come
 // from the owning modules, search over label/desc/keywords, the
 // collapse-after row's visibility, theme-aware modified checks, badge
-// counts and section resets.
+// counts and section resets. Also design/settings/controls.jsx's search
+// mark: the highlighting follows the search's tokenised AND.
 // Run: node tests/test-settings-schema.mjs
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const win = {};
@@ -211,6 +214,85 @@ check("the key bindings row is found by any shortcut action's name or id", () =>
   for (const q of [sidebar.label, sidebar.id]) {
     assert.ok(S.search(q, vals()).groups.some(g => g.rows.some(r => r.id === "custom:shortcuts")), q);
   }
+});
+
+// ---- design/settings/controls.jsx: the mark follows the tokenised AND --
+// SettingsMark is compiled as index.html's Babel does (test-goal.mjs's
+// pattern) with a React.createElement stand-in, so the tree is inspected
+// structurally: flattened into { text, mark } pieces.
+const Babel = createRequire(import.meta.url)(join(root, "src/babel.min.js"));
+const { code } = Babel.transform(
+  readFileSync(join(root, "src/design/settings/controls.jsx"), "utf8"),
+  { presets: ["react"] });
+const cwin = {};
+// eslint-disable-next-line no-new-func
+new Function("window", "React", `${code}
+window.__exports = { SettingsMark };`)(cwin, { createElement: (type, props, ...children) => ({ type, props, children }) });
+
+/** A SettingsMark tree as ordered { text, mark } pieces. */
+function markPieces(text, query) {
+  const flat = (n) => {
+    if (typeof n === "string" || typeof n === "number") return [{ text: String(n), mark: false }];
+    if (Array.isArray(n)) return n.flatMap(flat);
+    if (n && typeof n === "object" && n.type === "mark") return [{ text: flat(n.children).map(p => p.text).join(""), mark: true }];
+    if (n && typeof n === "object" && n.type) return flat(n.children);
+    return [];
+  };
+  return flat(cwin.__exports.SettingsMark({ text, query }));
+}
+
+check("SettingsMark highlights each token independently, like the search's AND", () => {
+  // search("font mono") matches rows whose label/desc carry both tokens
+  // separately; the mark must light up each token where it lives, not the
+  // whole "font mono" string verbatim (which never appears).
+  const out = markPieces("Monospace font", "font mono");
+  assert.deepEqual(out.filter(p => p.mark).map(p => p.text), ["Mono", "font"], "both tokens marked");
+  assert.equal(out.filter(p => !p.mark).map(p => p.text).join(""), "space ", "the rest stays plain");
+  // Token order in the query does not matter.
+  const rev = markPieces("Monospace font", "mono font");
+  assert.equal(rev.filter(p => p.mark).length, 2);
+});
+
+check("SettingsMark still marks a single-token query, case-insensitive", () => {
+  assert.deepEqual(markPieces("Font size", "FONT").filter(p => p.mark).map(p => p.text), ["Font"]);
+});
+
+check("SettingsMark marks every occurrence, and escapes regex characters", () => {
+  assert.equal(markPieces("data data", "data").filter(p => p.mark).length, 2);
+  assert.deepEqual(markPieces("a.b*c (x)", "b*c (").filter(p => p.mark).map(p => p.text), ["b*c", "("]);
+});
+
+check("the page's arrow guard skips only arrow-owning groups, not every switch", () => {
+  // ←/→ must stay alive on a switch (no arrow keynav) and on the approvals
+  // mode seg (a radiogroup without keynav): the guard's selector is the
+  // keynav groups' own marker, not role=switch/radio at large.
+  // Source-text pins, the test-theme-effects.mjs way.
+  const page = readFileSync(join(root, "src/design/settings/page.jsx"), "utf8");
+  const controls = readFileSync(join(root, "src/design/settings/controls.jsx"), "utf8");
+  const guard = page.match(/_SP_RADIO = "(.*?)"/)?.[1];
+  assert.ok(guard, "the guard selector is defined");
+  assert.ok(guard.includes("[data-st-arrows]"), "the guard skips the keynav groups");
+  assert.ok(!guard.includes("[role='switch']"), "a switch is not skipped");
+  // Every group that runs _ST_radioKeyNav carries the marker.
+  const groups = controls.split("\n").filter(l => l.includes("_ST_radioKeyNav}"));
+  assert.ok(groups.length >= 3, "the three keynav groups render");
+  for (const line of groups) assert.ok(line.includes("data-st-arrows"), `group missing the marker: ${line.trim()}`);
+});
+
+check("the row's flash cannot restart the mount animation", () => {
+  // The flash swaps animation-name on the row, so the mount animation must
+  // ride a one-shot class (st-fresh) dropped on its own animationend —
+  // otherwise removing .flash re-matches the mount rule and replays it.
+  const css = readFileSync(join(root, "src/design/layout/settings.css"), "utf8");
+  assert.ok(css.includes(".st-row.st-fresh"), "mount animation is pinned to st-fresh");
+  assert.ok(!/^\.st-row \{ animation: st-row-in/m.test(css), "no bare .st-row mount rule left to re-match");
+  const controls = readFileSync(join(root, "src/design/settings/controls.jsx"), "utf8");
+  assert.ok(controls.includes("st-row-in\") setFresh(false)"), "st-fresh is dropped on the entrance's animationend");
+  assert.ok(controls.includes("st-flash\") setFlash(false)"), "the flash still clears on its own animationend");
+});
+check("SettingsMark leaves text alone with no query", () => {
+  assert.deepEqual(markPieces("Font size", ""), [{ text: "Font size", mark: false }]);
+  assert.deepEqual(markPieces("Font size", null), [{ text: "Font size", mark: false }]);
 });
 
 console.log(`test-settings-schema: ${passed} checks passed`);

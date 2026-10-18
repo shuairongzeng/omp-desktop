@@ -322,6 +322,11 @@
   padding: 5px 8px;
   border-radius: 6px;
   font-family: var(--font-mono); font-size: var(--d-text-sm);
+  /* Previewable rows are <button> (tool-card.jsx); strip the UA's
+     buttonface background, border, and centering so they render
+     identically to the plain <div> rows next to them. */
+  appearance: none; border: 0; background: transparent;
+  width: 100%; text-align: left; color: inherit; font: inherit;
 }
 .search-row.hot { background: color-mix(in oklab, var(--accent) 6%, transparent); }
 .search-row:hover { background: var(--bg-hover); }

@@ -54,28 +54,70 @@ function ApprovalRulesPanel({ onClose, activeProject, sessions, approvalModes })
     await bridge?.revokeApprovalRule(rule.tool, rule.scope);
     await refresh();
   };
+  // Take focus on open (so Tab walks the panel's buttons, not whatever sits
+  // underneath) and hand it back on close (ui/use-modal-focus.js). The panel
+  // opens over the Settings page from "Manage rules": without the grab,
+  // focus stays on that covered page and its keys keep acting behind the
+  // scrim — the same reason the key guard below had to grow.
+  const panelRef = React.useRef(null);
+  window.useModalFocus(panelRef);
 
   // Capture phase on `window`, not the panel's own onKeyDown: focus can sit
   // in the mode section's buttons while the panel is open, and Escape must
   // close the panel instead of reaching the global keymap's `app.interrupt`
   // (app-live.jsx's guard skips abort while this overlay is open, so the
   // key would otherwise do nothing). Same pattern as update-modal.jsx.
-  // Ctrl/Alt/Meta chords pass through as global shortcuts.
+  // Opened from Settings, the page underneath keeps listening too (its
+  // listener only bails on `[data-st-esc]`, which this panel is not), so
+  // unmodified keys are swallowed here before they reach it: ←/→ would
+  // switch its sections, Ctrl+F would pull focus into its covered search.
+  // Ctrl/Alt/Meta chords pass through as global shortcuts — except Ctrl+F,
+  // whose only meaning under this scrim is the Settings search.
+  // Escape closes through the shared stack (app/use-esc-close.js); the
+  // guard below handles every other key.
+  window.useEscClose(onClose);
   React.useEffect(() => {
     const onKey = e => {
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
-      if (e.key !== "Escape") return;
-      e.preventDefault();
+      if (e.key === "Escape") return; // the shared Esc stack closes us
+      if (e.ctrlKey || e.altKey || e.metaKey) {
+        // Ctrl+F's only meaning under this scrim is the covered Settings
+        // search — swallow it; other chords stay global shortcuts.
+        if (!e.shiftKey && e.key.toLowerCase() === "f") {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        return;
+      }
+      // Every unmodified key belongs to the panel: stopping propagation
+      // leaves native Tab/Enter/Space on its buttons intact. One aimed
+      // outside — the composer refocuses itself when a turn ends, and a
+      // revoke can unmount the focused button — is also default-prevented
+      // (no typing into, no Enter-sending, the hidden composer) and focus
+      // pulled back in. Same shape as update-modal.jsx.
       e.stopPropagation();
-      onClose();
+      if (!panelRef.current?.contains(e.target)) {
+        e.preventDefault();
+        panelRef.current?.focus();
+      }
     };
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      // useModalFocus (mounted above this effect) has already restored
+      // focus by this cleanup's turn. If it went back to the Settings
+      // control that opened the panel while the Settings tab itself was
+      // left (Ctrl+Tab to a project tab with the panel open), that element
+      // is now under a hidden page: blur it, or its keys keep acting
+      // invisibly — the same hole page.jsx closes when it deactivates.
+      const el = document.activeElement;
+      if (el instanceof Element && el.closest(".st-host[hidden]")) el.blur();
+    };
   }, [onClose]);
 
   return (
     <div className="bridge-scrim" onClick={onClose} style={{ paddingTop: "10vh" }}>
-      <div className="rules-panel" onClick={e => e.stopPropagation()}>
+      <div className="rules-panel" ref={panelRef} tabIndex={-1} style={{ outline: "none" }}
+        onClick={e => e.stopPropagation()}>
         <div className="rules-head">
           <_RulesIcon name="check" size={13} color="var(--accent)" />
           <span className="mono" style={{ color: "var(--fg-2)" }}>approvals</span>

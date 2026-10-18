@@ -249,12 +249,25 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   // Restore focus when the agent finishes streaming and the textarea
   // re-enables — unless the user is typing somewhere else by then (an
   // inline tab rename, #32, commits on blur; the ⌘K input): taking focus
-  // from it would commit a half-typed name or drop the keystrokes.
+  // from it would commit a half-typed name or drop the keystrokes. The
+  // Settings page needs the same bail: it covers this composer, and its
+  // controls are buttons, not typing targets — focus jumping here
+  // mid-Settings-use leaves Enter to invisibly send. The host carries the
+  // `hidden` attribute exactly while a project tab covers it, so it is the
+  // "Settings is showing" test — and it also covers focus on the body
+  // (a click on the page's background blurs to it) and on an overlay
+  // opened from the page (the approvals panel), which sit outside it.
   React.useEffect(() => {
     if (isStreaming) return;
     requestAnimationFrame(() => {
       const el = document.activeElement;
       if (el && window.OMP_KEYMAP?.isTypingTarget(el)) return;
+      const host = document.querySelector(".st-host");
+      if (host && !host.hidden) return;
+      // An open overlay (approvals, updates, history…) owns focus while it
+      // shows: taking it from under a scrim hides keystrokes behind it.
+      if (document.querySelector(".bridge-scrim")) return;
+      if (el?.closest?.(".st-host, .settings")) return;
       taRef.current?.focus();
     });
   }, [isStreaming]);
@@ -453,6 +466,16 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     const timer = setTimeout(() => setDroppedNotice(null), _CMP_NOTICE_MS);
     return () => clearTimeout(timer);
   }, [droppedNotice]);
+  // The notice chip is tab-scoped, like the strip it rides on (the composer
+  // stays mounted across tab switches): a switch away and back must not
+  // resurrect the previous tab's "N images were dropped" — it describes
+  // that tab's paste, not this one's. Cleared on any sessionId change.
+  const noticeSessionRef = React.useRef(sessionId);
+  React.useEffect(() => {
+    if (noticeSessionRef.current === sessionId) return;
+    noticeSessionRef.current = sessionId;
+    setDroppedNotice(null);
+  }, [sessionId]);
   const notifyDropped = (count) => {
     if (count > 0) setDroppedNotice({ key: ++noticeCounterRef.current, text: `${count} image${count === 1 ? "" : "s"} over the ${MAX_ATTACHMENTS}-image cap were dropped` });
   };
@@ -500,12 +523,42 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
 
   // Insert OS file/folder paths as draft text at the caret (OMP_DROPPED's
   // quoting and padding), for the agent to read with its own tools.
-  const insertPaths = (paths) => {
+  // `insertPaths` runs asynchronously (a paste resolves `copied_file_paths`
+  // over IPC; a drop reads image bytes first), so it must not trust this
+  // render's `text` or the textarea's *current* selection: the caret is
+  // captured synchronously by the caller (paste time / drop time, before
+  // any await), the splice is computed against the tab's *latest* draft
+  // entry inside the functional update, and focus is only restored when
+  // the session is still the one the insert was started in — a tab switch
+  // mid-flight must neither splice into the new tab nor steal its focus.
+  // Mirrors how addFiles guards via target/updateOpenDraft.
+  const insertPaths = (paths, sel = null) => {
+    const target = sessionId;
     const ta = taRef.current;
-    const start = ta ? ta.selectionStart : text.length;
-    const end   = ta ? ta.selectionEnd   : text.length;
-    const r = pathsInsertText(text, start, end, paths);
-    if (r) spliceDraft(r.range, r.insert);
+    const start = sel?.start ?? (ta ? ta.selectionStart : null);
+    const end   = sel?.end   ?? (ta ? ta.selectionEnd   : null);
+    if (start === null || end === null) return;
+    let nextCaret = null;
+    let applied = false;
+    setDrafts(m => updateDraftEntry(m, target, DRAFT_IDLE, d => {
+      const r = pathsInsertText(d.text, start, end, paths);
+      if (!r) return d;
+      const a = applyMention(d.text, r.range, r.insert);
+      nextCaret = a.caret;
+      applied = true;
+      return { ...d, text: a.text, historyNav: null };
+    }));
+    if (!applied) return;
+    // Same-tab caret placement + focus as spliceDraft; guarded so an
+    // insert that raced a tab switch leaves the new tab alone.
+    if (sessionIdRef.current === target) {
+      requestAnimationFrame(() => {
+        const el = taRef.current;
+        if (!el) return;
+        el.selectionStart = el.selectionEnd = nextCaret;
+        el.focus();
+      });
+    }
   };
 
   // A drop delivered by Tauri (`dragDropEnabled`): `paths` carries files
@@ -515,6 +568,12 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   // folder named like an image, a file gone between drag and drop) falls
   // back to inserting its path.
   const onTauriDrop = async (paths) => {
+    // The caret at drop time, captured before the first await: the image
+    // reads below are IPC round-trips during which the user may type or
+    // switch tabs, so the eventual text insert must anchor where the caret
+    // *was*, not wherever the (possibly unfocused) textarea reports later.
+    const ta0 = taRef.current;
+    const sel = ta0 ? { start: ta0.selectionStart, end: ta0.selectionEnd } : null;
     const { images, others } = splitDroppedPaths(paths);
     const files = [];
     const failed = [];
@@ -530,8 +589,10 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     }
     if (files.length) await addFiles(files);
     const asText = [...others, ...failed];
-    if (asText.length) insertPaths(asText);
-    taRef.current?.focus();
+    // insertPaths guards the focus/restore itself (same-session check);
+    // the unconditional focus below was what stole focus across a tab
+    // switch mid-flight, so it's gone.
+    if (asText.length) insertPaths(asText, sel);
   };
 
   // The drop event is window-global, so the highlight and the drop both
@@ -619,8 +680,15 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     if (window.__TAURI__ && carriesFiles(e.clipboardData)) {
       e.preventDefault();
       const copied = imageFilesFromTransfer(e.clipboardData);
+      // The caret at paste time, snapshotted before the `copied_file_paths`
+      // IPC: keystrokes typed while that resolves (or a tab switch) must
+      // not move where the paths land — the DOM selection by then is not
+      // the one the user pasted at, and insertPaths applies against the
+      // *latest* draft entry inside its functional update.
+      const ta0 = taRef.current;
+      const sel = ta0 ? { start: ta0.selectionStart, end: ta0.selectionEnd } : null;
       window.__TAURI__.core.invoke("copied_file_paths").then((paths) => {
-        if (paths?.length > 0) insertPaths(paths);
+        if (paths?.length > 0) insertPaths(paths, sel);
         else if (copied.length > 0) addFiles(copied);
         else imageFilesFromClipboardAsync().then((files) => { if (files.length > 0) addFiles(files); });
       }).catch((err) => {
@@ -738,7 +806,12 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   const fillHints = (s) => {
     if (typeof s !== "string" || !s.includes("{")) return s;
     return s
-      .replace(/\{abort\}/g, abortHint ? `${abortHint} ` : "")
+      // An unbound abort drops its whole clause ("Press … to interrupt — ")
+      // rather than leaving a keyless "Press  to interrupt —", so the rest
+      // ("your cursor is in the room") still reads as a sentence. The
+      // clause spans up to and including the "—" separator after it.
+      .replace(/^Press \{abort\} to interrupt —\s*/i, abortHint ? `Press ${abortHint} to interrupt — ` : "")
+      .replace(/\{abort\}/g, abortHint ? abortHint : "")
       .replace(/\{bridge\}/g, bridgeHint ? ` · ${bridgeHint} opens the bridge` : "")
       .replace(/\s+/g, " ").trim().replace(/[·—]\s*$/, "").trim();
   };
@@ -998,7 +1071,26 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
   // resetting to 0 also means ↑ always starts from the top row.
   React.useEffect(() => { setActiveIdx(0); }, [q, view]);
 
+  // Escape is the shared Escape stack's business (app/use-esc-close.js):
+  // exactly one window listener dispatches it to the topmost *active*
+  // overlay, so the bridge closes only when nothing renders above it, and
+  // the drill-in views still fall back one level before closing. The
+  // stack's listener also prevents the key, so the global keymap's
+  // `app.interrupt` never aborts a turn underneath.
+  window.useEscClose(() => {
+    if (view === "models") { if (initialView === "models") onClose(); else { setView("commands"); setQ(""); } }
+    else if (view === "login") { if (initialView === "login") onClose(); else { setView("commands"); setQ(""); } }
+    else onClose();
+  }, open);
 
+  // Take focus on open and hand it back on close (ui/use-modal-focus.js),
+  // so closing the bridge returns focus to the composer (or whatever had
+  // it — the status bar's cell, a chat link) instead of dropping it to
+  // <body>, where the next Tab restarts from the top of the document.
+  // The panel itself is not a focus target (the filter input takes focus
+  // on open, below) — the ref only anchors the restore.
+  const panelRef = React.useRef(null);
+  window.useModalFocus(panelRef, open);
   React.useEffect(() => {
     if (!open || view !== "models") return undefined;
     let live = true;
@@ -1007,17 +1099,6 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
     });
     return () => { live = false; };
   }, [open, view, profileId]);
-
-  React.useEffect(() => {
-    const onKey = (e) => {
-      if (e.key !== "Escape" || !open) return;
-      if (view === "models") { if (initialView === "models") onClose(); else { setView("commands"); setQ(""); } }
-      else if (view === "login") { if (initialView === "login") onClose(); else { setView("commands"); setQ(""); } }
-      else onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose, view]);
 
   // ── Keyboard navigation plumbing (all three views) ────────────────
   // ↑↓ move the active row, ↵ fires it, and the active row scrolls into
@@ -1065,7 +1146,12 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
     // any model that already appeared in recents skipped (the button keys
     // are `${group}:…`, so a model can appear in both groups only when
     // pickRecentModels already deduped it — verify with the row keys).
-    const flatRows = [...recentHits, ...modelHits.filter((m) => !recentHits.includes(m))];
+    // `restHits` — the full list minus anything already in `recentHits`, so
+    // the 'all models' group below can render it without repeating the
+    // recents (each model must own exactly one row id and one kb-active
+    // glow; flatRows and `rowIdx` assume exactly that).
+    const restHits = modelHits.filter((m) => !recentHits.includes(m));
+    const flatRows = [...recentHits, ...restHits];
     const clampedIdx = Math.min(activeIdx, flatRows.length - 1);
     const enterModel = (m) => { if (m) { onPickModel(m); onClose(); } };
     const inputKeyNav = makeInputKeyNav(flatRows.length, (i) => enterModel(flatRows[i]));
@@ -1090,7 +1176,7 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
     };
     return (
       <div className="bridge-scrim" onClick={onClose}>
-        <div className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
+        <div ref={panelRef} tabIndex={-1} className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
           <div className="bridge-input-row">
             <button className="btn icon ghost" title="back" aria-label="back to commands"
               onClick={() => { setView("commands"); setQ(""); }}
@@ -1125,7 +1211,7 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
                   refresh
                 </button>
               </div>
-              {modelHits.map((m) => modelRow(m, "all"))}
+              {restHits.map((m) => modelRow(m, "all"))}
               {modelHits.length === 0 && <div className="bridge-empty">no models found</div>}
             </div>
           </div>
@@ -1144,7 +1230,7 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
     const clampedIdx = Math.min(activeIdx, providers.length - 1);
     return (
       <div className="bridge-scrim" onClick={onClose}>
-        <div className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
+        <div ref={panelRef} tabIndex={-1} className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
           <div className="bridge-input-row">
             <button className="btn icon ghost" title="back" aria-label="back to commands"
               onClick={() => { setView("commands"); setQ(""); }}
@@ -1218,7 +1304,7 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
 
   return (
     <div className="bridge-scrim" onClick={onClose}>
-      <div className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
+      <div ref={panelRef} tabIndex={-1} className="bridge slide-in" onClick={(e) => e.stopPropagation()}>
         <div className="bridge-input-row">
           <Icon name="command" size={14} color="var(--accent)" />
           <input ref={inputRef} className="bridge-input mono"

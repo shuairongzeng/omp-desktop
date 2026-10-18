@@ -97,6 +97,14 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
     el?.scrollIntoView({ block: "nearest" });
   }, [clampedIdx]);
 
+  // Escape closes through the shared Escape stack (app/use-esc-close.js):
+  // exactly one window listener dispatches a bare Escape to the topmost
+  // *active* overlay, so this modal stays open while something renders
+  // above it (the command bridge, an update banner) and closes only when
+  // it is itself the topmost. The stack's listener also prevents the key,
+  // so the global keymap's `app.interrupt` never aborts a turn underneath.
+  window.useEscClose(onClose, open);
+
   // Keyboard navigation + the focus guard, capture phase on `window` (not
   // the panel's own onKeyDown, not bubble): the composer refocuses itself
   // when a turn ends, and focus can then sit outside the modal while it is
@@ -105,24 +113,31 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
   // update-modal.jsx: every unmodified key belongs to the modal and never
   // reaches the global keymap; a key aimed outside is cancelled and focus
   // pulled back. Ctrl/Alt/Meta chords pass through as global shortcuts.
+  // Escape itself is the stack's business (above), so it is left to the
+  // stack listener; Enter on a button (chips, Refresh, try-again, a row's
+  // Resume) stays the button's own click — only an Enter aimed at nothing
+  // in particular resumes the active row.
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
       e.stopPropagation();
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      } else if (e.key === "ArrowDown") {
+      if (e.key === "ArrowDown") {
         e.preventDefault();
         setActiveIdx(i => Math.min(i + 1, filtered.length - 1));
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setActiveIdx(i => Math.max(i - 1, 0));
       } else if (e.key === "Enter") {
-        // Swallowed unconditionally (see prompt-history-modal.jsx): Enter
-        // can never reach the composer's send while the modal is open,
-        // whether or not there's a session under the cursor.
+        // A button owns its Enter (the browser fires its click): chips,
+        // Refresh, try-again, per-row Resume. Not guarding this is the
+        // #round-1 bug — the preventDefault below killed the button and
+        // resumed `filtered[clampedIdx]` instead.
+        if (e.target?.closest?.("button")) return;
+        // Otherwise swallowed unconditionally (see
+        // prompt-history-modal.jsx): Enter can never reach the composer's
+        // send while the modal is open, whether or not there's a session
+        // under the cursor.
         e.preventDefault();
         if (filtered[clampedIdx]) {
           onResume?.(filtered[clampedIdx]);
