@@ -746,7 +746,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
         <button className="btn icon ghost" title="dictate">
           <Icon name="voice" size={13} />
         </button>
-        <div className="composer-input">
+        <div className={`composer-input${text.length > 0 ? " has-clear" : ""}`}>
           <textarea
             ref={taRef}
             rows="1"
@@ -770,6 +770,13 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
             aria-controls={showMention ? "mention-menu" : undefined}
             aria-activedescendant={showMention ? `mention-row-${mentionActiveIdx}` : undefined}
           />
+          {text.length > 0 && (
+            <button type="button" className="composer-clear" title="clear input"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => { setText(""); setCaret(0); setActiveIdx(0); requestAnimationFrame(() => taRef.current?.focus()); }}>
+              <Icon name="trash" size={11} />
+            </button>
+          )}
         </div>
         <button className="btn outlined" title={bridgeHint ? `open command bridge (${bridgeHint})` : "open command bridge"} onClick={onOpenCmd}>
           <Icon name="command" size={11} />

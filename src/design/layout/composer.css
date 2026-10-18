@@ -94,7 +94,21 @@
   transition: border-color 160ms;
 }
 .composer-row:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.composer-input { flex: 1; padding: 4px 4px 4px 4px; }
+.composer-input { flex: 1; padding: 4px 4px 4px 4px; position: relative; }
+/* Clear-the-draft trash, floating at the input's top right; only rendered
+   while the draft is non-empty (.has-clear widens the textarea's right
+   padding so a long first line never runs under it). */
+.composer-input.has-clear textarea { padding-right: 30px; }
+.composer-clear {
+  position: absolute; top: 7px; right: 7px;
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px;
+  border: none; border-radius: var(--r-sm, 6px);
+  background: transparent; color: var(--fg-3);
+  cursor: pointer; opacity: 0.7;
+  transition: opacity 0.12s var(--ease-out), color 0.12s var(--ease-out);
+}
+.composer-clear:hover { opacity: 1; color: var(--rose); }
 .composer-input textarea {
   width: 100%;
   min-height: 22px; max-height: 180px;
