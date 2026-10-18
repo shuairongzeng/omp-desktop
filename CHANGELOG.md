@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Streaming replies no longer flicker**: the streaming bubble's React key (`_id`) was re-stamped on every delta once `notify()` became rAF-coalesced — the stamp was deferred past the first `message_update`, whose spread-replacement dropped the unstamped id, so the row remounted every frame and its `fade-up` entrance animation never finished (the ghosted, flashing text). The bubble is now stamped at creation, and both replacement sites carry the replaced entry's id as a backstop (verified live: 0 remounts, single stable id, opacity trace flat at 1)
 - The image lightbox's private `useModalLayer` copy clobbered the shared module and left the whole app inert from startup; the lightbox now uses the shared one (verified: root is interactive at boot, bridge open/close toggles inert correctly)
 - Custom accent colors now derive a readable `--accent-fg` (near-black/near-white by luminance), so the primary button and HEAD chip stay legible with any swatch in any theme; midnight's primary button idle/hover pairing fixed
 - `test-a11y` and `test-dead-process` are now actually in the `npm test` chain

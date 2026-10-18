@@ -2607,7 +2607,14 @@
           }
         }
       } else if (role === "assistant") {
+        // `_id` is stamped at creation, not left to the next flush: notify()
+        // is rAF-coalesced, so a message_update that lands before the first
+        // flush would replace the array entry with a spread of this bubble —
+        // and a bubble without a stamp gets re-stamped every frame, which
+        // changes the row's React key and replays its fade-up animation
+        // (the streaming flicker).
         streamingBubble = {
+          _id: ++_msgSeq,
           kind: "assistant", time, ts,
           thought: null, lead: null,
           blocks: [{ type: "text", text: "" }],
@@ -2647,6 +2654,10 @@
       const uidx = state.messages.findLastIndex(m => m.streaming === true);
       if (uidx !== -1) {
         const msgs = [...state.messages];
+        // Backstop: if the bubble somehow missed its creation stamp, keep
+        // the id the replaced entry already carries — a fresh one per frame
+        // would change the row's React key and replay its fade-up animation.
+        updated._id ??= msgs[uidx]._id;
         msgs[uidx] = updated;
         state.messages = msgs;
       } else {
@@ -2694,6 +2705,7 @@
         const eidx = state.messages.findLastIndex(m => m.streaming === true);
         if (eidx !== -1) {
           const msgs = [...state.messages];
+          completed._id ??= msgs[eidx]._id; // same key-preservation backstop
           msgs[eidx] = completed;
           state.messages = msgs;
         } else {
