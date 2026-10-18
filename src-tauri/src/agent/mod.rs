@@ -274,13 +274,19 @@ impl AgentBridge {
         self.clear_error(&session_id);
 
         // Shared by both readers: stderr collects the reason, stdout decides
-        // (at EOF) whether the child ever got far enough for that reason to
-        // be the better explanation than a clean exit.
+        // (at EOF, after joining stderr) what explains the child's end — a
+        // startup banner on its own, or the exit status plus those last
+        // words for a mid-session death.
         let stderr_tail = Arc::new(Mutex::new(reader::StderrTail::new()));
+        // Spawned first so its JoinHandle can travel with the config: the
+        // stdout reader joins it at EOF, guaranteeing the tail it reads is
+        // complete (the stderr thread's `lines()` ends at the child's stderr
+        // EOF, so join returning means every line is pushed).
+        let stderr_reader =
+            spawn_stderr_reader(session_id.clone(), stderr, Arc::clone(&stderr_tail));
         spawn_stdout_reader(reader::StdoutReaderConfig {
             sessions: Arc::clone(&self.sessions),
-            // Last clone: `spawn_stderr_reader` takes the original by value.
-            sid: session_id.clone(),
+            sid: session_id,
             gen,
             journal,
             ext_ui,
@@ -291,10 +297,10 @@ impl AgentBridge {
             app,
             stdout,
             alive,
-            stderr_tail: Arc::clone(&stderr_tail),
+            stderr_tail,
+            stderr_reader,
             last_errors: Arc::clone(&self.last_errors),
         });
-        spawn_stderr_reader(session_id, stderr, stderr_tail);
         Ok(())
     }
 

@@ -130,14 +130,24 @@
    *  - `horizonId`: while the user reads history, the `_id` of the last
    *    message shown when they scrolled away; blocks after it do not age
    *    older ones, so nothing collapses under the reader. Null when the
-   *    view follows the latest message, or when that message is gone.
+   *    view follows the latest message. The message can leave the
+   *    transcript later (a retry row removed on recovery, a stale
+   *    streaming bubble dropped); the reader is still in history, so
+   *    aging freezes — nothing counts as newer — rather than the tail
+   *    becoming the horizon and folding the text being read.
    *  - `hidden(msg)`: messages the chat does not render. */
   function collapseStates(messages, { thinking = "auto", tool = "auto", after, overrides = NO_OVERRIDES, horizonId = null, hidden = () => false } = {}) {
     const wait = clampAfter(after);
     let horizon = messages.length - 1;
     if (horizonId != null) {
       const at = messages.findIndex(m => m._id === horizonId);
-      if (at !== -1) horizon = at;
+      // A horizon that left the transcript must not fall back to the tail:
+      // the reader is still in history, and the blocks that arrived meanwhile
+      // would then age — and fold — the text being read. Freeze aging instead
+      // (nothing counts as newer; what aging had already collapsed may
+      // reopen, the safe direction). Aging resumes once the view re-pins and
+      // passes horizonId null.
+      horizon = at === -1 ? -1 : at;
     }
     const out = {};
     let newer = 0;

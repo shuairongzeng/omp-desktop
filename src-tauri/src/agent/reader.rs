@@ -195,13 +195,19 @@ pub(super) struct StdoutReaderConfig {
     /// superseded/reaped incarnation's reader goes mute without ever
     /// taking `sessions`.
     pub(super) alive: Arc<AtomicBool>,
-    /// Shared with this session's stderr reader. Read only when the child
-    /// exits without ever having produced a stdout frame, to turn a
-    /// silent-looking clean exit into the reason omp actually printed.
+    /// Shared with this session's stderr reader. Read at exit (after
+    /// joining that thread) to turn a silent-looking death into the
+    /// reason omp actually printed — a startup banner, or the crash's
+    /// last words appended to the exit status.
     pub(super) stderr_tail: Arc<Mutex<StderrTail>>,
-    /// The bridge's `last_errors` map. A startup death is recorded here as
-    /// well as emitted, because the `agent://exit` event only reaches the
-    /// tab that happens to be listening: a background tab's failure is
+    /// The stderr reader thread's handle, joined at stdout EOF so the
+    /// tail read below it sees every line the child ever wrote (its
+    /// `lines()` iterator ends at the child's stderr EOF).
+    pub(super) stderr_reader: std::thread::JoinHandle<()>,
+    /// The bridge's `last_errors` map. A startup death — or, now, a
+    /// mid-session non-zero/signal exit — is recorded here as well as
+    /// emitted, because the `agent://exit` event only reaches the tab
+    /// that happens to be listening: a background tab's failure is
     /// otherwise invisible until `session_status` is asked, which is
     /// exactly what a later tab switch does.
     pub(super) last_errors: Arc<Mutex<HashMap<String, String>>>,
@@ -216,6 +222,47 @@ pub(super) struct StdoutReaderConfig {
 /// per-stdout-line hot path, which must not contend with a global lock.
 fn should_emit(alive: &AtomicBool) -> bool {
     alive.load(Ordering::Acquire)
+}
+
+/// Decide the `agent://exit` reason after the stdout loop ended at EOF:
+/// join the stderr reader, read its (now complete) tail, wait on the child
+/// handle if this incarnation still owns it, and synthesize the reason via
+/// [`child_exit_reason`]. Extracted from `spawn_stdout_reader`'s thread
+/// body so both halves stay under the line budget the too-many-lines lint
+/// enforces.
+fn decide_exit_reason(
+    sessions: &Arc<Mutex<HashMap<String, BridgeInner>>>,
+    sid: &str,
+    gen: u64,
+    stderr_reader: std::thread::JoinHandle<()>,
+    stderr_tail: &Arc<Mutex<StderrTail>>,
+    saw_frame: bool,
+) -> String {
+    // Join first (P2): the stderr thread's `lines()` iterator ends only at
+    // the child's stderr EOF, so its return means every line it will ever
+    // push is pushed. Reading the tail before this join raced the thread
+    // and could report a partial banner — or miss the only lines that
+    // explained the death.
+    let _ = stderr_reader.join();
+    let tail = stderr_tail.lock().ok().and_then(|t| t.to_reason());
+    // Take the child handle *before* the decide/emit critical section in
+    // the caller: a superseding `start_session` or a racing `stop_session`
+    // that wins the `sessions` lock first takes the handle for its own
+    // reaper, and a `wait` here would be a second concurrent wait on one
+    // `Child` (its handle is not synchronized). Losing the handle means
+    // losing the *observation*, not the exit: the winner's reaper owns
+    // the process end now. The take is gated on our generation so a
+    // fresher incarnation's handle is never mistaken for ours.
+    let status = sessions
+        .lock()
+        .ok()
+        .and_then(|mut s| {
+            s.get_mut(sid)
+                .filter(|inner| inner.gen == gen)
+                .and_then(|inner| inner.child.take())
+        })
+        .and_then(|mut child| child.wait().ok());
+    child_exit_reason(status.as_ref(), tail, saw_frame)
 }
 
 pub(super) fn spawn_stdout_reader(config: StdoutReaderConfig) {
@@ -233,6 +280,7 @@ pub(super) fn spawn_stdout_reader(config: StdoutReaderConfig) {
         stdout,
         alive,
         stderr_tail,
+        stderr_reader,
         last_errors,
     } = config;
     thread::spawn(move || {
@@ -322,16 +370,20 @@ pub(super) fn spawn_stdout_reader(config: StdoutReaderConfig) {
             }
         }
 
-        // A child that died during startup (no frame, non-error EOF) would
-        // otherwise report the empty payload the contract defines as a clean
-        // exit, leaving a blank tab with no explanation anywhere in the UI.
-        // omp's own reason is on stderr: `--mode rpc-ui` refuses to start
-        // when the profile has no usable model, which is exactly what a
-        // freshly created (credential-less) profile looks like.
-        if exit_reason.is_empty() && !saw_frame {
-            if let Some(reason) = stderr_tail.lock().ok().and_then(|t| t.to_reason()) {
-                exit_reason = reason;
-            }
+        // The pipes are all at EOF now (stdout by the loop above, stderr by
+        // the join inside), so `wait` reaps an already-dead process and never
+        // blocks on a live one — the *only* theoretically unbounded wait is
+        // a child that closed its stdout while keep running, which an RPC
+        // process doesn't do.
+        //
+        // The exit reason is non-empty for: a read error (set in the loop),
+        // a startup death (the stderr banner), or — the case this used to
+        // miss entirely — a mid-session non-zero/signal exit, which before
+        // this emitted the empty payload the contract defines as *clean*,
+        // stranding the tab with a silent "process exited" ghost.
+        if exit_reason.is_empty() {
+            exit_reason =
+                decide_exit_reason(&sessions, &sid, gen, stderr_reader, &stderr_tail, saw_frame);
         }
         // Process exited. Decide whether to announce inside the same
         // critical section that gives up our map entry — deciding it
@@ -391,7 +443,9 @@ pub(super) fn spawn_stdout_reader(config: StdoutReaderConfig) {
 /// with nothing to report, emits the empty payload the event contract
 /// defines as a *clean* exit, and the tab sits blank with the real reason
 /// visible only on the desktop's own stderr — see
-/// [`StdoutReaderConfig::stderr_tail`].
+/// [`StdoutReaderConfig::stderr_tail`]. Post-startup, the same tail backs a
+/// mid-session death's reason (see [`child_exit_reason`]): a crash usually
+/// says why on stderr right before the pipe ends.
 pub(super) struct StderrTail {
     lines: VecDeque<String>,
     bytes: usize,
@@ -441,7 +495,91 @@ impl StderrTail {
     }
 }
 
-pub(super) fn spawn_stderr_reader(sid: String, stderr: ChildStderr, tail: Arc<Mutex<StderrTail>>) {
+/// Synthesize the `agent://exit` payload's reason for a child we watched to
+/// EOF (or a read error): empty when the exit is clean, non-empty otherwise.
+/// The empty/non-empty split *is* the event contract (see the `AgentBridge`
+/// doc-comment), so every branch here must decide it, not assume it.
+///
+/// - `status` — `Some` only while this reader still owns the child: the
+///   entry's handle is taken under the `sessions` lock in the *same*
+///   critical section that decides `announce` (see `spawn_stdout_reader`);
+///   a superseding `start_session` or a racing `stop_session` that wins the
+///   lock first sees the handle already `take`n, and an exit we cannot
+///   observe stays `None` rather than racing the reaper thread's
+///   `kill`/`wait` on the same handle.
+/// - `stderr` — the joined stderr reader's retained lines (its `lines()`
+///   iterator ends at the child's stderr EOF, so the tail is complete).
+/// - `saw_frame` — a startup death is *best* explained by its banner alone:
+///   omp's refusal exits non-zero, and "No models available." beats
+///   "process exited with code 1". Mid-session, the code/signal is the
+///   headline and the tail is appended as the "last words" hint.
+fn child_exit_reason(
+    status: Option<&std::process::ExitStatus>,
+    stderr: Option<String>,
+    saw_frame: bool,
+) -> String {
+    let clean_or_unseen = || {
+        if saw_frame {
+            String::new()
+        } else {
+            stderr.clone().unwrap_or_default()
+        }
+    };
+    let status = match status {
+        Some(st) if !st.success() => st,
+        // Clean per the OS, or unobservable: a startup death still gets
+        // its banner, but post-startup must stay clean rather than guess —
+        // the frontend's own dead-process fallback covers the gap.
+        Some(_) | None => return clean_or_unseen(),
+    };
+    let cause = if saw_frame {
+        // `code` is `None` for a Unix signal death (9 = SIGKILL from a
+        // tree kill); Windows populates it. `signal()` names the Unix
+        // signal explicitly so the reason says how it died.
+        #[cfg(unix)]
+        if let Some(sig) = status.signal() {
+            return with_stderr_tail(format!("process killed by signal {sig}"), stderr);
+        }
+        status
+            .code()
+            .map_or_else(|| "process exited abnormally".to_string(), format_exit_code)
+    } else {
+        // Startup death: the banner is the whole reason — appending an
+        // exit code to omp's refusal would only clutter the
+        // login-instructions note the frontend renders for that banner.
+        // A *silent* one (no banner at all) still gets a reason from the
+        // status, so the empty clean-exit payload can never hide it.
+        return match stderr {
+            Some(t) if !t.is_empty() => t,
+            _ => status
+                .code()
+                .map_or_else(|| "process exited abnormally".to_string(), format_exit_code),
+        };
+    };
+    with_stderr_tail(cause, stderr)
+}
+
+/// "process exited with code N" — the one spelling shared by the two
+/// `ExitStatus::code` fall-back sites in [`child_exit_reason`].
+fn format_exit_code(code: i32) -> String {
+    format!("process exited with code {code}")
+}
+
+/// The cause plus, when the child actually said something, its last words
+/// in parentheses. A blank tail adds nothing ("code 1 ()"-style noise) and
+/// is skipped.
+fn with_stderr_tail(cause: String, stderr: Option<String>) -> String {
+    match stderr {
+        Some(t) if !t.is_empty() => format!("{cause} ({t})"),
+        _ => cause,
+    }
+}
+
+pub(super) fn spawn_stderr_reader(
+    sid: String,
+    stderr: ChildStderr,
+    tail: Arc<Mutex<StderrTail>>,
+) -> std::thread::JoinHandle<()> {
     thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines().map_while(Result::ok) {
@@ -450,7 +588,7 @@ pub(super) fn spawn_stderr_reader(sid: String, stderr: ChildStderr, tail: Arc<Mu
                 t.push(line);
             }
         }
-    });
+    })
 }
 
 /// `BufRead::read_until` with a hard byte cap. Once the cap is reached
@@ -947,5 +1085,103 @@ mod tests {
         let reason = tail.to_reason().expect("the oversized line must survive");
         assert!(!reason.contains("superseded"));
         assert!(reason.starts_with('z'));
+    }
+
+    // ── exit-reason synthesis (`child_exit_reason`) ─────────────────────────
+
+    /// An exited-normally status, as `wait` would report it.
+    #[cfg(unix)]
+    fn exited(code: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        // The wait status's low 7 bits say "exited normally"; the code
+        // lives in the bits above them.
+        std::process::ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    fn exited(code: u32) -> std::process::ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(code)
+    }
+
+    /// A signalled status (SIGKILL's 9), as a tree kill would report it.
+    #[cfg(unix)]
+    fn signalled() -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(9)
+    }
+
+    #[test]
+    fn nonzero_exit_mid_session_yields_a_nonempty_reason() {
+        // The P1 core: a mid-session death (frames were seen) must not
+        // announce the empty payload the contract reads as a clean exit.
+        let reason = child_exit_reason(Some(&exited(1)), None, true);
+        assert_ne!(reason, "");
+        assert!(reason.contains("code 1"), "got: {reason}");
+    }
+
+    #[test]
+    fn clean_exit_mid_session_stays_the_empty_clean_payload() {
+        // Even with stderr chatter: a code-0 exit after startup is clean.
+        let reason = child_exit_reason(
+            Some(&exited(0)),
+            Some("benign stderr warnings".to_string()),
+            true,
+        );
+        assert_eq!(reason, "");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn signal_death_mid_session_names_the_signal() {
+        let reason = child_exit_reason(Some(&signalled()), None, true);
+        assert!(reason.contains("signal 9"), "got: {reason}");
+    }
+
+    #[test]
+    fn abnormal_mid_session_exit_appends_the_stderr_tail() {
+        let reason = child_exit_reason(
+            Some(&exited(3)),
+            Some("Error: connect ECONNREFUSED".to_string()),
+            true,
+        );
+        assert!(reason.contains("code 3"), "got: {reason}");
+        assert!(reason.contains("ECONNREFUSED"), "got: {reason}");
+    }
+
+    #[test]
+    fn startup_death_prefers_the_stderr_banner() {
+        // Existing behavior kept: omp's refusal banner alone explains a
+        // startup death better than an exit code would.
+        let reason = child_exit_reason(
+            Some(&exited(1)),
+            Some("No models available.".to_string()),
+            false,
+        );
+        assert_eq!(reason, "No models available.");
+    }
+
+    #[test]
+    fn silent_startup_death_falls_back_to_the_exit_code() {
+        // No banner at all: the status is the only thing left to say.
+        let reason = child_exit_reason(Some(&exited(2)), None, false);
+        assert!(reason.contains("code 2"), "got: {reason}");
+    }
+
+    #[test]
+    fn clean_startup_exit_without_stderr_stays_empty() {
+        assert_eq!(child_exit_reason(Some(&exited(0)), None, false), "");
+    }
+
+    #[test]
+    fn an_unobservable_exit_keeps_the_clean_and_banner_shapes() {
+        // No status at all (the child handle was taken by a superseding
+        // incarnation, or `wait` failed): a startup death still gets its
+        // banner, a mid-session end stays clean rather than guessing.
+        assert_eq!(
+            child_exit_reason(None, Some("banner".to_string()), false),
+            "banner"
+        );
+        assert_eq!(child_exit_reason(None, Some("noise".to_string()), true), "");
     }
 }

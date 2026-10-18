@@ -588,6 +588,30 @@
     })];
   }
 
+  // A `prompt` omp refused (sent with no id, so the failure is
+  // uncorrelated — see `_handleResponse`). `_sendPrompt` already pushed
+  // the user bubble optimistically, and omp never echoes a refused prompt
+  // (`message_start`), so nothing but this will ever tie or remove it:
+  // drop the trailing unmatched ts-less user bubble and file the refusal
+  // as a note that carries the original text — the queue's failureNote
+  // shape (OMP_QUEUE), with the copy button its fence carries.
+  function _noteRefusedPrompt(error) {
+    // Find the bubble `_sendPrompt` pushed for this prompt: the newest
+    // user message with no `ts` (a refused prompt gets no `message_start`
+    // echo, so nothing will ever tie it) and no echo tag (a steer's /
+    // follow-up's echo). Frames of the busy turn that refused it can land
+    // after the push, so the bubble is not necessarily the tail.
+    let idx = -1;
+    for (let i = state.messages.length - 1; i >= 0; i--) {
+      const m = state.messages[i];
+      if (m.kind === "user" && m.ts == null && !m.echo) { idx = i; break; }
+    }
+    const text = idx === -1 ? null : state.messages[idx].text;
+    if (idx !== -1) state.messages = state.messages.filter((_, i) => i !== idx);
+    _pushAssistantNote(QUEUE.failureNote("prompt", error, text));
+    notify();
+  }
+
   // A finished assistant bubble the desktop builds itself, with `fields` on top.
   function _assistantBubble(fields) {
     return {
@@ -740,7 +764,34 @@
     state.messages = TURN.retryCleared(state.messages);
     // Its extensions died with it; the backend's copy ended with the entry.
     state.extWidgets = EXT.EMPTY;
+    // The rest of the settlement: a run cut off by the process's death
+    // never gets its turn_end / message_end / tool_execution_end frames,
+    // and without this the tab would sit "running" (isStreaming drives the
+    // run state) with a ghost streaming bubble and ticking tool cards
+    // forever. `??=` keeps the reason the exit listener already wrote —
+    // its own set stays a harmless duplicate.
+    state.isStreaming = false;
+    state.exitReason ??= "process exited";
+    streamingBubble = null;
+    state.messages = state.messages.filter(m => !m.streaming);
+    _sweepRunningToolCards();
+    state.messages = TURN.abandonPendingCompaction(state.messages);
   }
+
+  // Settle tool cards whose `tool_execution_end` never arrived: the run
+  // was aborted, the process died, or the frame fell out of the replay
+  // journal. Pure shape work lives in TURN.settleInterrupted
+  // (app/turn-status.js); this owns the index bookkeeping — `activeToolCards`
+  // keeps the interrupted card's entry so a late `tool_execution_end`
+  // (replayed after the sweep) still finalizes it with the real result.
+  function _sweepRunningToolCards() {
+    const next = TURN.settleInterrupted(state.messages);
+    if (next !== state.messages) {
+      state.messages = next;
+      notify();
+    }
+  }
+
 
   // Reset all per-session volatile state (called before loading a new session)
   function _resetSessionVars() {
@@ -951,7 +1002,11 @@
       console.warn(`[live] session '${id}' omp process exited${reason ? ": " + reason : ""}`);
       state.isStreaming = false;
       state.exitReason = reason || null;
+      // _endDeadProcessState settles the rest (a `??=` keeps this reason).
       if (reason) {
+        // The reader caches the same reason in `last_errors`; registering
+        // here keeps `session_status` from re-noting it on reactivation.
+        _notedStartupErrors.add(id);
         _pushAssistantNote(_exitNote(reason, sessionRegistry.get(id)?.profile));
       }
       _endDeadProcessState();
@@ -1945,9 +2000,35 @@
       // id, so this uncorrelated response is the release point.
       _releaseAutoRenameAfterAbort();
       userAbortInFlight = false;
+      // The run omp just cut off: tools it stopped get no
+      // tool_execution_end, and a card would tick "running" forever.
+      // turn_end / agent_end sweep too (a turn that ended between the
+      // abort click and this response); this one owns the run that was
+      // aborted while tools were still in flight.
+      const beforeAbort = state.messages;
+      _sweepRunningToolCards();
+      if (state.messages !== beforeAbort) notify();
       return;
     }
-    if (!resp.success) return;
+    // A failed RPC no caller is waiting on (the command was sent without an
+    // id): `prompt` and `set_model` both surface below; everything else is at
+    // least named in the console, where before it vanished — the sender
+    // optimistically updated the UI and nothing ever reconciled it.
+    if (!resp.success) {
+      if (resp.id) return; // timed-out caller owns its own reconciliation
+      const err = String(resp.error ?? `command '${resp.command}' failed`);
+      console.warn(`[live] uncorrelated '${resp.command}' failed:`, err);
+      if (resp.command === "prompt") {
+        _noteRefusedPrompt(err);
+      } else if (resp.command === "set_model") {
+        // The model picker updated optimistically (handlePickModel writes
+        // state before this RPC); the refusal note is the correction the
+        // user sees, and a later get_state restores the true entry.
+        _pushAssistantNote(`**Model change failed:** ${err}`);
+        notify();
+      }
+      return;
+    }
     const { command, data } = resp;
 
     if (command === "get_state") {
@@ -1972,11 +2053,15 @@
       // activeToolCards indices are rebuilt so in-flight
       // tool_execution_update events keep landing on the right array slot.
       const merged = mergeTranscript(state.messages, completed, { trimmed: state.trimmed });
-      // Rebuild activeToolCards — merged entries may have moved
+      // Rebuild activeToolCards — merged entries may have moved. A card
+      // the sweep interrupted stays tracked too: its tool_execution_end can
+      // still arrive in this tab's replay (the sweep's comment explains
+      // why late finalization must win), and without the entry the frame
+      // would drop.
       activeToolCards = new Map();
       for (let i = 0; i < merged.length; i++) {
         const m = merged[i];
-        if (m.kind === "tool" && m.status === "running" && m._toolCallId) {
+        if (m.kind === "tool" && (m.status === "running" || m.status === "interrupted") && m._toolCallId) {
           activeToolCards.set(m._toolCallId, i);
         }
       }
@@ -2336,6 +2421,11 @@
     if (type === "turn_end") {
       state.isStreaming = false;
       streamingBubble = null;
+      // A run that ends here may have left tool cards running: omp sends
+      // no `tool_execution_end` for a tool an abort cut off, and a card
+      // would otherwise tick "running" forever. Its `activeToolCards`
+      // entry stays, so a late end frame (a replay) still finalizes it.
+      _sweepRunningToolCards();
       const usage = ev.message?.usage;
       if (turnStartTime) {
         const elapsed   = (now - turnStartTime) / 1000;
@@ -2653,6 +2743,11 @@
           state.messages = TURN.retryYielded(before, last ?? null, tsOf(last));
           const failure = TURN.failureOf(last);
           if (failure) _showFailure(() => failure, tsOf(last));
+          // The yield is the run's last chance for a tool_execution_end to
+          // arrive: cards still running here (an abort mid-tool, frames
+          // lost) settle now, or tick forever. turn_end already sweeps;
+          // agent_end covers a run whose turn_end never came.
+          _sweepRunningToolCards();
           if (failure || state.messages !== before) notify();
         }
       }
@@ -3271,7 +3366,19 @@
     // The bubble shows at once; omp's echo (`message_start`) ties it to the
     // persisted message. A command omp runs locally sends no echo, so its
     // bubble keeps no `ts` and the get_messages merge leaves it in place.
-    send(text, images) { _sendPrompt(text, images); },
+    // The composer's routeSubmit normally sends steers itself while a turn
+    // runs, but a submit can still land while omp is busy (a turn starting
+    // between the last render and the click, or a backgrounded tab's stale
+    // `streaming` read): the app-live handler routes via "prompt" then, and
+    // a bare `prompt` is what omp refuses (`session_busy`) — its id-less
+    // failure is surfaced by `_handleResponse` → `_noteRefusedPrompt`.
+    // Routing through `steer` here closes the gap at the source: the send
+    // rides the queue like the composer's own steers, with its sending row
+    // and refusal note.
+    send(text, images) {
+      if (state.isStreaming) this.steer(text, images);
+      else _sendPrompt(text, images);
+    },
     // No id on purpose: a pending-id match returns before the command
     // switch, and the abort response is what releases a cancelled
     // auto-rename. See `_releaseAutoRenameAfterAbort`.

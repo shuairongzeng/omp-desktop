@@ -82,12 +82,14 @@
     return [queued, current].filter(t => t.trim()).join("\n\n");
   }
 
-  /** Transcript note for a steer or follow-up omp refused. The message is
-   *  gone from the composer, so the note carries it in a code block (which
-   *  has a copy button) that its own text cannot close
+  /** Transcript note for a message omp refused. The message is gone from
+   *  the composer, so the note carries it in a code block (which has a
+   *  copy button) that its own text cannot close
    *  (app/marked-setup.js `fenceCode`). */
   function failureNote(kind, error, text) {
-    const what = kind === "steering" ? "Steer" : "Follow-up";
+    const what = kind === "steering" ? "Steer"
+               : kind === "followUp" ? "Follow-up"
+               : "Prompt";
     const head = `**${what} not sent:** ${error}`;
     return text ? `${head}\n\n${window.OMP_MARKDOWN.fenceCode(text)}` : head;
   }

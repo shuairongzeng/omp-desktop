@@ -22,25 +22,17 @@ const GitBrowser = React.memo(function GitBrowser({ bridge, onClose, initialPath
     return () => { restore?.focus?.(); };
   }, []);
 
-  // Escape closes the browser, unless something already handled the key or
-  // a modal stacked above it holds the focus: those all render in a
-  // `.bridge-scrim` (the command bridge, the approvals/stats/update panels,
-  // z-index 100 over this overlay's 90). Focus elsewhere does not count —
-  // the composer refocuses its textarea under the scrim when a turn ends.
-  // On document, bubble phase: after the dialog's own handlers, before the
-  // window keymap (use-keymap.jsx), which prevents Escape for
-  // `app.interrupt` and skips an already prevented one, so no turn aborts.
-  React.useEffect(() => {
-    const onKey = e => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
-      const focus = document.activeElement;
-      if (focus && !rootRef.current?.contains(focus) && focus.closest(".bridge-scrim")) return;
-      e.preventDefault();
-      onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Escape closes through the shared Escape stack (app/use-esc-close.js):
+  // exactly one window listener dispatches a bare Escape to the topmost
+  // *active* overlay, so this browser (z-90) stays open while something
+  // renders above it (the command bridge, a bridge-scrim panel, z-100) and
+  // closes only when it is itself the topmost — the private listener this
+  // replaces approximated that with a focus-in-a-bridge-scrim probe, which
+  // mis-guessed whenever focus sat elsewhere (the composer refocuses its
+  // textarea when a turn ends). The stack's listener also prevents the key,
+  // so the global keymap's `app.interrupt` (use-keymap.jsx) never aborts a
+  // turn underneath.
+  window.useEscClose(onClose);
 
   // The scrim closes on a click that both starts and ends on it, never on a
   // drag-select that merely ends there.

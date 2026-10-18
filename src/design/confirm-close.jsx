@@ -23,21 +23,28 @@ function ConfirmCloseDialog({ confirm, onAnswer }) {
   // "keep" takes focus; it goes back where it was on close.
   window.useModalFocus(keepRef);
 
+  // Escape keeps everything (the same answer as the scrim click) through
+  // the shared Escape stack (app/use-esc-close.js): exactly one window
+  // listener dispatches a bare Escape to the topmost *active* overlay —
+  // the private branch this replaces saw the key even under another
+  // scrim and answered a dialog buried below it. The stack's listener
+  // also prevents the key, so the global keymap's `app.interrupt` never
+  // aborts a turn underneath.
+  window.useEscClose(() => onAnswer(false));
+
   // Capture-phase guard: while the dialog is open no key reaches the
   // composer or the window keymap (Ctrl+W behind it would close a tab).
-  // Escape keeps everything, Tab cycles the dialog's buttons, Enter/Space
-  // press the focused one; every other key does nothing, and a key aimed
-  // outside pulls focus back in.
+  // Tab cycles the dialog's buttons, Enter/Space press the focused one;
+  // every other key does nothing, and a key aimed outside pulls focus
+  // back in. Escape is the stack's business (above): the guard only
+  // contains it, so something opened over this dialog doesn't also
+  // answer it.
   React.useEffect(() => {
     const onKey = e => {
       e.stopPropagation();
       const panel = panelRef.current;
       const inside = !!panel?.contains(e.target);
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onAnswer(false);
-        return;
-      }
+      if (e.key === "Escape") return; // the shared Esc stack closes us
       if (e.key === "Tab") {
         e.preventDefault();
         const buttons = [...(panel?.querySelectorAll("button") ?? [])];

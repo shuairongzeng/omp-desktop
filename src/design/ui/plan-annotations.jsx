@@ -32,6 +32,10 @@ const CommentForm = ({ block, initial, onSave, onCancel }) => {
         value={text} placeholder="your comment…"
         onChange={e => setText(e.target.value)}
         onKeyDown={e => {
+          // An active IME composition (CJK candidate window) owns the keys:
+          // its arrows pick candidates, its Escape closes the window —
+          // neither may save nor cancel the comment mid-composition.
+          if (e.nativeEvent?.isComposing ?? e.isComposing) return;
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSave(text.trim()); }
           if (e.key === "Escape") { e.stopPropagation(); onCancel(); }
         }}

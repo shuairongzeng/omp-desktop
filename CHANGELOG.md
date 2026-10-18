@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Deep-interaction pass: a prompt refused by a busy omp now becomes a visible note instead of a ghost bubble (and busy sends route through the queue); a dead omp process settles the tab's run state, streaming bubble and tool cards instead of claiming "running" forever; a mid-session death now reports its real exit reason instead of a "clean exit"
+- Focus traps closed: the terminal and composer no longer grab focus while the Settings page, plan kanban or git browser covers them (typed text could invisibly run/send); IME composition (CJK input) is respected by the composer's popup keys, rename fields and Settings search
+- The plan kanban and prompt-history/confirm-close/git-browser overlays joined the shared Escape stack, and the command bridge renders above same-z overlays
+- The widget rail sleeps while Settings covers it, the browser panel stops decoding screencast frames it can't show, Esc in the browser panel no longer aborts the running turn, and the goal auto-continue switch stays in sync between the strip and Settings
+- The chat collapse horizon no longer folds the text you're reading when its message is removed, and the unread count survives a removed horizon
 - Round-2 regression pass: the rail's ✕/sparkline/minimap-highlight props are wired again, the browser panel keeps its flex width, tab rename accepts spaces, widget dismissal re-arms on fingerprint change, and the activity radar's time axis matches its labels
 - Escape now closes the topmost overlay (shared stack), the history modal's Enter no longer swallows its buttons, and hidden Settings stops acting on keys — a turn end can no longer send an invisible composer draft
 - Paste/drop path insertion no longer clobbers keystrokes typed mid-IPC or leaks into another tab; eval cards auto-scroll the growing cell and reset on settle; search result rows lose their UA button chrome

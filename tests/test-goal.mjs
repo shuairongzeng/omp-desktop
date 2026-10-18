@@ -339,6 +339,17 @@ function goalHook() {
   const slots = [];
   let i = 0;
   const changed = (a, b) => !a || !b || a.length !== b.length || a.some((v, k) => !Object.is(v, b[k]));
+  // The hook re-reads the continuation setting on a
+  // 'goal-continuation-changed' CustomEvent and on window focus: a stub
+  // EventTarget stands in for `window`'s listeners.
+  const listeners = new Map();
+  const fire = (type) => { for (const fn of [...(listeners.get(type) ?? [])]) fn(); };
+  const CustomEvent = class { constructor(type) { this.type = type; } };
+  const eventTarget = {
+    addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); },
+    removeEventListener(type, fn) { listeners.get(type)?.delete(fn); },
+    dispatchEvent: (e) => { fire(e?.type); return true; },
+  };
   const React = {
     createElement: () => null,
     useState(initial) {
@@ -354,7 +365,11 @@ function goalHook() {
     },
   };
   const { code } = Babel.transform(readFileSync(join(root, "src/app/use-goal-mode.jsx"), "utf8"), { presets: ["react"] });
-  const window = { ...win, GoalStrip: () => null, OMP_TURN_STATUS: { isBusyRunState: () => false } };
+  // The continuation hook's listeners and its CustomEvent run on the stub.
+  const window = {
+    ...win, GoalStrip: () => null, OMP_TURN_STATUS: { isBusyRunState: () => false },
+    ...eventTarget, CustomEvent,
+  };
   const useGoalMode = runInNewContext(`${code}\nuseGoalMode`, { window, React });
   return (props) => { i = 0; return useGoalMode(props); };
 }

@@ -317,6 +317,10 @@ function ProfileMenu({
                   // commits an IME candidate, saving a half-typed name as a
                   // permanent, slug-derived id. Same guard as the composer.
                   if (isSubmitEnter(e)) { e.preventDefault(); commit(); }
+                  // The Escape that ends an IME composition belongs to the
+                  // IME, not the form: canceling mid-composition would
+                  // discard the half-typed name. Same guard as the composer.
+                  if (e.nativeEvent?.isComposing ?? e.isComposing) return;
                   if (e.key === "Escape") { e.stopPropagation(); cancelEdit(); }
                 }} />
               <button className="btn icon ghost" title="save" onClick={commit}>

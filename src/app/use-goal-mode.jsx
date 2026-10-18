@@ -28,10 +28,24 @@ const { isBusyRunState: _UG_isBusy } = window.OMP_TURN_STATUS;
  *  switch between tabs of one profile does not run `omp config` again. A
  *  reply for a profile left meanwhile is never shown; omp's reason for a
  *  failed read or write is. */
+// Two surfaces show the setting (the goal strip and Settings → Agent →
+// Goals), each with its own `_UG_useContinuation` state; one never sees
+// the other's write. A module-level version plus this event lets every
+// instance re-read after a successful write from any of them.
+const _UG_CONT_EVENT = "goal-continuation-changed";
+let _UG_contVersion = 0;
+const _UG_contChanged = () => {
+  _UG_contVersion += 1;
+  window.dispatchEvent(new CustomEvent(_UG_CONT_EVENT));
+};
+
 function _UG_useContinuation(bridge, profileId, active) {
   // `forProfile` tags the whole record.
   const [st, setSt] = React.useState({ forProfile: null, value: null, error: null, busy: false });
   const reqRef = React.useRef(0);
+  // Bumped by the other surface's write: the read effect re-runs (deps
+  // include `version`), like a refetch when `active` turns on again.
+  const [version, setVersion] = React.useState(_UG_contVersion);
   React.useEffect(() => {
     if (!active || !bridge || !profileId) return;
     const my = ++reqRef.current;
@@ -44,7 +58,18 @@ function _UG_useContinuation(bridge, profileId, active) {
         busy: false,
       });
     });
-  }, [bridge, profileId, active]);
+  }, [bridge, profileId, active, version]);
+  // The other surface wrote the setting: re-read; the window regaining
+  // focus covers a hand edit of omp's config in between.
+  React.useEffect(() => {
+    const sync = () => setVersion(_UG_contVersion);
+    window.addEventListener(_UG_CONT_EVENT, sync);
+    window.addEventListener("focus", sync);
+    return () => {
+      window.removeEventListener(_UG_CONT_EVENT, sync);
+      window.removeEventListener("focus", sync);
+    };
+  }, []);
   // Only reachable while the value is known for `profileId` (the switch is
   // disabled otherwise), so `forProfile` already names the target.
   const set = async enabled => {
@@ -55,6 +80,7 @@ function _UG_useContinuation(bridge, profileId, active) {
     setSt(s => (res?.ok
       ? { ...s, value: res.value === true, busy: false }
       : { ...s, busy: false, error: res?.error ?? "could not change the setting" }));
+    if (res?.ok) _UG_contChanged();
   };
   const mine = st.forProfile === profileId;
   return { value: mine ? st.value : null, busy: mine && st.busy, error: mine ? st.error : null, set };

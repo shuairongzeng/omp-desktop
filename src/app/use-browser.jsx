@@ -109,6 +109,11 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
     const screen = _UBS.createScreen({
       view, canvas, sink, send,
       ack: (seq) => bridge.browserFrameAck(sid, seq),
+      // The Settings page over the stage hides the panel: drop its frames
+      // (dropped = acked) until it leaves. Read from the DOM per frame:
+      // app-live.jsx's render region is shared, and this is one
+      // querySelector on the way to a JPEG decode it skips.
+      covered: () => Boolean(window.document?.querySelector?.(".st-host:not([hidden])")),
       onResize: (w, h, dpr) => {
         if (opening.pending) pendingSize = { w, h, dpr };
         else bridge.browserResize(sid, w, h, dpr);
@@ -141,8 +146,8 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
       if (on !== latest.current.annotate) showAnnotate(on);
     };
     // Messages of a channel this effect no longer owns (the panel closed or
-    // moved to another tab) are dropped.
-    // A pick's promise settles once its capture did.
+    // moved to another tab) are dropped. A pick's promise settles once its
+    // capture did.
     const onMessage = (m) => {
       if (!live) return undefined;
       if (m instanceof ArrayBuffer) return screen.frame(m);

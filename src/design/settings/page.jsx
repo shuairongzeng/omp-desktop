@@ -188,6 +188,10 @@ function SettingsPage({ ctx }) {
       if (document.querySelector(".bridge-scrim")) return;
       const mod = e.ctrlKey || e.metaKey;
       const claimed = root.querySelector("[data-st-esc]");
+      // The Escape that ends an IME composition (a CJK candidate window
+      // over the search field) belongs to the IME: default-preventing it
+      // here would hold the window open while the query clears beneath it.
+      if (e.nativeEvent?.isComposing ?? e.isComposing) return;
       if (e.key === "Escape") {
         e.preventDefault();
         if (!claimed && query) setQuery("");

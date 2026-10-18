@@ -265,8 +265,12 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
       const host = document.querySelector(".st-host");
       if (host && !host.hidden) return;
       // An open overlay (approvals, updates, history…) owns focus while it
-      // shows: taking it from under a scrim hides keystrokes behind it.
-      if (document.querySelector(".bridge-scrim")) return;
+      // shows: taking it from under a scrim hides keystrokes behind it. The
+      // bottom overlays are named too — the kanban and the git browser sit
+      // under the .bridge-scrim panels in z (90 vs 100) but are equally
+      // wrong to steal from: their panels hold buttons whose Enter/Space a
+      // refocused composer would turn into an invisible send.
+      if (document.querySelector(".bridge-scrim, .kanban-scrim, .gitb-scrim")) return;
       if (el?.closest?.(".st-host, .settings")) return;
       taRef.current?.focus();
     });
@@ -725,6 +729,16 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   };
 
   const onKey = (e) => {
+    // An IME composition (CJK candidate window) owns these keys while it
+    // runs: its arrows pick candidates, its Escape/Tab close or commit the
+    // window. Acting here — navigating the popup, dismissing it — would
+    // both drop the keystrokes and leave the composer's state diverged from
+    // what the IME still thinks it is composing. `isComposing` rides only
+    // the native event (React's SyntheticEvent does not copy it; see
+    // isSubmitEnter in app/constants.js for the proof).
+    if (showMention || showSlash) {
+      if (e.nativeEvent?.isComposing ?? e.isComposing) return;
+    }
     if (showMention) {
       if (e.key === "ArrowDown") { e.preventDefault(); setMentionActiveIdx(i => (i + 1) % mentionItems.length); return; }
       if (e.key === "ArrowUp")   { e.preventDefault(); setMentionActiveIdx(i => (i - 1 + mentionItems.length) % mentionItems.length); return; }

@@ -118,6 +118,26 @@ const JobRow = React.memo(function JobRow({ msg, idx, highlighted }) {
   );
 });
 
+// New blocks since the reader left the bottom, for the "Jump to latest"
+// button's count: everything after the horizon message, visible ones only
+// (the button counts what a jump would actually reveal), and streaming
+// updates keep it growing live. Pure, so the horizon edge is exact.
+function unreadSince(messages, horizonId, hidden = m => window.OMP_TURN_STATUS.isHidden(m)) {
+  if (horizonId == null) return 0;
+  const at = messages.findIndex(m => m._id === horizonId);
+  if (at !== -1) return messages.slice(at + 1).filter(m => !hidden(m)).length;
+  // The horizon message itself left the transcript — a retry row removed on
+  // recovery, a stale streaming bubble dropped — so its slot is gone and a
+  // positional anchor has nothing to hold on to: the blocks that shifted
+  // into the old slot would go uncounted, and the badge would read 0 while
+  // output keeps arriving. `_id`s are stamped monotonically on arrival
+  // (live.js `notify`), and the horizon was the last message when the
+  // reader left the bottom, so a higher `_id` arrived after they scrolled
+  // away: count the visible ones past the horizon's stamp, which no
+  // removal can move.
+  return messages.filter(m => m._id != null && m._id > horizonId && !hidden(m)).length;
+}
+
 // Collapsible blocks (#44, #43): `foldModes` (`{ thinking, tool }`) and
 // `collapseAfter` are the tweaks, `collapseOverrides` this tab's
 // `_id → collapsed` toggles, and `onToggleCollapse(id, collapsed)` flips one
@@ -142,12 +162,7 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
   // New blocks since the reader left the bottom: everything after the
   // horizon message, visible ones only (the button counts what a jump
   // would actually reveal). Streaming updates keep it growing live.
-  const unread = React.useMemo(() => {
-    if (collapseHorizon == null) return 0;
-    const at = messages.findIndex(m => m._id === collapseHorizon);
-    const after = at === -1 ? messages.length : at + 1;
-    return messages.slice(after).filter(m => !window.OMP_TURN_STATUS.isHidden(m)).length;
-  }, [messages, collapseHorizon]);
+  const unread = React.useMemo(() => unreadSince(messages, collapseHorizon), [messages, collapseHorizon]);
 
   const setPinned = (val) => {
     pinnedRef.current = val;
@@ -279,4 +294,4 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
   );
 }
 
-Object.assign(window, { ChatView });
+Object.assign(window, { ChatView, unreadSince });

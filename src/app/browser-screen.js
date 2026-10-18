@@ -1,7 +1,7 @@
 // app/browser-screen.js — DOM side of the browser panel (docs/architecture/browser.md):
 // paints the latest screencast frame on a canvas and
 // forwards the user's pointer, wheel, key, text and paste input to the page.
-//   createScreen({ view, canvas, sink, send, ack, onResize, onPage, escape, onEscape })
+//   createScreen({ view, canvas, sink, send, ack, onResize, onPage, escape, onEscape, covered })
 //     -> { frame(buffer), size(), destroy() }
 // `view` is the wrapper the canvas fills; `sink` a hidden <textarea> inside
 // it that holds keyboard focus for the page, so paste, IME composition and
@@ -10,19 +10,21 @@
 // an `InputEvent` (app/browser.js). `frame(buffer)` takes a frame message
 // of the panel channel (OMP_BROWSER.parseFrame). `ack(seq)` tells Rust a frame was
 // painted or dropped (one frame in flight per view). `onResize(w, h, dpr)`
-// fires 100 ms after the view's CSS size or the display's pixel ratio
 // settled on a new value; `onPage({cssW,cssH})` when the painted frame's
 // CSS size changes. `escape()` is what Esc on the panel does now
 // (OMP_BROWSER.escapeAction, null = the page's key), `onEscape(action)`
-// does it. Chords the app keymap takes leave the page the way they leave
-// the terminal (OMP_KEYMAP.guestShouldBypass). Pure mappings live in app/browser.js;
+// does it. `covered` (optional, a boolean or () => boolean) says the stage
+// is hidden behind something (the Settings page): frames are dropped and
+// acked without decode or paint while it holds. Chords the app keymap
+// takes leave the page the way they leave the terminal
+// (OMP_KEYMAP.guestShouldBypass). Pure mappings live in app/browser.js;
 // DOM scheduling and painting have a minimal-stub regression in
 // tests/test-browser-runtime.mjs.
 (function () {
   const RESIZE_MS = 100;
   const LINE_PX = 16;
 
-  function createScreen({ view, canvas, sink, send, ack, onResize, onPage, escape, onEscape }) {
+  function createScreen({ view, canvas, sink, send, ack, onResize, onPage, escape, onEscape, covered }) {
     const B = window.OMP_BROWSER;
     const ctx = canvas.getContext("2d");
     let dead = false;
@@ -107,9 +109,15 @@
       decoding = false;
     }
 
+    // While the stage is covered (e.g. by the Settings page) nothing the
+    // user could see changes: the frame is dropped right away and acked,
+    // so Chromium's screencast keeps flowing without decode or paint work.
+    // `covered` is optional (a boolean or a () => boolean), off otherwise.
+    const isCovered = () => (typeof covered === "function" ? covered() : Boolean(covered));
     function frame(buffer) {
       const f = B.parseFrame(buffer);
       if (dead || !f) return;
+      if (isCovered()) { done(f); return; }
       last = f;
       done(incoming);
       incoming = f;
@@ -241,12 +249,16 @@
     // never the app keymap's interrupt (which ignores a prevented key).
     // Bound on the panel, so Esc in the composer is not ours. An Esc that
     // dismisses an IME candidate window (composing) is the IME's.
+    // A bare Escape is always swallowed here, even when the panel has no
+    // action for it (`escape() === null`): left to bubble, the keymap would
+    // take it as `app.interrupt` and abort the running turn.
     const panel = view.closest?.(".browser-panel") ?? view;
     const onEsc = (e) => {
-      const action = e.key === "Escape" && !e.isComposing ? escape() : null;
-      if (!action) return;
+      const bare = e.key === "Escape" && !e.isComposing;
+      if (!bare) return;
       e.preventDefault();
-      onEscape(action);
+      const action = escape();
+      if (action) onEscape(action);
     };
 
     const on = [

@@ -33,20 +33,30 @@ function PromptHistoryModal({ open, entries, onClose, onPick }) {
 
   const pick = (text) => { onPick?.(text); onClose(); };
 
+  // Escape closes through the shared Escape stack (app/use-esc-close.js):
+  // exactly one window listener dispatches a bare Escape to the topmost
+  // *active* overlay, so this picker stays open while something renders
+  // above it (the command bridge) and closes only when it is itself the
+  // topmost — the private branch this replaces saw the key even under
+  // another scrim and closed the wrong layer. The stack's listener also
+  // prevents the key, so the global keymap's `app.interrupt` never aborts
+  // a turn underneath.
+  window.useEscClose(onClose, open);
+
   // Capture phase + stopPropagation, not bubble: focus alone (above)
   // isn't a reliable guard once the composer's own streaming-end
   // refocus effect can run while this is still open, so intercept
   // before the event ever reaches the composer's onKeyDown — same
-  // pattern as settings/shortcuts-editor.jsx's chord recorder. Modified keys are
-  // let through untouched so Ctrl+Up still reaches the keymap toggle.
+  // pattern as settings/shortcuts-editor.jsx's chord recorder. Modified keys
+  // are let through untouched so Ctrl+Up still reaches the keymap
+  // toggle. Escape is the stack's business (above): the guard leaves it
+  // alone, so something opened over this picker doesn't also close it.
   React.useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
-      if (e.key === "Escape") {
-        e.preventDefault(); e.stopPropagation();
-        onClose();
-      } else if (e.key === "ArrowDown") {
+      if (e.key === "Escape") return; // the shared Esc stack closes us
+      if (e.key === "ArrowDown") {
         e.preventDefault(); e.stopPropagation();
         setActiveIdx(Math.max(0, Math.min(clampedIdx + 1, entries.length - 1)));
       } else if (e.key === "ArrowUp") {

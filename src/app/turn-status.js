@@ -358,9 +358,45 @@
     return ri === -1 ? messages : messages.filter((_, i) => i !== ri);
   }
 
+  /** Settle the tool cards a run left `running` when their
+   *  `tool_execution_end` never arrives — the process died, the run was
+   *  aborted, or the frame was lost to a replay gap. Each flips to
+   *  `interrupted` with `isError` (so the card renders failed, warning
+   *  glyph included) and the elapsed time in place of a duration omp
+   *  never sent. A late `tool_execution_end` still finalizes the card
+   *  with the real result: live.js keeps its `activeToolCards` entry.
+   *  Returns the same array when nothing was running, so callers skip
+   *  the notify. */
+  function settleInterrupted(messages, now = Date.now()) {
+    let changed = false;
+    const out = messages.map(m => {
+      if (m?.kind !== "tool" || m.status !== "running") return m;
+      changed = true;
+      return {
+        ...m,
+        status: "interrupted",
+        isError: true,
+        duration: Number.isFinite(m._startMs) ? Math.max(0, now - m._startMs) : (m.duration ?? 0),
+      };
+    });
+    return changed ? out : messages;
+  }
+
+  /** Fail a compaction row still `pending` once nothing can answer it.
+   *  Only the process's death qualifies (live.js `_endDeadProcessState`):
+   *  while the process lives, the compact RPC response settles its row,
+   *  however late — an abort does not cancel one — so the other sweeps
+   *  (turn_end, agent_end, abort) must not touch it. */
+  function abandonPendingCompaction(messages) {
+    if (!messages.some(m => m?.kind === "compact" && m.status === "pending")) return messages;
+    return messages.map(m => m?.kind === "compact" && m.status === "pending" ? { ...m, status: "error" } : m);
+  }
+
+
   window.OMP_TURN_STATUS = Object.freeze({
     runStateOf, isBusyRunState, isYield, stripDiagnostics, providerHeadline, failureOf, finalFailures,
     withPromptError, finishedJobsOf,
     failedStop, producedOutput, isHidden, retryIndex, retryStarted, retryAttempting, retryEnded, retryFinished, retryYielded, retryCleared,
+    settleInterrupted, abandonPendingCompaction,
   });
 })();

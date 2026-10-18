@@ -366,9 +366,10 @@ React.useEffect(() => {
 
   // `activeProject.id`, not `activeSessionId`: the latter keeps a closed
   // tab's id (see handleSelectProfile below). Widgets only run while the
-  // rail is on screen — not in focus layout, not under the tree or browser.
+  // rail is on screen — not in focus layout, not under the tree or browser,
+  // not under the Settings tab, which covers the stage (`.st-host`).
   const widgets = useWidgets({
-    bridge, activeSessionId: activeProject.id, railVisible: t.layout !== "focus" && side === "rail", tweaks: t,
+    bridge, activeSessionId: activeProject.id, railVisible: t.layout !== "focus" && side === "rail" && !stab.active, tweaks: t,
   });
   // Pushed by omp, not run by the desktop: nothing to schedule, only a
   // Settings → Rail toggle per card (`widget:ext-status`, `widget:ext:<key>`).
@@ -1128,19 +1129,6 @@ React.useEffect(() => {
         </div>
       </div>
 
-      <CommandBridge
-        open={bridgeOpen}
-        initialView={bridgeView}
-        onClose={() => setBridgeOpen(false)}
-        onPick={handleCommand}
-        onPickModel={handlePickModel}
-        onPickLogin={handlePickLogin}
-        onInsertDraft={handleInsertDraft}
-        loginProviders={loginProviders}
-        currentModelId={model.id}
-        profileId={activeProfileId}
-      />
-
       {planOpen && (
         <PlanKanban
           kanban={kanban}
@@ -1206,6 +1194,28 @@ React.useEffect(() => {
       {updater.open && (
         <UpdateModal updater={updater} busyTabs={window.OMP_UPDATER.busyTabCount(sessions)} />
       )}
+
+      {/* The command bridge renders after the other z-100 overlays (kanban,
+          history, git, approvals, stats, prompt history, update), so at equal
+          z-index a later-in-DOM sibling paints over it: an overlay opened
+          while the bridge is already up (e.g. Ctrl+K then Ctrl+H) covers it
+          visually, not the other way around. The Escape stack agrees without
+          this comment's help — the bridge registers once at app start, and
+          useEscClose lifts it to the top only when it *opens*, so a modal
+          opened later is the topmost and Esc closes that one first; after the
+          move visuals and Esc finally say the same thing. */}
+      <CommandBridge
+        open={bridgeOpen}
+        initialView={bridgeView}
+        onClose={() => setBridgeOpen(false)}
+        onPick={handleCommand}
+        onPickModel={handlePickModel}
+        onPickLogin={handlePickLogin}
+        onInsertDraft={handleInsertDraft}
+        loginProviders={loginProviders}
+        currentModelId={model.id}
+        profileId={activeProfileId}
+      />
 
       {closeConfirm && (
         <ConfirmCloseDialog confirm={closeConfirm} onAnswer={handleCloseAnswer} />

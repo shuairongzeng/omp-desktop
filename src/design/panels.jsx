@@ -40,10 +40,49 @@ function PlanKanban({ kanban, planMeta, onClose, onAbort }) {
   // topmost. The stack's listener also prevents the key, so the global
   // keymap's `app.interrupt` never aborts a turn underneath.
   window.useEscClose(onClose);
+  // Take focus on open (so Tab walks the kanban's buttons, not whatever
+  // sits underneath — the composer's Enter would invisibly send) and hand
+  // it back on close (ui/use-modal-focus.js). The ref anchors the restore
+  // the same way the bridge's panelRef does.
+  const panelRef = React.useRef(null);
+  window.useModalFocus(panelRef);
+
+  // Capture phase on `window`, not the panel's own onKeyDown: focus can
+  // sit underneath while the kanban is open (the composer refocuses
+  // itself when a turn ends; a card's footer button can unmount when the
+  // phase flips), and a key must then neither type into nor Enter-send
+  // what the scrim hides. Same shape as update-modal.jsx /
+  // approval-rules-panel.jsx: every unmodified key belongs to the kanban
+  // — stopping propagation keeps it from the global keymap and leaves
+  // native Tab/Enter/Space on the panel's buttons intact — and one aimed
+  // outside is cancelled with focus pulled back in. Ctrl/Alt/Meta chords
+  // stay global shortcuts; an IME composition's keys stay the IME's;
+  // Escape is the stack's business above. The kanban is the bottom
+  // overlay (z-90, see the Esc comment): while anything renders above it
+  // — the .bridge-scrim panels (z-100), the git browser (z-90 but later
+  // in the DOM), the file preview and lightbox (z-200) — those own the
+  // keys, so the guard bails entirely.
+  React.useEffect(() => {
+    const onKey = e => {
+      if (e.key === "Escape") return; // the shared Esc stack closes us
+      if (document.querySelector(".bridge-scrim, .gitb-scrim, .fp-scrim, .lightbox")) return;
+      if (e.isComposing) return; // an IME's keys are its own
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      e.stopPropagation();
+      if (!panelRef.current?.contains(e.target)) {
+        e.preventDefault();
+        panelRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   return (
     <div className="kanban-scrim" onClick={onClose}>
-      <div className="kanban slide-in" onClick={e => e.stopPropagation()}>
+      <div className="kanban slide-in" ref={panelRef} role="dialog" aria-modal="true"
+        aria-label="plan kanban" tabIndex={-1} style={{ outline: "none" }}
+        onClick={e => e.stopPropagation()}>
 
         {/* Header */}
         <div className="kanban-head">

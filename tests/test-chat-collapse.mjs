@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Regression script for src/app/chat-collapse.js — which tool cards and
-// thinking blocks the chat shows collapsed (#44), per kind (#43).
-// Run: node tests/test-chat-collapse.mjs
-
+// thinking blocks the chat shows collapsed (#44), per kind (#43) — and the
+// chat view's unread-since-horizon count (chat/chat-view.jsx), which
+// shares the horizon contract.
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -147,9 +149,23 @@ check("while reading history, blocks after the horizon do not collapse older one
     { 1: true, 2: true, 3: true, 4: true, 5: false, 6: false });
 });
 
-check("a horizon that is no longer in the transcript freezes nothing", () => {
-  const msgs = longRun(3);
-  assert.deepEqual(C.collapseStates(msgs, { after: 1, horizonId: 99 }), { 1: true, 2: true, 3: false });
+check("a horizon that is no longer in the transcript freezes aging, so the tail never becomes the horizon", () => {
+  // The reader scrolled away with message 3 latest; its row later left the
+  // transcript (a retry row removed on recovery, a stale streaming bubble
+  // dropped). The blocks that arrived meanwhile must not age — and fold —
+  // the text being read: nothing counts as newer.
+  const msgs = longRun(6);
+  assert.deepEqual(C.collapseStates(msgs, { after: 2, horizonId: 99 }), { 1: false, 2: false, 3: false, 4: false, 5: false, 6: false });
+  // Aging had already collapsed blocks at the moment the reader left; what
+  // stays collapsed stays, but freezing is the safe direction: it reopens.
+  const msgs2 = [bash(1, LONG), bash(2, LONG), bash(3, LONG)];
+  assert.deepEqual(C.collapseStates(msgs2, { after: 1, horizonId: 99 }), { 1: false, 2: false, 3: false });
+  // A hidden (superseded) horizon is still findable, so it still anchors:
+  // blocks after it do not age older ones; blocks at-or-before it do.
+  const hidden = m => !!m.superseded;
+  const msgs3 = [bash(1, LONG), bash(2, LONG), bash(3, LONG, { superseded: true }), bash(4, LONG)];
+  assert.deepEqual(C.collapseStates(msgs3, { after: 1, horizonId: 3, hidden }),
+    { 1: true, 2: false, 4: false });
 });
 
 check("messages the chat does not render neither collapse nor age others", () => {
@@ -223,6 +239,51 @@ check("Expand all covers a running card still too short for a toggle: it stays e
   assert.deepEqual(C.collapseStates([finished], { tool: "folded", overrides: all }), { 1: false });
   // Without the toggle, folded would have collapsed it.
   assert.deepEqual(C.collapseStates([finished], { tool: "folded" }), { 1: true });
+});
+
+// ── chat-view.jsx `unreadSince` (the "Jump to latest" count) ───────────────
+// Compiled the way index.html's Babel does (test-goal.mjs's pattern); the
+// module only needs window stubs for the globals it destructures at load.
+
+const Babel = createRequire(import.meta.url)(join(root, "src/babel.min.js"));
+const cvCode = Babel.transform(readFileSync(join(root, "src/design/chat/chat-view.jsx"), "utf8"), { presets: ["react"] }).code;
+const cvWin = {
+  React: { memo: (c) => c, createElement: () => null, useState: (v) => [v, () => {}], useRef: (v) => ({ current: v }), useMemo: (fn) => fn(), useEffect: () => {} },
+  OMP_SCROLL_PIN:   { nextPinned: () => true, shouldRepin: () => false, afterOutput: () => ({ pinned: true, stick: false }) },
+  OMP_COLLAPSE:     { collapseStates: () => ({}), PREVIEW_LINES: C.PREVIEW_LINES },
+  // chat-collapse's own `hidden` convention, via turn-status's isHidden.
+  OMP_TURN_STATUS:  { isHidden: (m) => !!m.superseded || (m.kind === "retry" && !!m.ended) },
+  UserBubble: () => null, ToolCard: () => null, AssistantBubble: () => null, AskBubble: () => null,
+  RetryRow: () => null, GoalRow: () => null, ApprovalRow: () => null, Icon: () => null, TOOL_META: {},
+};
+const U = runInNewContext(`${cvCode}\nunreadSince`, { window: cvWin, React: cvWin.React });
+const msg = (id, extra = {}) => ({ _id: id, ...extra });
+
+check("unreadSince: at the bottom, or an empty transcript, is 0", () => {
+  assert.equal(U([msg(1), msg(2)], null), 0);
+  assert.equal(U([], 4), 0);
+});
+
+check("unreadSince: counts visible blocks after the horizon, skips hidden ones", () => {
+  assert.equal(U([msg(1), msg(2), msg(3), msg(4), msg(5)], 5), 0);
+  assert.equal(U([msg(1), msg(2), msg(3), msg(4), msg(5)], 2), 3);
+  assert.equal(U([msg(1), msg(2), msg(3, { superseded: true }), msg(4), msg(5)], 2), 2);
+});
+
+check("unreadSince: a horizon that left the transcript keeps counting (retry row removed, streaming bubble dropped)", () => {
+  // The reader left the bottom with id 4 (the tail) as the horizon.
+  assert.equal(U([msg(1), msg(2), msg(3), msg(4)], 4), 0);
+  assert.equal(U([msg(1), msg(2), msg(3), msg(4), msg(5)], 4), 1);
+  // The horizon row itself is removed (retry recovery); the answering
+  // message keeps its higher stamp, so it still counts — the old code
+  // reset to the tail and read 0.
+  assert.equal(U([msg(1), msg(2), msg(3), msg(5)], 4), 1);
+  assert.equal(U([msg(1), msg(2), msg(3), msg(5), msg(6), msg(7)], 4), 3);
+  // A stale streaming bubble dropped, its completed copy arriving fresh.
+  assert.equal(U([msg(1), msg(2), msg(3), msg(6)], 4), 1);
+  // Hidden blocks never count, either way.
+  assert.equal(U([msg(1), msg(2), msg(3), msg(5, { superseded: true }), msg(6)], 4), 1);
+  assert.equal(U([msg(1), msg(2), msg(3), msg(5, { kind: "retry", ended: {} })], 4), 0);
 });
 
 console.log(`chat-collapse: ${passed} checks passed`);

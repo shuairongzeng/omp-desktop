@@ -322,7 +322,15 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
       setState((s) => _UT_clearDirty(s, activeSessionId));
       fit(activeSessionId);
       if (_UT_needsSpawn(entry) && rec.stream.syncing === 0) spawn(activeSessionId);
-      if (prevOpen.current !== activeSessionId) focus(activeSessionId);
+      // Focus the terminal that just became the shown one — but not while
+      // Settings covers the stage: the host's `hidden` attribute is the
+      // exact "Settings is showing" test (the composer's refocus guard
+      // reads it the same way). The page owns focus then; xterm grabbing
+      // it would leave the page's keys — Enter on its buttons, its search
+      // — typing into a terminal the user cannot see.
+      if (prevOpen.current !== activeSessionId && !document.querySelector(".st-host:not([hidden])")) {
+        focus(activeSessionId);
+      }
     }
     prevOpen.current = entry.open ? activeSessionId : null;
   }, [state, activeSessionId, height, syncTick, fit, spawn, focus]);

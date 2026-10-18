@@ -18,15 +18,49 @@ const { Icon: _AMS_Icon } = window;
 // One segmented radio group. `options`: [{ value, label }]; the literal
 // "default" value renders as the muted `inherit` segment.
 function ApprovalModeSeg({ label, options, value, disabled, onPick }) {
+  const groupRef = React.useRef(null);
+  // Roving tabindex + arrows, the SettingsSeg pattern (settings/
+  // controls.jsx): ←/→/↑/↓ move between the `role=radio` buttons, the
+  // focused one is also the checked one, the checked one is the tab stop.
+  // On `window` in capture phase, not the group's own onKeyDown: in the
+  // approvals panel the panel's own capture guard stopPropagation()s every
+  // unmodified key before React's delegated handlers run, so a plain
+  // onKeyDown here would never fire there — this listener registers before
+  // that guard (child effects run first), sees the key first and claims
+  // only the four arrows while focus is inside the group. `data-st-arrows`
+  // is the marker the Settings page's section-switching guard keys on
+  // (page.jsx `_SP_RADIO`), so its ←/→ cede to the group there too.
+  React.useEffect(() => {
+    const onKey = e => {
+      if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+      const group = groupRef.current;
+      const focus = document.activeElement;
+      if (!group || !(focus instanceof Element) || !group.contains(focus)) return;
+      const radios = [...group.querySelectorAll('[role="radio"]')];
+      if (!radios.length) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const i = radios.indexOf(focus);
+      const step = e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 1;
+      const next = radios[(i + step + radios.length) % radios.length];
+      next.focus();
+      next.click();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+  const idx = Math.max(0, options.findIndex(o => o.value === value));
   return (
-    <div className="mode-seg" role="radiogroup" aria-label={label}>
-      {options.map(o => (
+    <div className="mode-seg" role="radiogroup" aria-label={label} data-st-arrows="" ref={groupRef}>
+      {options.map((o, i) => (
         <button
           key={o.value}
           role="radio"
           aria-checked={o.value === value}
           data-mode={o.value === "default" ? "inherit" : o.value}
           disabled={disabled}
+          tabIndex={i === idx ? 0 : -1}
           onClick={() => { if (o.value !== value) onPick(o.value); }}
         >
           {o.label}

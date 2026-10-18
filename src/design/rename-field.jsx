@@ -56,6 +56,10 @@ function RenameField({ value, onCommit, onClose }) {
         // `isSubmitEnter`, not a raw Enter: the Enter that commits an IME
         // candidate must not commit a half-typed name (same as composer).
         if (window.isSubmitEnter(e)) { e.preventDefault(); finish(true); return; }
+        // The Escape that ends an IME composition (closing its candidate
+        // window) belongs to the IME: canceling here would discard the
+        // half-typed name it was composing.
+        if (e.nativeEvent?.isComposing ?? e.isComposing) return;
         // Stopped here: the window keymap would abort a running turn on
         // Escape, and an open group popover would close with it.
         if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
