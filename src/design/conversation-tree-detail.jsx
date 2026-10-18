@@ -53,8 +53,8 @@ function TreeDetail({ row, tips, now, since, streaming, onBranch, onFork, onOpen
     setError(null);
     try {
       const res = await action();
-      if (res?.cancelled) setError("Cancelled by omp.");
-      else if (res && res.ok === false) setError(res.error || "omp refused the request.");
+      if (res?.cancelled) setError("cancelled by omp");
+      else if (res && res.ok === false) setError(res.error || "omp refused the request");
     } catch (e) {
       setError(String(e?.message ?? e));
     } finally {
@@ -63,7 +63,7 @@ function TreeDetail({ row, tips, now, since, streaming, onBranch, onFork, onOpen
   };
 
   const blocked = busy || streaming;
-  const wait = streaming ? "Wait for the current turn to finish." : undefined;
+  const wait = streaming ? "wait for the current turn to finish" : undefined;
   // A new process rebuilds the system prompt, so opening is priced as the
   // whole conversation of the file's tip written again (its cold price).
   const fileTip = row.openFile ? tips.find(t => t.file === row.openFile) : null;
@@ -82,20 +82,20 @@ function TreeDetail({ row, tips, now, since, streaming, onBranch, onFork, onOpen
           <button className="btn primary" disabled={blocked}
             title={wait ?? "Start a new session before this prompt and put the prompt back in the composer."}
             onClick={() => run(() => onBranch(row.id))}>
-            <_TD_Icon name="branch" size={11} /> Branch here
+            <_TD_Icon name="branch" size={11} /> branch here
           </button>
         )}
         {row.inCurrent && row.forkEntryId && (
           <button className="btn outlined" disabled={blocked}
             title={wait ?? "Continue in a new session file that keeps this prompt and its reply."}
             onClick={() => run(() => onFork(row.forkEntryId))}>
-            Fork after the reply
+            fork after the reply
           </button>
         )}
         {row.openFile && (
           <button className="btn outlined" disabled={busy} title={TREE_OPEN_TITLE}
             onClick={() => run(() => onOpenFile(row.openFile))}>
-            Open in new tab{openPrice ? ` · cold ${openPrice}` : ""}
+            open in new tab{openPrice ? ` · cold ${openPrice}` : ""}
           </button>
         )}
       </div>

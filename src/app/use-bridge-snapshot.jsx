@@ -54,9 +54,10 @@ function useThemeEffect(t) {
     root.classList.add(`density-${t.density}`);
     if (t.monoChat) root.classList.add("mono-chat");
     else            root.classList.remove("mono-chat");
-    // The accent override and its three derived tokens (app/accent.js), so
-    // focus rings, glows and the xterm selection follow it. Cleared first:
-    // an accent equal to the theme's own keeps the theme's hand-tuned set.
+    // The accent override and its four derived tokens (app/accent.js), so
+    // focus rings, glows, the xterm selection and the text on the accent
+    // follow it. Cleared first: an accent equal to the theme's own keeps
+    // the theme's hand-tuned set.
     const A = window.OMP_ACCENT;
     for (const name of A.TOKEN_NAMES) root.style.removeProperty(name);
     const tokens = t.accent ? A.accentTokens(t.accent) : null;

@@ -3,7 +3,7 @@
    for: select (pick one option: tool approvals, extension pickers), ask
    (omp's ask dialog, chat/ask-dialog.jsx), confirm (yes/no), input (single
    line), editor (multi-line). Stays interactive until the user answers
-   or the request is cancelled (by the runtime, or locally via Cancel). */
+   or the request is cancelled (by the runtime, or locally via cancel). */
 
 const { Icon: _AskIcon, AskDialog: _AskDialog, OMP_ASK_DIALOG: _AskDialogRules } = window;
 // Tool-approval prompts ("Allow tool: <name>" + detail lines): the
@@ -101,8 +101,8 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
         />
         {!done && (
           <div className="ask-editor-actions">
-            <button className="ask-submit" onClick={() => submit(draft)}>Submit</button>
-            <button className="ask-opt" onClick={decline}>Cancel</button>
+            <button className="ask-submit" onClick={() => submit(draft)}>submit</button>
+            <button className="ask-opt" onClick={decline}>cancel</button>
           </div>
         )}
       </>
@@ -125,8 +125,8 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
           />
           {!done && (
             <>
-              {draft.trim() && <button className="ask-submit" onClick={() => submit(draft)}>Submit</button>}
-              <button className="ask-opt" onClick={decline}>Cancel</button>
+              {draft.trim() && <button className="ask-submit" onClick={() => submit(draft)}>submit</button>}
+              <button className="ask-opt" onClick={decline}>cancel</button>
             </>
           )}
         </div>

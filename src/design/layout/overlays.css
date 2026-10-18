@@ -258,8 +258,9 @@
   font-size: var(--d-text-xs);
 }
 
-/* mono-chat tweak */
-.mono-chat .ass-text, .mono-chat .user-text { font-family: var(--font-mono); font-size: var(--d-text-sm); }
+/* mono-chat tweak: user messages only (assistant text is markdown,
+   .md-content — the design keeps the UI font there) */
+.mono-chat .user-text { font-family: var(--font-mono); font-size: var(--d-text-sm); }
 
 /* ── Plan annotation blocks (rendered in AssistantBubble when planMode) ── */
 .plan-annot-blocks { display: flex; flex-direction: column; gap: 2px; }

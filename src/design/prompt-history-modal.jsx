@@ -91,7 +91,7 @@ function PromptHistoryModal({ open, entries, onClose, onPick }) {
 
         <div ref={listRef} className="bridge-body" style={{ maxHeight: "56vh", padding: "6px 8px" }}>
           {entries.length === 0 && (
-            <div className="bridge-empty">No prompts sent in this tab yet.</div>
+            <div className="bridge-empty">no prompts sent in this tab yet</div>
           )}
           {entries.map((text, idx) => {
             const isSelected = idx === clampedIdx;

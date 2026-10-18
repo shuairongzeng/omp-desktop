@@ -5,9 +5,10 @@
 // scrolled out of view meanwhile, e.g. a streaming reply, and scrolling
 // back would unpin the chat from the bottom — app/scroll-pin.js).
 //
-// Same behaviour as chat/image-lightbox.jsx's `useModalLayer`, extracted
-// so portals outside the chat can share it, with one addition: an `open`
-// dependency. The lightbox and file-preview mount only while open (the
+// The one definition — the lightbox (chat/image-lightbox.jsx) and
+// file-preview call it at render time, the history modal and the command
+// bridge (composer.jsx) likewise, all with `open` defaulting to true except
+// the bridge. The lightbox and file-preview mount only while open (the
 // effect's mount IS the open), but an always-mounted overlay (the command
 // bridge, which early-returns null when closed) toggles `open` on the
 // same component instance — the effect has to re-run for the inert state

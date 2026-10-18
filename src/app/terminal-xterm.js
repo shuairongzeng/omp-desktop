@@ -3,10 +3,11 @@
 // instances and their sync with Rust).
 //
 // - `ensureXterm()`: injects the vendored xterm.js / fit-addon <script>s on
-//   the first terminal mount and resolves once both have loaded; a no-op
-//   (resolved promise) when `window.Terminal` is already there (index.html
-//   still carries the eager tags; the integrator removes them next). A
-//   module-level promise means concurrent mounts share one injection.
+//   the first terminal mount and resolves once both have loaded (index.html
+//   links only their stylesheet; the 478 KB of script parse never runs
+//   before a terminal is opened). A module-level promise means concurrent
+//   mounts share one injection, and a failed load is not cached (the next
+//   mount retries).
 // - `createXterm(opts)`: a `window.Terminal` with the fit addon, OSC 8
 //   swallowed and the key routing (restart on Enter, copy / paste chords,
 //   chords handed back to the global keymap — the decisions themselves are
@@ -96,11 +97,11 @@
   }
 
   // The vendored xterm.js builds (478 KB) are needed only once a terminal
-  // actually mounts; index.html still carries eager tags for them (they are
-  // next to go — the integrator's change), so this is a no-op while
-  // `window.Terminal` is already there. Injecting both <script>s on first
-  // use and resolving once they have loaded is the shape that replaces them;
-  // a module-level promise means concurrent mounts share one injection.
+  // actually mounts, so this injects both <script>s on first use and
+  // resolves once they have loaded; a module-level promise means concurrent
+  // mounts share one injection, and a failed load is not cached. The
+  // fast-path check makes it a no-op once `window.Terminal` is there
+  // (a second panel mounting in the same document).
   // xterm.css stays eager in index.html: tiny, and no first-paint flash.
   let xtermReady = null;
   function ensureXterm() {

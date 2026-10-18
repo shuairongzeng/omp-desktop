@@ -57,7 +57,7 @@ function SaActivity({ agent: a, now }) {
 
       <div>
         <div className="sa-block-k">recent tools</div>
-        {recent.length === 0 ? <div className="sa-empty">No tool calls yet.</div> : (
+        {recent.length === 0 ? <div className="sa-empty">no tool calls yet</div> : (
           <div className="sa-timeline">
             {recent.map(r => (
               <div key={`${r.endMs}:${r.tool}:${r.args}`} className="sa-tl-row">
@@ -84,7 +84,7 @@ function SaOutput({ agent: a, level }) {
     <>
       <div>
         <div className="sa-block-k">recent output</div>
-        {lines.length === 0 ? <div className="sa-empty">No output yet.</div> : (
+        {lines.length === 0 ? <div className="sa-empty">no output yet</div> : (
           <div className="sa-out selectable">
             {lines.map((l, i) => <div key={i} className="ta-stream-line">{l || "\u00a0"}</div>)}
           </div>

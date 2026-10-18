@@ -112,16 +112,16 @@ function WidgetApprovalCard({ title, command, changed, onApprove, onDismiss }) {
         {(command ?? []).map((arg, i) => <div key={i} className="wdg-argv-line">{_WC_argvDisplay(arg)}</div>)}
       </div>
       <div className="wdg-approval-actions">
-        {/* #20: "Not now" hides the card for this session only (the
+        {/* #20: "not now" hides the card for this session only (the
             approval itself is untouched); `onDismiss` is a no-op prop
             without the caller's session state. */}
         {onDismiss && (
           <button className="btn ghost" onClick={onDismiss} title="hide this card for the rest of the session">
-            Not now
+            not now
           </button>
         )}
         <button className="btn primary" disabled={busy || !onApprove} onClick={approve}>
-          {changed ? "Approve again" : "Approve"}
+          {changed ? "approve again" : "approve"}
         </button>
       </div>
     </div>

@@ -77,7 +77,7 @@ function _AB_Retries({ retries: r }) {
   const n = `${r.failed} failed attempt${r.failed === 1 ? "" : "s"}`;
   const [label, title] = r.outcome === "recovered"
     ? [`after ${n}`, "omp retried the request by itself until it answered"]
-    : r.outcome === "stopped" ? [n, "Retrying was stopped"]
+    : r.outcome === "stopped" ? [n, "retrying was stopped"]
     : [n, "omp gave up retrying"];
   return <span className={`chip mono ${r.outcome === "recovered" ? "warn" : "muted"}`} title={title}>{label}</span>;
 }

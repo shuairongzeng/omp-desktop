@@ -66,13 +66,6 @@
   --rose: #FF8896;
   --lime: #C4FF6E;
 
-  --syntax-comment: #5C6480;
-  --syntax-key: #B59BFF;
-  --syntax-str: #8AF0C8;
-  --syntax-num: #FFC56E;
-  --syntax-fn: #6EE7FF;
-  --syntax-tag: #FF7AC6;
-
   --diff-add-bg: rgba(138, 240, 200, 0.10);
   --diff-add-fg: #8AF0C8;
   --diff-rm-bg: rgba(255, 136, 150, 0.08);
@@ -114,13 +107,6 @@
   --rose: #FF8A6E;
   --lime: #C4FF3F;
 
-  --syntax-comment: #3F7437;
-  --syntax-key: #FFD24A;
-  --syntax-str: #C4FF3F;
-  --syntax-num: #FF6EAA;
-  --syntax-fn: #58F0E0;
-  --syntax-tag: #A98EFF;
-
   --diff-add-bg: rgba(196, 255, 63, 0.10);
   --diff-add-fg: #C4FF3F;
   --diff-rm-bg: rgba(255, 110, 170, 0.08);
@@ -154,6 +140,7 @@
      informational text sits on): chips, banners, queue kinds, cache labels. */
   --amber-fg: #966917;
   --lime-fg: #537C1C;
+  --rose-fg: #B23A45;
 
   --accent: #1F8A5B;
   --accent-deep: #145C3D;
@@ -166,13 +153,6 @@
   --lilac: #6A4FE0;
   --rose: #C04A56;
   --lime: #5C8A1F;
-
-  --syntax-comment: #8A8FA0;
-  --syntax-key: #6A4FE0;
-  --syntax-str: #1F8A5B;
-  --syntax-num: #C68A1E;
-  --syntax-fn: #1F7A8C;
-  --syntax-tag: #C2438C;
 
   --diff-add-bg: rgba(31, 138, 91, 0.10);
   --diff-add-fg: #145C3D;
@@ -218,12 +198,6 @@
   /* Text-safe lime/cyan for the tree's cache readout on --bg-elevated. */
   --lime-fg: #ACC598;
   --cyan-fg: #9CC4C3;
-  --syntax-comment: #616E88;
-  --syntax-key: #81A1C1;
-  --syntax-str: #A3BE8C;
-  --syntax-num: #B48EAD;
-  --syntax-fn: #88C0D0;
-  --syntax-tag: #BF616A;
 
   --diff-add-bg: rgba(163, 190, 140, 0.10);
   --diff-add-fg: #A3BE8C;
@@ -266,13 +240,6 @@
   --rose: #F08D8A;
   --lime: #A1B03B;
 
-  --syntax-comment: #586E75;
-  --syntax-key: #268BD2;
-  --syntax-str: #2AA198;
-  --syntax-num: #D33682;
-  --syntax-fn: #B58900;
-  --syntax-tag: #DC322F;
-
   --diff-add-bg: rgba(133, 153, 0, 0.10);
   --diff-add-fg: #859900;
   --diff-rm-bg: rgba(220, 50, 47, 0.10);
@@ -308,8 +275,6 @@
   --lime-fg: #557A24;
   --cyan-fg: #287A85;
   --rose-fg: #C53F54;
-  --magenta-fg: #A74BA7;
-  --lilac-fg: #7355E9;
 
   --accent: #D6336C;
   --accent-deep: #A82553;
@@ -322,13 +287,6 @@
   --lilac: #7A5AF8;
   --rose: #D6455B;
   --lime: #6C9A2E;
-
-  --syntax-comment: #B597A6;
-  --syntax-key: #7A5AF8;
-  --syntax-str: #2F8F9D;
-  --syntax-num: #C77D1F;
-  --syntax-fn: #D6336C;
-  --syntax-tag: #B04FB0;
 
   --diff-add-bg: rgba(108, 154, 46, 0.12);
   --diff-add-fg: #4F7A1F;
@@ -370,13 +328,6 @@
   --lilac: #9D8CFF;
   --rose: #F06E8A;
   --lime: #A8E05C;
-
-  --syntax-comment: #50506A;
-  --syntax-key: #9D8CFF;
-  --syntax-str: #A8E05C;
-  --syntax-num: #F0B45C;
-  --syntax-fn: #5CD6F0;
-  --syntax-tag: #E86CE8;
 
   --diff-add-bg: rgba(168, 224, 92, 0.10);
   --diff-add-fg: #A8E05C;
@@ -537,9 +488,6 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
   mix-blend-mode: multiply;
   z-index: 9;
 }
-.theme-phosphor .glow-text {
-  text-shadow: 0 0 6px var(--accent-glow), 0 0 1px var(--accent);
-}
 
 /* ── Scrollbars ───────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -684,20 +632,25 @@ input, textarea { font: inherit; color: inherit; background: transparent; border
 .btn.ghost { color: var(--fg-3); }
 .btn.primary {
   background: var(--accent);
-  color: #06241B;
+  color: var(--accent-fg, #06241B);
   border-color: var(--accent);
   font-weight: 600;
 }
-.theme-phosphor .btn.primary { color: #001000; }
-.theme-daylight .btn.primary { color: #FAF7EF; }
-.theme-sakura .btn.primary { color: #FFF5F7; }
-.theme-midnight .btn.primary { color: #F2F0FF; }
+/* A custom accent (app/accent.js) sets --accent-fg inline on <html>, so
+   it wins over every per-theme fallback below: a light accent flips the
+   text to near-black, a dark one to white. Without one, each theme's own
+   hand-tuned text-on-accent applies. */
+.theme-phosphor .btn.primary { color: var(--accent-fg, #001000); }
+.theme-daylight .btn.primary { color: var(--accent-fg, #FAF7EF); }
+.theme-sakura .btn.primary { color: var(--accent-fg, #FFF5F7); }
+.theme-midnight .btn.primary { color: var(--accent-fg, #14142A); }
 /* Hover keeps the theme's own primary text on the deepened accent: the
    hard-coded #06241B sank to 2.06:1 on daylight's deep green. Solarized's
-   deep amber inverts the pairing (its idle text is near-black), so its
-   hover flips to light text. */
+   and midnight's deep accents invert the pairing (their idle text is
+   near-black), so their hover flips to light text. */
 .btn.primary:hover:not(:disabled) { background: var(--accent-deep); border-color: var(--accent-deep); }
-.theme-solarized .btn.primary:hover:not(:disabled) { color: #FDF6E3; }
+.theme-solarized .btn.primary:hover:not(:disabled) { color: var(--accent-fg, #FDF6E3); }
+.theme-midnight .btn.primary:hover:not(:disabled) { color: var(--accent-fg, #F2F0FF); }
 .btn.outlined:hover:not(:disabled) { border-color: var(--line-bright); }
 .btn.icon {
   width: 1.5rem; height: 1.5rem; padding: 0; justify-content: center;

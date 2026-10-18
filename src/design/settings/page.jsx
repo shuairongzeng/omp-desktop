@@ -227,8 +227,8 @@ function SettingsPage({ ctx }) {
         </div>
         {hits.groups.length === 0 && (
           <div className="st-empty">
-            No visible setting matches “{q}”
-            {hits.hiddenCount ? ` (${hits.hiddenCount} hidden by current state)` : ""}.
+            no visible setting matches “{q}”
+            {hits.hiddenCount ? ` (${hits.hiddenCount} hidden by current state)` : ""}
           </div>
         )}
         {hits.groups.map(g => (

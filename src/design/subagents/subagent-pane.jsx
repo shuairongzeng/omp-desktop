@@ -133,7 +133,7 @@ function SubagentPane({
         <div className="sa-pane-body">
           {t.total === 0 ? (
             <div className="sa-empty" style={{ padding: "24px 8px", textAlign: "center" }}>
-              No subagents in this session yet.<br />They appear here the moment a <span className="mono">task</span> call spawns them.
+              no subagents in this session yet<br />they appear here the moment a <span className="mono">task</span> call spawns them
             </div>
           ) : (
             <>
@@ -152,7 +152,7 @@ function SubagentPane({
                   </button>
                 ))}
               </div>
-              {groups.length === 0 && <div className="sa-empty">Nothing matches this filter.</div>}
+              {groups.length === 0 && <div className="sa-empty">nothing matches this filter</div>}
               {groups.map(g => (
                 <section key={g.callId ?? "none"} className="sa-group">
                   <button className="sa-group-head" onClick={() => g.callId && onJumpToCall(g.callId)} disabled={!g.callId}>

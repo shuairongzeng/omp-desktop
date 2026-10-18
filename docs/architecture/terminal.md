@@ -145,9 +145,10 @@ Per-shell **writer thread** fed by a **bounded channel** (1024 writes). `termina
 
 ### Panel state (`app/terminal.js`)
 
-Pure, `window.OMP_TERMINAL`, covered by `test-terminal.mjs`. State `{ [sid]: { open, created, status, error } }`, where `status` is Rust's `TerminalStatus` or `null` and `error` the last `terminal_open` failure or `null`:
+Pure, `window.OMP_TERMINAL`, covered by `test-terminal.mjs`. State `{ [sid]: { open, created, status, error, dirty } }`, where `status` is Rust's `TerminalStatus` or `null`, `error` the last `terminal_open` failure or `null`, and `dirty` set by `noteActivity` when a not-shown tab's shell produces output or exits (a dot on its project tab, cleared by `clearDirty` when its panel becomes visible):
 
-- `openPanel`, `closePanel`, `togglePanel`, `prune`, `entryOf`.
+- `openPanel`, `closePanel`, `togglePanel`, `entryOf`.
+- `noteActivity(s, sid, active)`: a data or exit event arrived for a tab the user is not looking at (another tab active, or its panel hidden) — sets per-tab `dirty` in the entry; `use-terminal.jsx` surfaces the dirty set as its return's `dirtyTabs`, which `app-live.jsx` passes to chrome.jsx as `terminalDirty` (a dot on the project tab). `clearDirty(s, sid)`: the tab's panel became visible; the mark clears. Pruning closed tabs' entries is `OMP_SESSION_UI.pruneEntries`, shared with the drafts/plans maps (use-terminal.jsx).
 - `applyStatus(s, sid, status)`: ignored for `null`, a tab with no entry, an older instance than the one shown, and an earlier state of the same instance (state only moves forward, starting → running → exited), so a late `terminal_open` reply never hides a newer shell or an exit. Clears `error`.
 - `applyExit(s, sid, instance, code)`: applied only for the instance shown.
 - `spawnFailed(s, sid, error)`: a failed start, shown like an exited shell.

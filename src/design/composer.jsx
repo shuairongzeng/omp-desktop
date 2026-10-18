@@ -1101,11 +1101,12 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
   // useModalLayer, ui/use-modal-layer.js — same behaviour as the history
   // modal and the lightbox): Tab can't reach the composer underneath, and
   // focus comes back to whatever had it. The bridge is always mounted, so
-  // the hook's `open` dependency (its addition over image-lightbox.jsx's
-  // copy) is what re-runs the effect per open; the views below render in a
-  // portal on <body> so inerting #root leaves them interactive. The scrim
-  // is the initial focus target; the 30ms timer above moves focus into the
-  // filter input (the login view's rows take it via its own key handler).
+  // the hook's `open` dependency is what re-runs the effect per open (the
+  // modals that mount only while open get it from the default); the views
+  // below render in a portal on <body> so inerting #root leaves them
+  // interactive. The scrim is the initial focus target; the 30ms timer
+  // above moves focus into the filter input (the login view's rows take it
+  // via its own key handler).
   const panelRef = React.useRef(null);
   const scrimRef = React.useRef(null);
   window.useModalLayer(scrimRef, open);

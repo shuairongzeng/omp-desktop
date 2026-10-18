@@ -71,9 +71,12 @@
   white-space: nowrap; flex: none;
   max-width: 180px; overflow: hidden; text-overflow: ellipsis;
 }
-/* Mirrors .btn.primary's text-on-accent, Daylight variant included. */
-.gitb-ref.head { color: #06241B; background: var(--accent); border-color: var(--accent); font-weight: 600; }
-.theme-daylight .gitb-ref.head { color: #FAF7EF; }
+/* Mirrors .btn.primary's text-on-accent (styles.css): a custom accent's
+   --accent-fg inline on <html> wins over every per-theme fallback. */
+.gitb-ref.head { color: var(--accent-fg, #06241B); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.theme-daylight .gitb-ref.head { color: var(--accent-fg, #FAF7EF); }
+.theme-sakura .gitb-ref.head { color: var(--accent-fg, #FFF5F7); }
+.theme-midnight .gitb-ref.head { color: var(--accent-fg, #14142A); }
 .gitb-ref.branch { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); }
 .gitb-ref.remote { color: var(--fg-3); }
 .gitb-ref.none { color: var(--fg-4); border-color: var(--line); font-style: italic; }

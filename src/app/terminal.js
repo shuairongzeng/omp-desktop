@@ -105,8 +105,8 @@
   /**
    * `terminal://data` or `exit` arrived for a tab the user is not looking
    * at (another tab active, or its panel hidden): set per-tab `dirty` in
-   * the entry, shown as a dot on the project tab (chrome.jsx reads it from
-   * `OMP_TERMINAL.snapshot` / useTerminal's return).
+   * the entry, shown as a dot on the project tab (useTerminal collects the
+   * entries into `dirtyTabs`; app-live.jsx passes it to the TabBar).
    */
   function noteActivity(s, sid, active) {
     if (!s || !s[sid] || active) return s;

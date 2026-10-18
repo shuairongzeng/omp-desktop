@@ -6,8 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The image lightbox's private `useModalLayer` copy clobbered the shared module and left the whole app inert from startup; the lightbox now uses the shared one (verified: root is interactive at boot, bridge open/close toggles inert correctly)
+- Custom accent colors now derive a readable `--accent-fg` (near-black/near-white by luminance), so the primary button and HEAD chip stay legible with any swatch in any theme; midnight's primary button idle/hover pairing fixed
+- `test-a11y` and `test-dead-process` are now actually in the `npm test` chain
+
 ### Changed
 
+- Copy unification: buttons, tooltips, empty states and inline errors are lowercase without trailing periods, matching the app's majority convention
+- Dead weight removed: the unused per-theme `--syntax-*` ladder (42 definitions), sakura's unused `--magenta-fg`/`--lilac-fg`, phosphor's `.glow-text`, and the never-wired `.ass-text` rules
 - Accessibility pass: Shift+Tab is backward focus traversal again (the thinking-level cycle now only fires with the composer focused), the git browser's file tree/history and the conversation tree are fully keyboard-operable, the chat transcript is a `role=log` live region that announces settled replies/failures, the history modal and command bridge are proper modal dialogs (combobox/listbox semantics, inert background), tab lists got arrow-key navigation, minimap cells are real buttons, and tab-close buttons have accessible names
 - Contrast: fg-4 lifted to ≈4.6:1 in all 7 themes (placeholders pass with it), solarized's inverted fg ramp straightened, status-hue text on light themes uses new darkened `--*-fg` variants, and the primary button no longer becomes unreadable on hover
 - Performance pass: streaming no longer re-parses/re-highlights the whole bubble per token (highlight once on settle), `notify()` coalesces to one snapshot per animation frame, memoized chat bubbles/rail cards/StatusBar stay memoized (stable callbacks and props), xterm.js (478 KB) loads on first terminal open instead of at startup, and the reader thread scans with memchr + a 64 KiB buffer with a zero-copy fast path

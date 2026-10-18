@@ -9,8 +9,9 @@
      onClose  — called once the close animation has finished
      thumbFor — i → the thumbnail element to fly from / back into
 
-   Also ImageThumbs (a message's thumbnail strip, opening the viewer) and
-   useModalLayer (the modal behaviour it shares with chat/file-preview.jsx).
+   Also ImageThumbs (a message's thumbnail strip, opening the viewer). The
+   modal behaviour it shares with chat/file-preview.jsx is the shared
+   window.useModalLayer (ui/use-modal-layer.js), called at render time.
    ═════════════════════════════════════════════════════════════════════ */
 const { Icon: _LB_Icon } = window;
 const { fitRect: _LB_fitRect, flipTransform: _LB_flipTransform, stepIndex: _LB_stepIndex } = window.OMP_LIGHTBOX;
@@ -26,25 +27,6 @@ function _LB_reducedMotion() {
 
 function _LB_viewport() {
   return { w: window.innerWidth, h: window.innerHeight };
-}
-
-// Modal: the app behind (#root — a modal renders in a portal on <body>) is
-// inert, so Tab can't reach, and Enter can't press, what opened it and stack
-// a second one. `scrimRef` takes focus; it goes back where it was on close.
-function useModalLayer(scrimRef) {
-  React.useEffect(() => {
-    const prev = document.activeElement;
-    const root = document.getElementById("root");
-    if (root) root.inert = true;
-    scrimRef.current?.focus();
-    return () => {
-      if (root) root.inert = false;
-      // preventScroll: the opener may have scrolled out of view meanwhile
-      // (a streaming reply), and scrolling back to it would unpin the chat
-      // from the bottom (app/scroll-pin.js).
-      if (prev?.isConnected) prev.focus({ preventScroll: true });
-    };
-  }, [scrimRef]);
 }
 
 function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
@@ -226,7 +208,9 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  useModalLayer(scrimRef);
+  // The shared hook, looked up at call time so no local copy can shadow it;
+  // its `open` defaulting to true covers the lightbox's mount-only lifetime.
+  window.useModalLayer(scrimRef);
 
   const imgStyle = rect
     ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
@@ -325,4 +309,4 @@ function ImageThumbs({ images, className, alt }) {
   );
 }
 
-Object.assign(window, { ImageLightbox, ImageThumbs, useModalLayer });
+Object.assign(window, { ImageLightbox, ImageThumbs });

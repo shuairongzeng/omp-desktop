@@ -71,7 +71,10 @@ const _ICON_PATHS = {
 // `size` is in px at the default font size; the svg is sized in rem through
 // `.ui-icon` (styles.css), so icons grow with the font-size tweak like the
 // text beside them. A more specific rule (`.collapse-toggle svg`) still wins.
-const Icon = ({ name, size = 14, color = "currentColor", dotColor = "var(--accent, #ff8a4c)", style, ...rest }) => {
+// The accent dot takes `var(--accent)` bare: every theme block (and every
+// custom accent) defines it on :root/<html>, so a fallback literal would
+// only ever render if one were missing — a stale colour from no theme.
+const Icon = ({ name, size = 14, color = "currentColor", dotColor = "var(--accent)", style, ...rest }) => {
   const def = _ICON_PATHS[name];
   if (!def) return null;
   // Decorative by default: an icon sits beside text or inside a labelled

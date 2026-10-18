@@ -128,7 +128,7 @@ function FilePreview({ target, onClose, onOpenGit }) {
   const range = target.range;
 
   let body;
-  if (!res) body = <div className="fp-state"><span className="shimmer-text">Loading…</span></div>;
+  if (!res) body = <div className="fp-state"><span className="shimmer-text">loading…</span></div>;
   else if (!res.ok) body = <_FP_State title="Can't preview this file" sub={res.error} />;
   else if (state) {
     const sub = state.sub ?? `${_FP_size(value.size)} is over the preview limit.`;
@@ -174,8 +174,8 @@ function FilePreview({ target, onClose, onOpenGit }) {
           <div className="fp-spacer" />
           <_FP_Copy className="fp-copy" label="Copy the project-relative path" text={shownPath} />
           {openable && (
-            <button type="button" className="btn outlined" onClick={() => onOpenGit(shownPath)} title="Open in the git browser">
-              <_FP_Icon name="branch" size={12} /> Open in git browser
+            <button type="button" className="btn outlined" onClick={() => onOpenGit(shownPath)} title="open in the git browser">
+              <_FP_Icon name="branch" size={12} /> open in the git browser
             </button>
           )}
           <button type="button" className="btn ghost icon" onClick={onClose} title="Close (Esc)" aria-label="Close">

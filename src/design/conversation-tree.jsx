@@ -68,7 +68,7 @@ function ConversationTree({
 
   let empty = null;
   if (error) empty = error;
-  else if (!model) empty = treeKey && loading ? "Loading…" : TREE_NO_FILE;
+  else if (!model) empty = treeKey && loading ? "loading…" : TREE_NO_FILE;
   else if (prompts.length === 0) empty = "No prompts in this conversation yet.";
 
   return (

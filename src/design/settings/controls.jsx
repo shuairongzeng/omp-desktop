@@ -86,7 +86,7 @@ function SettingsRow({ label, desc, modified, resettable, onReset, stack, aside,
     <div className="st-rt">
       <div className="st-rl">
         {typeof label === "string" ? <SettingsMark text={label} query={query} /> : label}
-        {modified && <span className="st-moddot" title="Changed from default" />}
+        {modified && <span className="st-moddot" title="changed from default" />}
         {(modified || resettable) && onReset && (
           <button type="button" className="st-reset" onClick={reset} title="Reset to default">↺ reset</button>
         )}

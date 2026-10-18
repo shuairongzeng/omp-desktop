@@ -160,7 +160,8 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
   if (!open) return null;
 
   // Portaled onto <body> (file-preview.jsx / image-lightbox.jsx's pattern)
-  // so useModalLayer can inert #root without taking this dialog with it.
+  // so the shared useModalLayer can inert #root without taking this dialog
+  // with it.
   // The scrim also takes focus when nothing inside it has — useModalLayer's
   // one focus call lands here, and the 50ms timer below moves it to the
   // search input once the panel has mounted.
@@ -184,11 +185,11 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
             aria-activedescendant={filtered.length > 0 ? `hist-row-${clampedIdx}` : undefined}
           />
           {query && (
-            <button className="btn icon ghost" title="Clear search" aria-label="Clear search" onClick={() => setQuery("")}>
+            <button className="btn icon ghost" title="clear search" aria-label="clear search" onClick={() => setQuery("")}>
               <Icon name="close" size={10} color="var(--fg-4)" />
             </button>
           )}
-          <button className="btn icon ghost" title="Refresh from disk" aria-label="Refresh from disk" onClick={fetchSessions}>
+          <button className="btn icon ghost" title="refresh from disk" aria-label="refresh from disk" onClick={fetchSessions}>
             <Icon name="refresh" size={11} color={loading ? "var(--accent)" : "var(--fg-3)"} />
           </button>
           <span className="kbd">esc</span>
@@ -241,8 +242,8 @@ function HistoryModal({ open, onClose, onResume, activeCwd, initialCwd }) {
           {!loading && !error && filtered.length === 0 && (
             <div className="bridge-empty">
               {query
-                ? `No sessions found matching "${query}"`
-                : "No saved sessions found on disk"}
+                ? `no sessions found matching "${query}"`
+                : "no saved sessions found on disk"}
             </div>
           )}
 

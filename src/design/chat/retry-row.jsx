@@ -1,7 +1,7 @@
 /* chat/retry-row.jsx — omp retrying a failed request by itself (the `retry`
    entry of app/turn-status.js `retryStarted`): which attempt, omp's error, a
    countdown to the next attempt or how long the one in flight has waited,
-   and Stop. One row per run, hidden once omp ends the retries (turn-status
+   and stop. One row per run, hidden once omp ends the retries (turn-status
    `isHidden`) and gone when the run ends; the failed attempts it
    stands for leave no reply bubbles of their own. */
 
@@ -22,7 +22,7 @@ const RetryRow = React.memo(function RetryRow({ msg, idx, highlighted, onStop })
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  // Stop is pending until omp ends the run (the row goes) or the phase moves
+  // stop is pending until omp ends the run (the row goes) or the phase moves
   // on; a refusal shows under the button.
   const [stop, setStop] = React.useState({ busy: false, error: null });
   React.useEffect(() => { setStop({ busy: false, error: null }); }, [msg.phase, msg.failed]);
@@ -66,8 +66,8 @@ const RetryRow = React.memo(function RetryRow({ msg, idx, highlighted, onStop })
           <div className="retry-foot">
             <span className="retry-status mono">{status} · {failed}</span>
             <button type="button" className="btn outlined retry-stop" disabled={stop.busy} onClick={stopNow}
-              title={waiting ? "Stop retrying: the run ends on the last failure" : "Stop the attempt in flight, as Esc does"}>
-              {waiting ? "Stop retrying" : "Stop"}
+              title={waiting ? "stop retrying: the run ends on the last failure" : "stop the attempt in flight, as Esc does"}>
+              {waiting ? "stop retrying" : "stop"}
             </button>
           </div>
           {stop.error && <div className="retry-stop-error">{stop.error}</div>}

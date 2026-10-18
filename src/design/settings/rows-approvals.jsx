@@ -34,7 +34,7 @@ function _SRAp_Rules({ row, ctx, query }) {
     ctx.bridge.listApprovalRules().then(rules => { if (live) setCount(Array.isArray(rules) ? rules.length : null); });
     return () => { live = false; };
   }, [ctx.bridge, project?.id]);
-  let lead = "Open a tab to see its session and project rules.";
+  let lead = "open a tab to see its session and project rules.";
   if (project && count !== null) {
     lead = `${count === 0 ? "No" : count} standing rule${count === 1 ? "" : "s"} for this tab's session and project.`;
   }

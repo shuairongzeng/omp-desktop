@@ -1,7 +1,7 @@
 /* chat/ask-dialog.jsx — omp's ask dialog: every question of one ask tool
    call in one card. Pick-one questions are radio rows, pick-any ones
    checkbox rows, and each question has a free-text box. A lone pick-one
-   question answers on click; anything else sends on Submit, once every
+   question answers on click; anything else sends on submit, once every
    pick-one question has an option or typed text. Settled, the card
    collapses to what was sent. Answer rules and the reply's shape live in
    app/ask-dialog.js; AskBubble renders this for `method: "ask"`. */
@@ -184,10 +184,10 @@ function AskDialog({ msg, onSubmit, onCancel }) {
       <div className="ask-dialog-foot">
         <span className={`ask-progress${!onClick && missing > 0 ? " incomplete" : ""}`}>{progress}</span>
         <span className="ask-foot-spacer" />
-        <button type="button" className="ask-opt" onClick={onCancel}>Cancel</button>
+        <button type="button" className="ask-opt" onClick={onCancel}>cancel</button>
         {(!onClick || canSend) && (
           <button type="button" className="ask-submit" disabled={!canSend} onClick={() => send(draft)}>
-            {questions.length > 1 ? "Submit answers" : "Submit"}
+            {questions.length > 1 ? "submit answers" : "submit"}
           </button>
         )}
       </div>

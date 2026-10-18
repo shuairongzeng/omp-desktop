@@ -304,9 +304,10 @@
        call window.useModalFocus at render time. -->
   <script src="design/ui/use-modal-focus.js"></script>
   <!-- A portal modal inerts the app behind while open and returns focus on
-       close: history-modal.jsx and composer.jsx (CommandBridge) call
-       window.useModalLayer at render time; chat/image-lightbox.jsx keeps
-       its own identical copy for the lightbox/file-preview pair. -->
+       close: history-modal.jsx, composer.jsx (CommandBridge) and
+       chat/image-lightbox.jsx call window.useModalLayer at render time, and
+       chat/file-preview.jsx destructures it at top level (below) — the one
+       definition, never shadowed by a copy. -->
   <script src="design/ui/use-modal-layer.js"></script>
   <!-- The column resize line (#41); destructures
        window.OMP_LAYOUT_WIDTHS at top level; browser-dock.jsx and
@@ -328,8 +329,9 @@
        useMarkdownClick at top level. -->
   <script type="text/babel" src="design/ui/markdown.jsx"></script>
   <script type="text/babel" src="design/ui/plan-annotations.jsx"></script>
-  <!-- Also ImageThumbs and useModalLayer; user-bubble.jsx, tool-card.jsx
-       and file-preview.jsx destructure them at top level. -->
+  <!-- Also ImageThumbs; user-bubble.jsx and tool-card.jsx destructure it at
+       top level. The modal hook it calls at render time is the shared
+       window.useModalLayer (ui/use-modal-layer.js, above). -->
   <script type="text/babel" src="design/chat/image-lightbox.jsx"></script>
   <!-- File preview modal (#39); destructures window.Icon, window.CopyButton
        and window.useModalLayer (above). app-live.jsx destructures
