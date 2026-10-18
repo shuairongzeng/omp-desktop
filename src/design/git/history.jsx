@@ -13,6 +13,7 @@ const _GH_R = 3.5;
 const _GH_COLORS = ["var(--accent)", "var(--cyan)", "var(--lilac)", "var(--amber)", "var(--magenta)", "var(--lime)"];
 const _GH_laneColor = lane => _GH_COLORS[lane % _GH_COLORS.length];
 const _GH_x = lane => 10 + lane * _GH_LANE;
+const _GH_WORKTREE = "@";
 
 /** Roving-tabindex key nav for the history rows (listbox pattern, mirroring
  *  `_ST_radioKeyNav` in settings/controls.jsx): ↑/↓ move between commits,
