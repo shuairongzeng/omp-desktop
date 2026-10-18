@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Git browser no longer blacks out the whole window**: the accessibility pass dropped the `_GH_WORKTREE` constant in `git/history.jsx`, so `GitHistory` threw a `ReferenceError` on first render and — with no error boundary — React unmounted the entire tree (verified live: modal opens, history graph and inline diff render)
 - **Streaming replies no longer flicker**: the streaming bubble's React key (`_id`) was re-stamped on every delta once `notify()` became rAF-coalesced — the stamp was deferred past the first `message_update`, whose spread-replacement dropped the unstamped id, so the row remounted every frame and its `fade-up` entrance animation never finished (the ghosted, flashing text). The bubble is now stamped at creation, and both replacement sites carry the replaced entry's id as a backstop (verified live: 0 remounts, single stable id, opacity trace flat at 1)
 - The image lightbox's private `useModalLayer` copy clobbered the shared module and left the whole app inert from startup; the lightbox now uses the shared one (verified: root is interactive at boot, bridge open/close toggles inert correctly)
 - Custom accent colors now derive a readable `--accent-fg` (near-black/near-white by luminance), so the primary button and HEAD chip stay legible with any swatch in any theme; midnight's primary button idle/hover pairing fixed
