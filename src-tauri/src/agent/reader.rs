@@ -589,6 +589,8 @@ fn child_exit_reason(
         // tree kill); Windows populates it. `signal()` names the Unix
         // signal explicitly so the reason says how it died.
         #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(unix)]
         if let Some(sig) = status.signal() {
             return with_stderr_tail(format!("process killed by signal {sig}"), stderr);
         }
