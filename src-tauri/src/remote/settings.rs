@@ -11,6 +11,27 @@ pub struct RemoteSettings {
     pub device_id: String,
     /// Cleartext local credential; the relay stores only its SHA-256.
     pub device_token: String,
+    /// PEM of the relay's TLS certificate, pinned at "trust this server"
+    /// (TOFU). Empty = trust the system roots (normal CA-signed relay).
+    /// Self-hosted relays on bare IPs run self-signed certs that no system
+    /// root accepts; pinning trusts exactly this cert, nothing else.
+    pub pinned_cert_pem: String,
+}
+
+impl RemoteSettings {
+    /// DER bytes of the pinned cert, if any.
+    pub fn pinned_cert_der(&self) -> Option<Vec<u8>> {
+        let pem = self.pinned_cert_pem.trim();
+        if pem.is_empty() {
+            return None;
+        }
+        let b64: String = pem
+            .lines()
+            .filter(|l| !l.starts_with("-----"))
+            .collect();
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.decode(b64).ok()
+    }
 }
 
 impl RemoteSettings {

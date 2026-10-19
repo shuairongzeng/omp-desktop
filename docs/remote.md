@@ -53,6 +53,12 @@ systemd 单元与 Caddy/nginx 的 TLS + WebSocket 反代配置见 `relay/README.
 
 手机浏览器没有的桌面能力会被明确拒绝（不会悄悄在电脑上弹窗）：原生文件对话框、系统剪贴板读取、窗口控制、自动更新安装。
 
+## TLS
+
+推荐 CA 证书（Caddy/nginx + 域名）。**自签证书也支持**：桌面端首次连接报 TLS 错误后，Settings → Remote 出现"信任证书"按钮——点一次即 TOFU 锁定（之后只认这一张证书，指纹可核对）；手机浏览器首次打开网址时"高级 → 继续前往"一次即可。
+
+> 阿里云国内机器出站访问 Let's Encrypt / Buypass 的 ACME API 都不通（2026-10 实测），自签是这类环境的现实路径；有域名+通 ACME 时再换 CA 证书（改 nginx 配置即可，桌面端清掉 `remote.json` 的 `pinned_cert_pem` 恢复系统 CA 校验）。
+
 ## 安全说明
 
 - 全链路 TLS；relay 只认令牌哈希，配对码一次性。

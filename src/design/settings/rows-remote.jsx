@@ -108,6 +108,19 @@ function _SRR_Main({ row, query }) {
             <Button onClick={regenerate}>重新生成令牌</Button>
           </div>
         )}
+        {st?.enabled && st.status.startsWith("error") && (
+          <div className="remote-token-box">
+            <div>TLS 校验失败（自签证书？）。信任服务器证书（TOFU，之后只认这一张）：</div>
+            <div className="remote-token-line">
+              <Button onClick={async () => {
+                setError(null);
+                const fp = await window.OMP_BRIDGE.remoteTrustServerCert();
+                if (fp) setNewToken(null), setError(`已信任，指纹：${fp}`);
+                else setError("抓取证书失败——检查 relay 地址与网络。");
+              }}>信任证书</Button>
+            </div>
+          </div>
+        )}
         {newToken && (
           <div className="remote-token-box">
             <div>把下面令牌写入服务器 <code>relay-config.json</code>（只显示这一次）：</div>

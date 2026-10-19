@@ -4421,6 +4421,11 @@
     async remoteSend(frame) {
       return window.__TAURI__.core.invoke("remote_send", { frame });
     },
+    /** TOFU: fetch the relay's (self-signed) cert, pin it, reconnect.
+     *  Returns the SHA-256 fingerprint for display; null on failure. */
+    async remoteTrustServerCert() {
+      return _invokeSafe("remote_trust_server_cert", {}, null);
+    },
 
     /** JS-side handlers the remote agent (`app/remote-agent.js`) invokes on
      *  behalf of phones — commands whose answer lives in this webview, not

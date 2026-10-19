@@ -63,6 +63,11 @@ impl RemoteManager {
     /// Builds the manager and, when the user left remote access enabled,
     /// starts the connector straight away.
     pub fn new(app: &AppHandle, settings_path: Option<PathBuf>) -> Arc<Self> {
+        // rustls in this process has both aws-lc-rs (via reqwest) and ring
+        // (via tokio-tungstenite) compiled in — with two providers,
+        // `ClientConfig::builder()` panics instead of picking one. Pin ring
+        // as the process default so both stacks behave.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let mgr = Arc::new(Self {
             settings_path,
             status: Mutex::new("off".into()),
@@ -200,4 +205,29 @@ pub fn remote_send(frame: Value, mgr: State<'_, Arc<RemoteManager>>) -> Result<(
         Some((_, tx)) => tx.send(frame).map_err(|_| "connection is closing".to_string()),
         None => Err("not connected".to_string()),
     }
+}
+
+/// Trust-on-first-use for a self-signed relay: connect once accepting any
+/// cert, pin the cert the server actually presented, and reconnect. Returns
+/// the cert's SHA-256 fingerprint for the UI to show. The one unverified
+/// hop is the whole point of TOFU — the UI surfaces the fingerprint so the
+/// user can eyeball it against the server (openssl s_client) if they care.
+#[tauri::command]
+pub async fn remote_trust_server_cert(
+    app: AppHandle,
+    mgr: State<'_, Arc<RemoteManager>>,
+) -> Result<String, String> {
+    let settings = mgr.load_settings();
+    if settings.server.is_empty() {
+        return Err("set the relay URL first".into());
+    }
+    let pem = conn::fetch_server_cert_pem(&settings).await?;
+    let fp = conn::cert_fingerprint_pem(&pem);
+    let mut s2 = settings;
+    s2.pinned_cert_pem = pem;
+    mgr.save_settings(&s2)?;
+    if s2.enabled && s2.ready() {
+        RemoteManager::start(&mgr, app, s2);
+    }
+    Ok(fp)
 }

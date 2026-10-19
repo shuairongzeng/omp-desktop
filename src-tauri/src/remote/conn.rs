@@ -16,8 +16,9 @@ const BACKOFF_MAX: Duration = Duration::from_secs(30);
 enum End {
     /// The user turned remote access off — do not reconnect.
     Stopped,
-    /// The connection dropped or failed — back off and retry.
-    Retry,
+    /// The connection dropped or failed — back off and retry. Carries the
+    /// reason so the status line keeps it through the backoff.
+    Retry(String),
 }
 
 pub async fn run(
@@ -31,13 +32,13 @@ pub async fn run(
     let mut backoff = Duration::from_secs(1);
     loop {
         mgr.set_status(&app, "connecting");
-        match connect_once(&app, &mgr, &url, generation, &mut stop).await {
+        match connect_once(&app, &mgr, &url, &settings, generation, &mut stop).await {
             End::Stopped => {
                 mgr.clear_outbox(generation);
                 mgr.set_status(&app, "off");
                 return;
             }
-            End::Retry => mgr.set_status(&app, "reconnecting"),
+            End::Retry(reason) => mgr.set_status(&app, &format!("reconnecting ({reason})")),
         }
         // Interruptible backoff sleep.
         if tokio::time::timeout(backoff, &mut stop).await.is_ok() {
@@ -49,18 +50,144 @@ pub async fn run(
     }
 }
 
+/// TLS connector: the pinned self-signed cert when one is stored (TOFU,
+/// `RemoteSettings.pinned_cert_pem`), otherwise the system roots.
+fn tls_connector(settings: &RemoteSettings) -> Option<tokio_tungstenite::Connector> {
+    let der = settings.pinned_cert_der()?;
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from(der))
+        .ok()?;
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Some(tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(config)))
+}
+
+// ── TOFU cert fetch ─────────────────────────────────────────────────────
+
+/// Accept-any-verifier used exactly once per server, from
+/// `remote_trust_server_cert`, to fetch the cert we then pin.
+#[derive(Debug)]
+struct AcceptAll;
+impl rustls::client::danger::ServerCertVerifier for AcceptAll {
+    fn verify_server_cert(
+        &self,
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &[rustls::pki_types::CertificateDer<'_>],
+        _: &rustls::pki_types::ServerName<'_>,
+        _: &[u8],
+        _: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn verify_tls13_signature(
+        &self,
+        _: &[u8],
+        _: &rustls::pki_types::CertificateDer<'_>,
+        _: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Connect once (accepting anything) and return the server's leaf cert as
+/// PEM. Only ever called from `remote_trust_server_cert`.
+pub async fn fetch_server_cert_pem(settings: &RemoteSettings) -> Result<String, String> {
+    let config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAll))
+        .with_no_client_auth();
+    let connector = tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(config));
+    let (stream, _) = tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio_tungstenite::connect_async_tls_with_config(
+            settings.ws_url(),
+            None,
+            false,
+            Some(connector),
+        ),
+    )
+    .await
+    .map_err(|_| "connect timeout (15s)".to_string())?
+    .map_err(|e| format!("connect: {e}"))?;
+    let peer = stream.get_ref();
+    let der = match peer {
+        tokio_tungstenite::MaybeTlsStream::Rustls(s) => s
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|c| c.first().cloned())
+            .ok_or("server presented no certificate")?,
+        _ => return Err("not a TLS connection".into()),
+    };
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(der.as_ref());
+    let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        pem.push_str(std::str::from_utf8(chunk).map_err(|e| e.to_string())?);
+        pem.push('\n');
+    }
+    pem.push_str("-----END CERTIFICATE-----\n");
+    Ok(pem)
+}
+
+/// SHA-256 fingerprint of a PEM cert, colon-separated hex for display.
+pub fn cert_fingerprint_pem(pem: &str) -> String {
+    use base64::Engine;
+    let b64: String = pem
+        .lines()
+        .filter(|l| !l.starts_with("-----"))
+        .collect();
+    let der = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .unwrap_or_default();
+    let hash = crate::json_store::hex_sha256(&der);
+    hash.as_bytes()
+        .chunks(2)
+        .map(|c| std::str::from_utf8(c).unwrap_or("??").to_string())
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 async fn connect_once(
     app: &AppHandle,
     mgr: &Arc<RemoteManager>,
     url: &str,
+    settings: &RemoteSettings,
     generation: u64,
     stop: &mut oneshot::Receiver<()>,
 ) -> End {
-    let stream = match tokio_tungstenite::connect_async(url).await {
-        Ok((stream, _)) => stream,
-        Err(e) => {
-            mgr.set_status(app, &format!("error: {e}"));
-            return End::Retry;
+    let stream = match tokio::time::timeout(
+        Duration::from_secs(15),
+        tokio_tungstenite::connect_async_tls_with_config(
+            url,
+            None,
+            false,
+            tls_connector(settings),
+        ),
+    )
+    .await
+    {
+        Ok(Ok((stream, _))) => stream,
+        Ok(Err(e)) => {
+            return End::Retry(format!("error: {e}"));
+        }
+        Err(_) => {
+            return End::Retry("error: connect timeout (15s)".into());
         }
     };
     let (mut sink, mut source) = stream.split();
@@ -100,14 +227,18 @@ async fn connect_once(
                 Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
                     route(app, text.as_str());
                 }
-                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
+                Some(Ok(tokio_tungstenite::tungstenite::Message::Close(cf))) => {
                     writer.abort();
-                    break End::Retry;
+                    break End::Retry(format!("closed by relay: {}", cf.map(|c| c.code.to_string()).unwrap_or_default()));
+                }
+                None => {
+                    writer.abort();
+                    break End::Retry("connection ended".into());
                 }
                 Some(Ok(_)) => {} // pings/pongs/binary: nothing to do
-                Some(Err(_)) => {
+                Some(Err(e)) => {
                     writer.abort();
-                    break End::Retry;
+                    break End::Retry(format!("stream error: {e}"));
                 }
             },
         }
