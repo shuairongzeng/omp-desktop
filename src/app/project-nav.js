@@ -289,6 +289,23 @@
     return [primary, ...order];
   }
 
+  /** The startup restore's outcome report over the *resolved* spawn results
+   *  (`Promise.all`'s array, never the Promise array — iterating that reads
+   *  every entry as a failure with an undefined label): the ids that came
+   *  up, in saved order, and one markdown note per failure, labelled with
+   *  the saved tab's name (its folder, or "a tab") and the error's message
+   *  (or the error itself when it carries none). Pure so the note shape is
+   *  regression-tested; live.js logs the raw errors beside it. */
+  function restoreReport(settled) {
+    const restored = [];
+    const notes = [];
+    for (const r of settled) {
+      if (r.ok) restored.push(r.id);
+      else notes.push(`**Could not reopen ${r.label}:** ${String(r.error?.message ?? r.error)}`);
+    }
+    return { restored, notes };
+  }
+
   window.OMP_PROJECT_NAV = {
     normPath,
     basename,
@@ -312,5 +329,6 @@
     tabLayout,
     restoreSpec,
     restoreOrder,
+    restoreReport,
   };
 })();

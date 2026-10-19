@@ -2132,16 +2132,15 @@
         if (!r.ok || !focusIsFree()) continue;
         if (await tryActivate(r)) break;
       }
-      // All settled by now (the activation pass awaited most of them);
-      // failures are reported in saved order, not retried.
-      await Promise.all(results);
-      for (const [i, r] of results.entries()) {
-        if (r.ok) restored.push(r.id);
-        else {
-          console.error(`[live] reopening tab '${r.cwd}' failed:`, r.error);
-          notes.push(`**Could not reopen ${r.label}:** ${String(r.error?.message ?? r.error)}`);
-        }
-      }
+      // `Promise.all` settles every spawn but returns a *new* array of the
+      // resolved values — the reporting walks that array, never `results`
+      // (the Promises), whose entries all read as failures with undefined
+      // labels. `restoreReport` builds the ids and the notes in saved order.
+      const settled = await Promise.all(results);
+      for (const r of settled) if (!r.ok) console.error(`[live] reopening tab '${r.cwd}' failed:`, r.error);
+      const report = window.OMP_PROJECT_NAV.restoreReport(settled);
+      restored.push(...report.restored);
+      notes.push(...report.notes);
     } finally {
       if (notes.length > 0) {
         // The active tab's first `get_messages` may still be in flight; its

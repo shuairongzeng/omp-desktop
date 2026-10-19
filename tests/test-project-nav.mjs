@@ -410,4 +410,31 @@ check("restoreOrder is empty for an empty restore, and a single tab restores alo
   assert.deepEqual(N.restoreOrder(5, 1), [0]);
 });
 
+// ── restoreReport (parallel restore outcome notes) ────────────────────────
+
+check("restoreReport splits resolved spawns into ids and failure notes", () => {
+  const out = N.restoreReport([
+    { ok: true, id: "session-1" },
+    { ok: false, error: new Error("boom"), cwd: "/x", label: "tab-x" },
+    { ok: true, id: "session-2" },
+  ]);
+  assert.deepEqual(out.restored, ["session-1", "session-2"]);
+  assert.deepEqual(out.notes, ["**Could not reopen tab-x:** boom"]);
+});
+
+check("restoreReport labels a failure without an Error message by the error itself", () => {
+  const out = N.restoreReport([{ ok: false, error: "refused", cwd: "/y", label: "/y" }]);
+  assert.deepEqual(out.restored, []);
+  assert.deepEqual(out.notes, ["**Could not reopen /y:** refused"]);
+});
+
+check("restoreReport over an all-success restore yields no notes", () => {
+  const out = N.restoreReport([{ ok: true, id: "a" }, { ok: true, id: "b" }]);
+  assert.deepEqual(out, { restored: ["a", "b"], notes: [] });
+});
+
+check("restoreReport over an empty restore yields nothing", () => {
+  assert.deepEqual(N.restoreReport([]), { restored: [], notes: [] });
+});
+
 console.log(`project-nav: ${passed} checks passed`);
