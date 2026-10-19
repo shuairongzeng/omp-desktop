@@ -97,7 +97,7 @@ function _SP_Group({ name, src, rows, ctx, query }) {
 
 /** `ctx.active === false` (page kept mounted behind a project tab, keeping
  *  its search and scroll): keys are left alone. */
-function SettingsPage({ ctx }) {
+function SettingsPage({ ctx, onClose }) {
   const S = window.OMP_SETTINGS;
   const { t } = ctx;
   const active = ctx.active !== false;
@@ -257,6 +257,14 @@ function SettingsPage({ ctx }) {
     <div className="settings" role="region" aria-label="Settings" ref={rootRef}>
       <div className="st-top">
         <div className="st-inner">
+          {/* Phones have no Esc/Ctrl+W: the page is unreachable-to-leave
+              without a visible exit. Desktop hides this (settings.css). */}
+          {onClose && (
+            <button type="button" className="st-back" aria-label="back to conversation" title="back"
+              onClick={onClose}>
+              <_SP_Icon name="back" size={15} />
+            </button>
+          )}
           <label className="st-search">
             <_SP_Icon name="search" size={14} />
             <input ref={searchRef} type="text" placeholder="Search settings" value={query} autoComplete="off"

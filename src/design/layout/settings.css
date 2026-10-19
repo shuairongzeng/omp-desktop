@@ -286,3 +286,69 @@
 }
 .st-search-clear:hover { color: var(--fg); background: var(--bg-hover); }
 .st-search-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Phone tier (≤760px). The desktop layout never sees any of this.
+   - back button: the only exit on a keyboardless screen (Esc/Ctrl+W are
+     desktop chords; the footer's "close tab" line is a hint, not a button)
+   - section strip scrolls instead of squeezing (labels fully readable)
+   - rows stack: label/desc full-width above, wide controls below — the
+     2-column flex squeezed the label column to ~150px at 390px, wrapping
+     every other word and painting the control over the text
+   ══════════════════════════════════════════════════════════════════════ */
+.st-back { display: none; }
+@media (max-width: 760px) {
+  .st-back {
+    display: grid; place-items: center; flex: none;
+    width: 40px; height: 40px; margin-right: 4px;
+    border: 1px solid var(--line); border-radius: 10px;
+    background: var(--bg-surface); color: var(--fg-2);
+  }
+  .st-back:active { background: var(--bg-hover); color: var(--fg); }
+  .st-top .st-inner { display: flex; align-items: center; flex-wrap: wrap; }
+  .st-search { flex: 1; }
+  /* the section strip wraps onto its own full row below the search */
+  .st-top .st-tabs { flex-basis: 100%; }
+  /* iOS focus-zoom guard: inputs under 16px zoom the page on focus. */
+  .st-search input { font-size: 16px; }
+  .st-search .st-kbd { display: none; } /* Ctrl+F is keyboard chrome */
+
+  /* Section strip: content-sized tabs in a horizontal scroller. The
+     desktop opacity trick (labels laid out but transparent) keeps widths
+     constant there; on a phone every label shows and the strip scrolls. */
+  .st-tabs {
+    overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -ms-overflow-style: none;
+    padding-bottom: 2px;
+    /* right-edge fade: the affordance that more sections exist */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+  .st-tabs::-webkit-scrollbar { display: none; }
+  .st-tab { flex: none; }
+  .st-tab .st-tab-lbl { opacity: 1; }
+
+  /* Rows: label+desc take the full width on top, the control goes below.
+     Toggles stay horizontal (label + switch reads fine at any width);
+     everything wide (segmented groups, sliders, selects, accent swatches,
+     text inputs) stacks. `.stack` rows are already this shape. */
+  .st-row:not(.stack):has(.st-seg),
+  .st-row:not(.stack):has(input[type="range"]),
+  .st-row:not(.stack):has(select),
+  .st-row:not(.stack):has(.st-sw),
+  .st-row:not(.stack):has(input[type="text"]),
+  .st-row:not(.stack):has(input[type="number"]) {
+    flex-direction: column; align-items: stretch; gap: 10px;
+  }
+  .st-row .st-seg, .st-row input[type="range"] { align-self: stretch; }
+  .st-row .st-seg { display: flex; }
+  .st-row .st-seg [role="radio"] { flex: 1; min-height: 40px; }
+  .st-row input[type="range"] { width: 100%; height: 40px; }
+
+  /* Theme cards: 3 columns clip the rightmost card at 390px. */
+  .st-themes { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+  /* Footer: the reset action stays; the keyboard-hint chips (Ctrl+W,
+     ←/→ sections) are desktop noise — the back button owns leaving. */
+  .st-foot span:has(.st-kbd) { display: none; }
+}

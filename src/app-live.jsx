@@ -1181,7 +1181,7 @@ React.useEffect(() => {
               )}
               {settingsCtx && (
                 <div className="st-host" hidden={!stab.active}>
-                  <SettingsPage ctx={settingsCtx} />
+                  <SettingsPage ctx={settingsCtx} onClose={closeSettings} />
                 </div>
               )}
             </div>
