@@ -283,9 +283,16 @@ mod tests {
     #[test]
     fn safe_join_windows_root() {
         // On Windows, `/x` joining an absolute `C:\root` path stays inside.
+        // The containment and the joined tail hold on every platform; only
+        // the separator inside the root differs (on Unix `C:\srv\static` is
+        // one relative component, so the tail joins with `/`).
         let root = Path::new("C:\\srv\\static");
         let out = safe_join(root, "/app/accent.js").unwrap();
-        assert_eq!(out, PathBuf::from("C:\\srv\\static\\app\\accent.js"));
+        assert!(out.starts_with(root), "{out:?} must stay under {root:?}");
+        assert_eq!(
+            out.strip_prefix(root).unwrap(),
+            Path::new("app").join("accent.js")
+        );
     }
 
     #[test]
