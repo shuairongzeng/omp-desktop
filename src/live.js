@@ -4432,6 +4432,14 @@
      *  in Rust: the live tab list, mirroring a phone-created tab into the
      *  desktop UI, and phone-initiated closes through the desktop's own
      *  `_closeTab` path. */
+    /** Phone-shim hook (`app/remote-transport.js`): after a relay
+     *  reconnect, events emitted during the gap are lost — re-pull the
+     *  active tab's state (get_state + get_messages merge fills in
+     *  completed messages; streaming resumes from live events). */
+    _remoteResync() {
+      if (activeSessionId) _initFetch();
+    },
+
     _remoteHandlers: {
       // Wire name is snake_case: the phone calls `js:list_tabs`.
       list_tabs() {

@@ -4,6 +4,9 @@
    `.mobile-sidebar-open` on <html>), side columns (rail/split/browser
    dock) become full-width overlays instead of grid columns, touch targets
    grow, and the composer uses 16px text so iOS doesn't zoom on focus.
+   Two layers: ≤820px collapses the desktop grid; the ≤760px layer below
+   refines real handsets — finger-sized targets, safe-area insets, no
+   keyboard-hint noise, swipeable pill/status rows.
    Everything here is width-gated; the desktop layout is untouched. */
 
 @media (max-width: 820px) {
@@ -32,7 +35,9 @@
     grid-template-columns: 1fr;
   }
   .stage > aside.rail,
-  .stage > .split-pane {
+  .stage > aside.split,
+  .stage > aside.tree-drawer,
+  .stage > .browser-dock {
     position: fixed; inset: 0; z-index: 40;
     width: auto !important; min-width: 0;
     background: var(--bg-window);
@@ -42,9 +47,11 @@
   /* ── Chrome / status bar ──────────────────────────────────────────── */
   .chrome { padding: 0 8px; }
   .chrome-title { font-size: 12px; }
+  /* remote-shim = the phone browser (remote-transport.js puts it on
+     <html>): traffic lights and Windows controls act on the *desktop*
+     window — useless and dangerous (close!) from a phone. */
   .remote-shim .chrome-lights,
-  .remote-shim .chrome-win { display: none; }
-  .status-bar { flex-wrap: wrap; row-gap: 4px; }
+  .remote-shim .win-controls { display: none; }
   .status-cell { min-height: 32px; }
 
   /* ── Chat ─────────────────────────────────────────────────────────── */
@@ -57,11 +64,129 @@
 
   /* ── Modals / panels ──────────────────────────────────────────────── */
   .bridge { margin: 12px; max-width: calc(100vw - 24px); max-height: calc(100vh - 24px); }
-  .settings-page { flex-direction: column; }
-  .settings-nav { flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--line); }
+  /* Settings already runs a column layout (settings.css .settings); a
+     phone only needs its scroll body's desktop gutters trimmed. */
+  .st-body, .st-inner { padding-left: 14px; padding-right: 14px; }
+  .st-top { padding-left: 14px; padding-right: 14px; }
 
-  /* ── Terminal / browser dock ──────────────────────────────────────── */
-  .terminal-panel { min-height: 30vh; }
+  /* Terminal panel: give the xterm real room to type on a phone. */
+  .term-panel { max-height: 60%; min-height: 30vh; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Phone tier (≤760px) — the remote-control handset refinements.
+   Everything is a finger-first override of the 820px collapse above:
+   targets ≥40px, no hover affordances, safe-area insets, and swipeable
+   rows instead of wrapped ones. Desktop never sees any of this. */
+@media (max-width: 760px) {
+  /* ── Safe areas: notches and the home bar ───────────────────────────── */
+  /* The phone browser's viewport is the full screen; only the window
+     shell can absorb the insets (chrome on top, composer/status at the
+     bottom). env() is 0 wherever the UA reports no inset, so this is a
+     no-op on desktop-shaped narrow windows. */
+  .app { padding: 0; } /* the desktop app gutter is dead weight on a phone */
+  .window {
+    max-width: none; max-height: none;
+    border-radius: 0; border: none; box-shadow: none;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+  .composer { margin: 6px 8px calc(env(safe-area-inset-bottom, 0px) + 6px); }
+  .status {
+    height: auto; min-height: 40px;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+
+  /* ── Composer ───────────────────────────────────────────────────────── */
+  /* The keyboard-chord hint span (composer.jsx's footer span.mono with
+     "send · ⇧⏎ newline · …") is mouse-and-keyboard noise on a touchscreen
+     and steals a whole line under the pills. The .composer-bg-note stays:
+     it reports a real background job, not a chord. */
+  .composer-foot > span.mono { display: none; }
+  /* Thumb-sized controls: the 24px .btn row (attach/voice/bridge/send)
+     was half the 44px minimum touch target. */
+  .composer .btn { min-width: 40px; min-height: 40px; padding: 0 10px; }
+  .composer .btn.icon { width: 40px; padding: 0; }
+  .composer .btn .kbd { display: none; } /* ⌘K chip on the bridge button: key noise */
+  /* Textarea: roomier type target for two-thumb drafting. */
+  .composer-input { padding: 6px 4px; }
+  .composer-input textarea { line-height: 1.6; min-height: 28px; }
+  .composer-input.has-clear textarea { padding-right: 34px; }
+  .composer-clear { width: 30px; height: 30px; } /* ≥30px hit area inside the row */
+
+  /* ── Pills row: horizontal swipe, no wrap ───────────────────────────── */
+  /* flex-wrap squeezed model/thinking/plan/goal onto two cramped lines at
+     390px; a single scrollable row with hidden scrollbars is the phone
+     idiom. */
+  .composer-foot {
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -ms-overflow-style: none;
+    padding: 6px 2px 2px;
+  }
+  .composer-foot::-webkit-scrollbar { display: none; }
+  .composer-foot > * { flex: none; }
+  /* Attach-thumb × (16px, composer.css .attach-remove) is under a 48px
+     thumb — un-tappable. 26px still fits the thumbnail corner. */
+  .attach-remove { width: 26px; height: 26px; }
+  /* Finger-target pills: ≥36px tall (2px + 11px icon + 2px border grew
+     ~24px on desktop); paddings instead of a fixed height so text-size
+     tweaks still scale them. */
+  .composer-pill { padding: 8px 12px; min-height: 36px; }
+  /* The foot is now a scroll container, which clips the thinking menu's
+     absolutely-positioned .thinking-pop (bottom: calc(100% + 6px) hangs
+     below the foot's box). Re-anchor it fixed to the viewport bottom
+     above the composer instead: visible over the pill row, never clipped,
+     still right over its trigger's side of the screen. */
+  .composer .thinking-pop {
+    position: fixed;
+    bottom: calc(100% + 6px);
+    left: 8px; right: 8px;
+    max-width: calc(100vw - 16px);
+    min-width: 0;
+  }
+
+  /* ── Status bar: connection stays, telemetry goes ───────────────────── */
+  /* cost / tokens / rate are desktop telemetry chrome; the phone keeps
+     the connection dot, approval mode and panel toggles. rail.css pairs
+     each telemetry cell with a .status-sep that carries the same st-*
+     class (chrome.jsx), so the class selectors drop both at once. */
+  .status .st-ctx, .status .st-cost, .status .st-tps-cell { display: none; }
+  /* Fingers, not cursors, hit the panel toggles now. */
+  .status .status-cell { min-height: 36px; }
+  .status .status-cell.btn { height: auto; } /* beat the inline 20px height */
+  .status .btn .kbd { display: none; }
+
+  /* ── Tab bar ────────────────────────────────────────────────────────── */
+  .tabs { height: 40px; padding-left: 0; }
+  .tab { min-width: 96px; padding: 0 8px; gap: 6px; } /* narrower, taller */
+  .tab-name { max-width: 120px; }
+  .tab-add { width: 40px; }
+  .tabs-right { display: none; } /* v0.9 pill + version: desktop bookkeeping */
+  /* .tab-close is opacity:0 until .tab:hover on desktop (chrome.css);
+     there is no hover on a touchscreen — always visible, ≥32px target. */
+  .tab > .tab-close { opacity: 1; width: 32px; height: 32px; }
+  .tab-group-trigger { width: 32px; height: 32px; }
+  .tab-close { width: 32px; height: 32px; }
+  .tab-count { min-width: 20px; min-height: 20px; }
+  .tab-run-dot.term-dirty { flex: none; }
+
+  /* ── Chat: reading measure at 390px ─────────────────────────────────── */
+  /* The 820px layer already cut the pad; the user bubble keeps desktop
+     inner padding — this narrows it so a short message reads full-width
+     without wrapping mid-word. */
+  .chat-pad { padding: 12px 8px 8px; }
+  .user-bubble { padding: 10px 12px; max-width: 94%; }
+  .user-images { gap: 4px; }
+  .user-image { max-width: 160px; max-height: 160px; }
+
+  /* ── Popover guards for the taller rows ──────────────────────────── */
+  /* The group chip's dropdown (.tab-group-pop, top: 100%) opens below a
+     40px bar inside .tabs' own horizontal scroller — it clips there like
+     the thinking pop did, so lift it fixed below the bar. */
+  .tab-group-pop { position: fixed; top: 84px; left: 8px; right: 8px; max-width: calc(100vw - 16px); min-width: 0; }
 }
 
 /* The hamburger only exists for narrow screens (it is in chrome.jsx's

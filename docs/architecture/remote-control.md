@@ -89,6 +89,30 @@ heartbeat ping every 25s. Phones in the room get `peer` frames on
 desktop join/leave and render an offline badge; commands sent while
 offline fail fast with a typed error.
 
+## Phone reconnect (in place, never a reload)
+
+The phone's socket lives on the open internet (NAT idle drops, radio
+handoffs, backgrounded-tab timer suspension), so drops are routine. The
+shim reconnects **without reloading the page**: a non-blocking banner
+announces the drop, the socket reopens with capped backoff
+(1s → 15s), and on re-open the shim
+
+1. flushes the bounded send queue (500 frames), skipping `sub` frames
+   and invoke frames whose promise already timed out while queued —
+   running those now would double-execute a prompt the user was told
+   had failed;
+2. replays one `sub` per live listener name (the relay cleared them
+   with the old connection);
+3. calls `OMP_BRIDGE._remoteResync()`, which re-sends `_initFetch`
+   (`get_state` + `get_messages`): completed messages missed during the
+   gap merge in by `ts`, streaming resumes from live events.
+
+`visibilitychange` (visible) and `pageshow` (persisted) trigger an
+immediate reconnect attempt instead of waiting out the backoff — phone
+browsers suspend timers while backgrounded, so the socket is usually
+already dead on wake. A `peer desktop:true` frame after a desktop
+outage also triggers `_remoteResync()`.
+
 ## Security
 
 - TLS everywhere (relay does rustls itself or sits behind Caddy/nginx).

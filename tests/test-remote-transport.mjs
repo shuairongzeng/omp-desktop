@@ -5,7 +5,12 @@
 // guard, the three boot states (pairing landing, stored auth, unpaired
 // overlay), the pre-open send queue and its on-open flush order, res/evt
 // frame handling, per-name sub refcounting, the noop/unsupported command
-// walls, and the desktop-offline overlay.
+// walls, and the desktop-offline overlay — plus the in-place reconnect:
+// a non-blocking banner instead of a page reload, exponential backoff
+// (1s→2s→…→15s cap), a reopen flush that skips timed-out invokes and
+// queued subs in favor of one fresh sub per listener, _remoteResync on
+// reopen and peer-wake, the 500-frame queue bound, and immediate
+// reconnect on visibilitychange/pageshow.
 // Run: node tests/test-remote-transport.mjs
 
 import assert from "node:assert/strict";
@@ -19,7 +24,8 @@ const src = readFileSync(join(root, "src/app/remote-transport.js"), "utf8");
 // ── the browser the shim boots in ──────────────────────────────────────────
 // No real network: WebSocket is a fake whose open/message/close the test
 // triggers by hand, and setTimeout records instead of firing, so nothing
-// ever depends on the event loop.
+// ever depends on the event loop. window and document record their event
+// listeners so visibilitychange / pageshow can be dispatched by hand.
 
 function makeEnv(opts = {}) {
   const sockets = [];
@@ -39,12 +45,17 @@ function makeEnv(opts = {}) {
     shut() { this.readyState = 3; if (this.onclose) this.onclose(); }
   }
 
+  // setTimeout records {fn, delay} instead of firing. The delay is the
+  // discriminator tests use: the invoke timeout always passes 30000,
+  // the reconnect backoff passes its current wait (≤15000).
   const timers = new Map();
   let timerSeq = 0;
   const fakeTimers = {
-    setTimeout: (fn) => { const id = ++timerSeq; timers.set(id, fn); return id; },
+    setTimeout: (fn, delay) => { const id = ++timerSeq; timers.set(id, { fn, delay: delay ?? 0 }); return id; },
     clearTimeout: (id) => { timers.delete(id); },
-    runAll: () => { for (const fn of [...timers.values()]) fn(); timers.clear(); },
+    list: () => [...timers.entries()].map(([id, t]) => ({ id, delay: t.delay })),
+    run: (id) => { const t = timers.get(id); if (!t) return false; timers.delete(id); t.fn(); return true; },
+    runAll: () => { for (const [id, t] of [...timers.entries()]) { timers.delete(id); t.fn(); } },
     pending: () => timers.size,
   };
 
@@ -88,17 +99,34 @@ function makeEnv(opts = {}) {
   };
   const documentElement = mkEl("html");
   documentElement.classList = { add: (c) => classList.push(c) };
+
+  // window/document event listeners are recorded, not dropped: the shim
+  // registers visibilitychange (document) and pageshow (window) wakeups.
+  const docListeners = new Map();
+  const record = (map, type, fn) => {
+    if (!map.has(type)) map.set(type, []);
+    map.get(type).push(fn);
+  };
+  const dispatchFrom = (map) => (type, ev) => {
+    for (const fn of map.get(type) || []) fn(ev || {});
+  };
   const document = {
     readyState: "complete",
+    hidden: false,
     documentElement,
     head: mkEl("head"),
     body: mkEl("body"),
     createElement: (tag) => mkEl(tag),
-    addEventListener() {},
+    addEventListener: (type, fn) => record(docListeners, type, fn),
   };
+  const dispatchDocumentEvent = dispatchFrom(docListeners);
 
-  const win = {};
+  const winListeners = new Map();
+  const win = {
+    addEventListener: (type, fn) => record(winListeners, type, fn),
+  };
   if (opts.tauri) win.__TAURI__ = opts.tauri;
+  const dispatchWindowEvent = dispatchFrom(winListeners);
 
   // eslint-disable-next-line no-new-func
   new Function(
@@ -112,7 +140,9 @@ function makeEnv(opts = {}) {
   return {
     win, document, location, localStorage, sockets,
     replaceCalls, reloadCalls, classList, fakeTimers,
+    dispatchWindowEvent, dispatchDocumentEvent,
     overlay: () => document.body.children.find((c) => c.id === "remote-overlay") || null,
+    banner: () => document.body.children.find((c) => c.id === "remote-banner") || null,
   };
 }
 
@@ -132,6 +162,13 @@ async function check(label, fn) {
   passed++;
 }
 const drain = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
+
+// Fire the armed reconnect timer (never one of the 30s invoke timeouts).
+const runReconnect = (E) => {
+  const t = E.fakeTimers.list().find((x) => x.delay !== 30000);
+  assert.ok(t, "a reconnect timer is armed");
+  E.fakeTimers.run(t.id);
+};
 
 // ── checks ─────────────────────────────────────────────────────────────────
 
@@ -181,11 +218,13 @@ await check("with auth: connects, queues pre-open frames in order, answers res b
 
   const sock = E.sockets[0];
   sock.open();
-  assert.deepEqual(E.reloadCalls, []); // first connect, not a resync reconnect
+  assert.deepEqual(E.reloadCalls, []); // connecting never reloads
   assert.deepEqual(sock.sent, [
     { t: "cmd", id: 1, name: "get_state", args: {} },
     { t: "cmd", id: 2, name: "list_tabs", args: { all: true } },
-    { t: "cmd", id: 3, name: "sub", args: { name: "tab_update" } }, // one sub for both listens
+    // the queued sub frame (id 3) is skipped; subs always replay fresh
+    // from the listener registry, so the wire sub gets the next id, 4
+    { t: "cmd", id: 4, name: "sub", args: { name: "tab_update" } }, // one sub for both listens
   ]);
 
   // out-of-order responses resolve the promise their id belongs to
@@ -212,8 +251,8 @@ await check("with auth: connects, queues pre-open frames in order, answers res b
   let err = null;
   const p3 = T.core.invoke("boom_cmd");
   p3.catch((e) => { err = e; });
-  assert.deepEqual(sock.sent[3], { t: "cmd", id: 4, name: "boom_cmd", args: {} });
-  sock.message({ t: "res", id: 4, ok: false, error: "relay exploded" });
+  assert.deepEqual(sock.sent[3], { t: "cmd", id: 5, name: "boom_cmd", args: {} });
+  sock.message({ t: "res", id: 5, ok: false, error: "relay exploded" });
   await drain();
   assert.ok(err instanceof Error);
   assert.equal(err.message, "relay exploded");
@@ -223,7 +262,7 @@ await check("with auth: connects, queues pre-open frames in order, answers res b
   assert.equal(sock.sent.length, 4); // still one holder left
   off2();
   assert.equal(sock.sent.length, 5);
-  assert.deepEqual(sock.sent[4], { t: "cmd", id: 5, name: "unsub", args: { name: "tab_update" } });
+  assert.deepEqual(sock.sent[4], { t: "cmd", id: 6, name: "unsub", args: { name: "tab_update" } });
   // and an evt for a name nobody holds reaches no one
   sock.message({ t: "evt", name: "tab_update", payload: { id: "t10" } });
   assert.equal(evts.length, 2);
@@ -280,6 +319,206 @@ await check("peer frames flip the desktop-offline overlay", async () => {
 
   sock.message({ t: "peer", desktop: true });
   assert.equal(ov.style.display, "none");
+});
+
+// ── in-place reconnect ──────────────────────────────────────────────────────
+
+await check("a drop after a good connection reconnects in place: banner up (overlay stays down), never a reload, banner down on reopen", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const sock = E.sockets[0];
+  sock.open();
+  assert.deepEqual(E.reloadCalls, []);
+
+  // mount and then dismiss the desktop-offline overlay first, so the
+  // drop can prove the reconnect banner does NOT resurrect it
+  sock.message({ t: "peer", desktop: false });
+  assert.equal(E.overlay().style.display, "flex");
+  sock.message({ t: "peer", desktop: true });
+  assert.equal(E.overlay().style.display, "none");
+  assert.equal(E.banner(), null);
+
+  sock.shut(); // the drop
+
+  const banner = E.banner();
+  assert.ok(banner, "the reconnect banner is mounted");
+  assert.equal(banner.style.display, "block");
+  assert.equal(banner.textContent, "连接中断，正在重连…");
+  assert.equal(E.overlay().style.display, "none"); // non-blocking: no blocking overlay
+  assert.deepEqual(E.reloadCalls, []); // in place — the page is never reloaded
+  assert.deepEqual(E.replaceCalls, []);
+
+  // exactly one reconnect attempt is armed, 1s out
+  const armed = E.fakeTimers.list();
+  assert.equal(armed.length, 1);
+  assert.equal(armed[0].delay, 1000);
+  E.fakeTimers.run(armed[0].id);
+  assert.equal(E.sockets.length, 2); // a fresh socket to the same room
+  assert.equal(E.sockets[1].url, sock.url);
+  assert.equal(E.banner().style.display, "block"); // still up while connecting
+  assert.deepEqual(E.reloadCalls, []);
+
+  E.sockets[1].open();
+  assert.equal(E.banner().style.display, "none"); // gone on reopen
+  assert.equal(E.overlay().style.display, "none");
+  assert.deepEqual(E.reloadCalls, []); // never reloaded across the whole cycle
+});
+
+await check("reconnect-open flushes queued invokes, skips timed-out ones and queued subs, replays exactly one fresh sub per listener", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const T = E.win.__TAURI__;
+  const sock = E.sockets[0];
+  sock.open();
+
+  // two live subscriptions registered while connected (ids 1 and 2)
+  await T.event.listen("tab_update", () => {});
+  await T.event.listen("chat_update", () => {});
+  assert.equal(sock.sent.length, 2);
+
+  sock.shut();
+
+  // an invoke that times out while queued: its frame must NOT be replayed
+  // on reopen — running it would double-execute a prompt the user was
+  // told had failed
+  let slowErr = null;
+  const pSlow = T.core.invoke("slow_cmd"); // id 3
+  pSlow.catch((e) => { slowErr = e; });
+  const slowTimer = E.fakeTimers.list().find((t) => t.delay === 30000);
+  assert.ok(slowTimer, "the queued invoke armed its 30s timeout");
+  E.fakeTimers.run(slowTimer.id);
+  await drain();
+  assert.equal(slowErr.message, "slow_cmd: timed out waiting for the desktop");
+
+  // then two fresh invokes and a new subscription, all queued while closed
+  const pState = T.core.invoke("get_state"); // id 4
+  const pTabs = T.core.invoke("list_tabs", { all: true }); // id 5
+  await T.event.listen("new_evt", () => {}); // queued sub frame, id 6
+  assert.equal(sock.sent.length, 2); // nothing goes out on the dead wire
+
+  runReconnect(E);
+  const sock2 = E.sockets[1];
+  sock2.open();
+
+  // flush: get_state/list_tabs (ids 4, 5) yes; slow_cmd (id 3) skipped —
+  // its promise already timed out; the queued sub (id 6) skipped — subs
+  // replay from the listener registry instead, one fresh frame per name
+  assert.deepEqual(sock2.sent, [
+    { t: "cmd", id: 4, name: "get_state", args: {} },
+    { t: "cmd", id: 5, name: "list_tabs", args: { all: true } },
+    { t: "cmd", id: 7, name: "sub", args: { name: "tab_update" } },
+    { t: "cmd", id: 8, name: "sub", args: { name: "chat_update" } },
+    { t: "cmd", id: 9, name: "sub", args: { name: "new_evt" } },
+  ]);
+  const subNames = sock2.sent.filter((f) => f.name === "sub").map((f) => f.args.name);
+  assert.deepEqual([...subNames].sort(), ["chat_update", "new_evt", "tab_update"]); // exactly one each
+
+  // a flushed invoke is live again: answering it by id resolves the promise
+  let v;
+  pState.then((x) => { v = x; });
+  sock2.message({ t: "res", id: 4, ok: true, value: { tabs: 1 } });
+  await drain();
+  assert.deepEqual(v, { tabs: 1 });
+});
+
+await check("_remoteResync fires on reconnect-open and on peer desktop:true, never on first open", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  let resyncs = 0;
+  E.win.OMP_BRIDGE = { _remoteResync: () => { resyncs++; } };
+
+  E.sockets[0].open();
+  assert.equal(resyncs, 0); // first open: nothing has been missed yet
+
+  E.sockets[0].shut();
+  runReconnect(E);
+  E.sockets[1].open();
+  assert.equal(resyncs, 1); // reopen pulled the gap
+
+  // the peer waking up pulls the gap too; going offline does not
+  E.sockets[1].message({ t: "peer", desktop: false });
+  assert.equal(resyncs, 1);
+  E.sockets[1].message({ t: "peer", desktop: true });
+  assert.equal(resyncs, 2);
+});
+
+await check("reconnect backoff doubles from 1s and caps at 15s — the second failure waits longer than the first, and still no reload", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const sock = E.sockets[0];
+  sock.open();
+
+  const delays = [];
+  let current = sock;
+  for (let i = 0; i < 6; i++) {
+    current.shut(); // every attempt fails without ever opening
+    const armed = E.fakeTimers.list();
+    assert.equal(armed.length, 1, "exactly one reconnect timer is armed");
+    delays.push(armed[0].delay);
+    E.fakeTimers.run(armed[0].id); // the wait elapses, connect() dials again
+    current = E.sockets[E.sockets.length - 1];
+  }
+  assert.ok(delays[1] > delays[0], "the second failure waits longer than the first");
+  assert.deepEqual(delays, [1000, 2000, 4000, 8000, 15000, 15000]); // doubling, capped
+  assert.equal(E.sockets.length, 7); // six retries, no page reload
+  assert.deepEqual(E.reloadCalls, []);
+  assert.equal(E.banner().style.display, "block"); // the outage shows the banner, not the overlay
+  assert.equal(E.overlay(), null);
+});
+
+await check("the offline send queue is bounded at 500: the oldest frames are shed, the newest 500 flush on reopen", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const T = E.win.__TAURI__;
+  const sock = E.sockets[0];
+  sock.open();
+  sock.shut();
+
+  for (let i = 0; i < 600; i++) T.core.invoke("get_state"); // ids 1..600, all queued
+
+  runReconnect(E);
+  const sock2 = E.sockets[1];
+  sock2.open();
+  assert.equal(sock2.sent.length, 500); // 600 queued, the oldest 100 dropped
+  assert.equal(sock2.sent[0].id, 101); // frames 1..100 were shed
+  assert.equal(sock2.sent[499].id, 600);
+  assert.ok(sock2.sent.every((f) => f.name === "get_state"));
+});
+
+await check("waking the page (visibilitychange visible / persisted pageshow) reconnects at once instead of waiting out the backoff", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const sock = E.sockets[0];
+  sock.open();
+  sock.shut(); // outage: a 1s reconnect timer is armed
+  assert.equal(E.fakeTimers.pending(), 1);
+
+  // a visibilitychange while still hidden does nothing
+  E.document.hidden = true;
+  E.dispatchDocumentEvent("visibilitychange");
+  assert.equal(E.sockets.length, 1);
+  assert.equal(E.fakeTimers.pending(), 1);
+
+  // a plain (non-bfcache) pageshow does nothing either
+  E.dispatchWindowEvent("pageshow", { persisted: false });
+  assert.equal(E.sockets.length, 1);
+  assert.equal(E.fakeTimers.pending(), 1);
+
+  // becoming visible reconnects NOW and disarms the backoff timer
+  E.document.hidden = false;
+  E.dispatchDocumentEvent("visibilitychange");
+  assert.equal(E.sockets.length, 2);
+  assert.equal(E.fakeTimers.pending(), 0);
+  E.sockets[1].open();
+  assert.equal(E.banner().style.display, "none");
+
+  // and a bfcache restore after another drop does the same: it dials at
+  // once. (Its handler doesn't disarm the pending backoff timer, but the
+  // stale timer is harmless — firing it just re-enters connect(), which
+  // no-ops while the fresh socket is already connecting.)
+  E.sockets[1].shut();
+  assert.equal(E.fakeTimers.pending(), 1);
+  E.dispatchWindowEvent("pageshow", { persisted: true });
+  assert.equal(E.sockets.length, 3); // dialed immediately, not after the backoff
+  const stale = E.fakeTimers.list().find((t) => t.delay !== 30000);
+  if (stale) {
+    E.fakeTimers.run(stale.id); // elapse the leftover backoff timer
+    assert.equal(E.sockets.length, 3); // no extra dial: already connecting
+  }
 });
 
 // ── summary ────────────────────────────────────────────────────────────────

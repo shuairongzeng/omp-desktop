@@ -79,29 +79,64 @@
   }
   function hideOverlay() { if (overlay) overlay.style.display = "none"; }
 
+  // ── reconnect banner (non-blocking; the page stays alive) ─────────
+  let banner = null;
+  function showBanner(text) {
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "remote-banner";
+      const style = document.createElement("style");
+      style.textContent = `#remote-banner{position:fixed;top:0;left:0;right:0;z-index:99998;padding:calc(4px + env(safe-area-inset-top,0px)) 12px 4px;text-align:center;font:12px/1.6 system-ui;color:#f5c97b;background:rgba(20,24,32,.92);backdrop-filter:blur(8px);pointer-events:none}`;
+      document.head.appendChild(style);
+      (document.body || document.documentElement).appendChild(banner);
+    }
+    banner.textContent = text;
+    banner.style.display = "block";
+  }
+  function hideBanner() { if (banner) banner.style.display = "none"; }
+
   // ── connection ──────────────────────────────────────────────────────
+  // Reconnect is IN PLACE, never a page reload: a reload refetches the
+  // whole app and destroys the live transcript view, which over a WAN
+  // (NAT idle drops, radio handoffs, screen-off timer suspension) made
+  // the phone both laggy and blind to streaming replies. On re-open we
+  // flush the queue, replay event subscriptions, and ask live.js to
+  // resync the active tab (get_state + get_messages fill the gap).
+  let retryMs = 1000;
+  let reconnectTimer = 0;
   function connect() {
     const auth = readAuth();
     if (!auth || !auth.device || !auth.token) {
       showOverlay("未配对", "在桌面端 Settings → Remote 生成配对二维码，用手机相机扫码打开；或在此输入屏幕上显示的配对码。", true);
       return;
     }
+    if (ws && (ws.readyState === 0 || ws.readyState === 1)) return; // already connecting/open
     const sock = new WebSocket(wsUrl(`role=phone&device=${encodeURIComponent(auth.device)}&token=${encodeURIComponent(auth.token)}`));
     ws = sock;
     sock.onopen = () => {
       wsOpen = true;
+      retryMs = 1000;
       hideOverlay();
+      hideBanner();
+      // Flush in order, skipping invoke frames whose promise already
+      // timed out while queued (running them now would double-execute a
+      // prompt the user was told had failed) and subs (replayed below).
+      for (const frame of sendQueue) {
+        if (frame.t === "cmd" && frame.name !== "sub" && frame.id && !pending.has(frame.id)) continue;
+        if (frame.t === "cmd" && frame.name === "sub") continue;
+        sock.send(JSON.stringify(frame));
+      }
+      sendQueue.length = 0;
+      // Subscriptions always replay from the live registry (queued `sub`
+      // frames were skipped above): covers both boot-time listeners and
+      // re-subscribing after a drop.
+      for (const name of listeners.keys()) {
+        sock.send(JSON.stringify({ t: "cmd", id: ++seq, name: "sub", args: { name } }));
+      }
       if (everConnected) {
-        // A fresh connection means the desktop may have missed frames we
-        // never saw; the honest resync is a reload (auth persists).
-        location.reload();
-        return;
+        window.OMP_BRIDGE?._remoteResync?.();
       }
       everConnected = true;
-      // Flush everything queued while the socket was connecting (boot-time
-      // invokes from live.js, subscriptions, …) in order.
-      for (const frame of sendQueue) sock.send(JSON.stringify(frame));
-      sendQueue.length = 0;
     };
     sock.onmessage = (ev) => {
       let frame;
@@ -120,6 +155,8 @@
         showOverlay("桌面端离线", "电脑上的 OMP Desktop 不在线（睡眠或已退出）。恢复后此页会自动重连。");
       } else if (frame.t === "peer" && frame.desktop === true) {
         hideOverlay();
+        // Events were missed while the desktop was gone; pull the gap.
+        window.OMP_BRIDGE?._remoteResync?.();
       } else if (frame.t === "dropped") {
         console.warn("[remote] relay dropped a frame:", frame.reason);
       }
@@ -130,19 +167,42 @@
         showOverlay("连不上服务器", "检查 relay 服务与网络后刷新。若刚换过设备令牌，需要重新配对。");
         return;
       }
-      setTimeout(connect, 2000);
+      showBanner("连接中断，正在重连…");
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(connect, retryMs);
+      retryMs = Math.min(retryMs * 2, 15000);
     };
   }
 
+  // Wake from sleep / returning to the tab: phone browsers suspend timers
+  // while backgrounded, so the relay's ping may already have killed the
+  // socket. Don't wait out the backoff — reconnect immediately.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && (!ws || ws.readyState > 1)) {
+      retryMs = 0;
+      clearTimeout(reconnectTimer);
+      connect();
+    }
+  });
+  window.addEventListener("pageshow", (ev) => {
+    if (ev.persisted && (!ws || ws.readyState > 1)) {
+      retryMs = 0;
+      clearTimeout(reconnectTimer);
+      connect();
+    }
+  });
+
   // Frames sent before the socket opens (live.js boots immediately) queue
   // up and flush in order from onopen. A frame that can never be sent —
-  // no pairing — is rejected by invoke() before it gets here.
+  // no pairing — is rejected by invoke() before it gets here. Bounded: a
+  // long outage must not accumulate hours of stale frames.
   const sendQueue = [];
   function sendFrame(frame) {
     if (wsOpen && ws && ws.readyState === 1) {
       ws.send(JSON.stringify(frame));
     } else {
       sendQueue.push(frame);
+      if (sendQueue.length > 500) sendQueue.splice(0, sendQueue.length - 500);
     }
   }
 

@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The image lightbox's private `useModalLayer` copy clobbered the shared module and left the whole app inert from startup; the lightbox now uses the shared one (verified: root is interactive at boot, bridge open/close toggles inert correctly)
 - Custom accent colors now derive a readable `--accent-fg` (near-black/near-white by luminance), so the primary button and HEAD chip stay legible with any swatch in any theme; midnight's primary button idle/hover pairing fixed
 - `test-a11y` and `test-dead-process` are now actually in the `npm test` chain
+- Phone remote control: a network blip no longer reloads the phone's whole page (the cause of the phone feeling laggy and never showing streaming replies) — the shim reconnects in place with capped backoff, replays event subscriptions, and resyncs the transcript via `get_messages`; waking the phone reconnects immediately instead of waiting out the backoff
 
 ### Changed
 
