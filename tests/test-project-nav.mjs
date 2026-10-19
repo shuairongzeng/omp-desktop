@@ -385,4 +385,29 @@ check("sessionStrip with no active tab reports no title and the tab count", () =
   assert.deepEqual(N.sessionStrip([], null), { title: null, count: 0 });
 });
 
+// ── restoreOrder (parallel restore activation, #17) ───────────────────────
+
+check("restoreOrder tries the saved active tab first, the rest in saved order", () => {
+  assert.deepEqual(N.restoreOrder(2, 4), [2, 0, 1, 3]);
+  assert.deepEqual(N.restoreOrder(0, 3), [0, 1, 2]);
+  assert.deepEqual(N.restoreOrder(3, 4), [3, 0, 1, 2]);
+});
+
+check("restoreOrder falls back to the first tab for an invalid saved active", () => {
+  // `null` is what tabLayout writes when no tab was active.
+  assert.deepEqual(N.restoreOrder(null, 2), [0, 1]);
+  assert.deepEqual(N.restoreOrder(undefined, 2), [0, 1]);
+  assert.deepEqual(N.restoreOrder(-1, 2), [0, 1]);
+  assert.deepEqual(N.restoreOrder(2, 2), [0, 1]);
+  assert.deepEqual(N.restoreOrder(1.5, 2), [0, 1]);
+});
+
+check("restoreOrder is empty for an empty restore, and a single tab restores alone", () => {
+  assert.deepEqual(N.restoreOrder(0, 0), []);
+  assert.deepEqual(N.restoreOrder(null, 0), []);
+  assert.deepEqual(N.restoreOrder(0, 1), [0]);
+  // A lone tab is its own fallback: no second entry, however it is saved.
+  assert.deepEqual(N.restoreOrder(5, 1), [0]);
+});
+
 console.log(`project-nav: ${passed} checks passed`);
