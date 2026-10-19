@@ -9,7 +9,7 @@
    are real buttons, so every action is keyboard-reachable.
    ═════════════════════════════════════════════════════════════════════ */
 
-const { Icon, TabRunDot, TabLabel, RenameField } = window;
+const { Icon, TabRunDot, TabLabel, RenameField, ProfileMenu } = window;
 const { groupTabs, groupRunState, groupTarget, membersNewestFirst, basename, parentName, savedForProject } = window.OMP_PROJECT_NAV;
 const { relativeTime } = window.OMP_WIDGETS;
 
@@ -53,6 +53,12 @@ function ProjectSidebar({
   tabs, activeId, recents, savedSessions = [], historyProfile, profileLabel,
   onSelectTab, onCloseTab, onRenameTab, onNewInProject, onOpenRecent, onForgetRecent, onOpenFolder, onHide, onReorder,
   onResumeSession, onShowAllHistory,
+  // Drawer app menu (phone, ≤760px): the ProfileMenu props ride along so
+  // the drawer's foot can host the same per-tab profile switcher the
+  // desktop chrome shows. The settings row dispatches `omp:mobile
+  // open-settings` (app-live.jsx owns the single listener).
+  profiles = [], activeProfileId, startupProfileId,
+  onSelectProfile, onCreateProfile, onRenameProfile, onDeleteProfile, onSetStartupProfile,
 }) {
   // Group keys the user folded (#12): persisted as a `profile|normPath`
   // JSON map in localStorage — a restart remembers the folds. Truthy =
@@ -234,6 +240,35 @@ function ProjectSidebar({
       <button className="psb-foot" onClick={onOpenFolder}>
         <Icon name="plus" size={11} />open folder…
       </button>
+
+      {/* App menu pinned to the drawer's foot (phone only, sidebar.css
+          ≤760px): settings + the same per-tab profile switcher the desktop
+          chrome's chip hosts. Desktop renders it display:none — the
+          desktop sidebar has no need for either. The settings row
+          dispatches `omp:mobile open-settings`; chrome.jsx's drawer-close
+          click listener (psb-app-row is in its selector) folds the drawer
+          before the settings page (z-20, under the drawer's z-60) shows. */}
+      <div className="psb-app">
+        <button className="psb-app-row" title="settings"
+          onClick={() => window.dispatchEvent(new CustomEvent("omp:mobile", { detail: { action: "open-settings" } }))}>
+          <Icon name="cog" size={11} color="var(--fg-3)" />
+          <span className="psb-app-name">settings</span>
+        </button>
+        {ProfileMenu && (
+          <div className="psb-app-profile">
+            <ProfileMenu
+              profiles={profiles}
+              activeId={activeProfileId}
+              startupId={startupProfileId}
+              onSelect={onSelectProfile}
+              onCreate={onCreateProfile}
+              onRename={onRenameProfile}
+              onDelete={onDeleteProfile}
+              onSetStartup={onSetStartupProfile}
+            />
+          </div>
+        )}
+      </div>
     </aside>
   );
 }

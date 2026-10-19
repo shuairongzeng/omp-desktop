@@ -368,4 +368,21 @@ check("restoreSpec opens a fresh, unnamed tab on the folder when there is no con
   assert.deepEqual(spec, { cwd: "/a", resume: null, name: null, profile: "default" });
 });
 
+// ── sessionStrip (the mobile strip that replaces the tab bar) ─────────────
+
+check("sessionStrip shows the active tab's name and the open-conversation count", () => {
+  const tabs = [tab("a", "/omp", { name: "Fix git browser footer" }), tab("b", "/omp"), tab("c", "/relay")];
+  assert.deepEqual(N.sessionStrip(tabs, "b"), { title: "b", count: 3 });
+});
+
+check("sessionStrip names the folder when the active tab has no name", () => {
+  assert.equal(N.sessionStrip([tab("a", "/devel/relay-server", { name: "" })], "a").title, "relay-server");
+  assert.equal(N.sessionStrip([tab("a", "", { name: "" })], "a").title, "untitled");
+});
+
+check("sessionStrip with no active tab reports no title and the tab count", () => {
+  assert.deepEqual(N.sessionStrip([tab("a", "/omp"), tab("b", "/omp")], "closed"), { title: null, count: 2 });
+  assert.deepEqual(N.sessionStrip([], null), { title: null, count: 0 });
+});
+
 console.log(`project-nav: ${passed} checks passed`);

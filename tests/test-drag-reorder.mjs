@@ -35,6 +35,42 @@ check("a press only becomes a drag once the pointer has travelled the threshold"
   assert.equal(D.pastThreshold(0, -D.DRAG_THRESHOLD_PX), true);
 });
 
+// ── Touch: the 16px threshold + main-axis gate (mobile walk-through) ───────
+
+check("a fine pointer keeps the 5px threshold and no axis gate", () => {
+  // A diagonal 4px move is under 5px: still a click, either way.
+  assert.equal(D.pastThreshold(3, 3), false);
+  // The axis opt-in only applies on coarse pointers — a mouse drag that
+  // starts mostly sideways on a horizontal bar still reorders.
+  assert.equal(D.pastThreshold(0, 10, { axis: "x" }), true);
+  assert.equal(D.pastThreshold(10, 0, { axis: "y" }), true);
+});
+
+check("a coarse pointer arms at the 16px threshold, not 5", () => {
+  // 5px — a decisive mouse drag — is still a touch tap's landing slop.
+  assert.equal(D.pastThreshold(6, 0, { coarse: true, axis: "x" }), false);
+  assert.equal(D.pastThreshold(0, 6, { coarse: true, axis: "y" }), false);
+  assert.equal(D.pastThreshold(D.TOUCH_DRAG_THRESHOLD_PX, 0, { coarse: true, axis: "x" }), true);
+  assert.equal(D.pastThreshold(0, D.TOUCH_DRAG_THRESHOLD_PX, { coarse: true, axis: "y" }), true);
+});
+
+check("a coarse pointer's first travel must run along the list's axis", () => {
+  // Horizontal bar ("x"): a mostly-vertical swipe is a scroll, never a drag.
+  assert.equal(D.pastThreshold(12, 20, { coarse: true, axis: "x" }), false);
+  assert.equal(D.pastThreshold(20, 12, { coarse: true, axis: "x" }), true);
+  // Vertical list ("y"): the mirror image.
+  assert.equal(D.pastThreshold(20, 12, { coarse: true, axis: "y" }), false);
+  assert.equal(D.pastThreshold(12, 20, { coarse: true, axis: "y" }), true);
+  // The gate is strict (main must exceed cross): an exact diagonal is a
+  // scroll on either reading, so it stays a no-drag.
+  assert.equal(D.pastThreshold(15, 15, { coarse: true, axis: "x" }), false);
+});
+
+check("a coarse pointer without an axis keeps only the longer threshold", () => {
+  assert.equal(D.pastThreshold(6, 0, { coarse: true }), false);
+  assert.equal(D.pastThreshold(16, 0, { coarse: true }), true);
+});
+
 check("the slot flips at the target's middle", () => {
   assert.deepEqual(D.dropSlot(items, "a", 249), { targetId: "c", after: false });
   assert.deepEqual(D.dropSlot(items, "a", 251), { targetId: "c", after: true });

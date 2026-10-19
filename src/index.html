@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>OMP Desktop</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
 
   <!-- Design tokens — copied into src/design/ -->
@@ -63,6 +63,15 @@
        Dependency-free IIFE; must load before any Babel file (composer.jsx,
        use-keymap.jsx, settings/shortcuts-editor.jsx). -->
   <script src="app/keymap.js"></script>
+
+  <!-- Phone behaviour branches (docs/design/mobile-draft.html v1).
+       mobile.js: isTouch / submitOnEnter / placeholder — dependency-free
+       IIFE; live.js reads OMP_MOBILE at its top-level init and
+       composer.jsx at render time, so this must load before live.js.
+       mobile-viewport.js: publishes --vvh (visualViewport height) on
+       <html>; the ≤760px CSS tiers read it. Also dependency-free. -->
+  <script src="app/mobile.js"></script>
+  <script src="app/mobile-viewport.js"></script>
 
   <!-- Remote control (docs/architecture/remote-control.md).
        remote-transport.js: phone side — when __TAURI__ is absent (served by
@@ -388,6 +397,13 @@
   <script type="text/babel" src="design/browser-toolbar.jsx"></script>
   <script type="text/babel" src="design/browser-panel.jsx"></script>
   <script type="text/babel" src="design/browser-dock.jsx"></script>
+
+  <!-- Phone bottom sheet (docs/design/mobile-draft.html v1, frame 3):
+      the shared overlay primitive. Destructures window.useEscClose at
+      top level (app/use-esc-close.js, above); composer.jsx reads
+      window.MobileSheet at render time, inside the "＋" panel — so it
+      loads before composer.jsx and after the ui primitives. -->
+  <script type="text/babel" src="design/mobile-sheet.jsx"></script>
   <script type="text/babel" src="design/mention-menu.jsx"></script>
   <!-- Collapsed-paste chips + preview (#31), the steer / follow-up queue
        strip, the thinking pill's level menu (#10) and the browser annotation

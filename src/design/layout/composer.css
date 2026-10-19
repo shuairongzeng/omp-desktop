@@ -293,3 +293,204 @@
 .mention-row.active { background: var(--bg-hover); }
 .mention-row:last-child { border-bottom: 0; }
 
+
+/* The viewport-following height: app/mobile-viewport.js publishes the
+   live visualViewport height as --vvh. On desktop the property is
+   unused (this block never applies there); the 100% fallback is the
+   desktop rule's own value — zero change above 760px. */
+@media (max-width: 760px) {
+  .window { height: var(--vvh, 100%); }
+}
+
+/* ── Composer root: full-width, safe-area, no desktop gradient edge ── */
+.cmp-mobile-plus,
+.cmp-mobile-send,
+.cmp-mobile-mode,
+.cmp-sheet-notice { display: none; }
+@media (max-width: 760px) {
+  /* Composer: fills the width, honours the home-bar inset. */
+  .composer { margin: 0; padding: 8px 10px calc(6px + env(safe-area-inset-bottom, 0px)); }
+
+  /* Row one: [＋ 42 round] [textarea 42+ round] [send 42 round]. The
+     desktop row chrome (border/bg on .composer-row) becomes the
+     textarea's own, so the input reads as one capsule between two
+     circular buttons — the draft's focus ring stays on the textarea. */
+  .composer-row {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    gap: 8px;
+    align-items: flex-end;
+    box-shadow: none;
+  }
+  .composer-row:focus-within { box-shadow: none; border-color: transparent; }
+  .cmp-mobile-plus {
+    display: flex; align-items: center; justify-content: center;
+    flex: none;
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    border: 1px solid var(--line-bright);
+    background: var(--bg-input);
+    color: var(--fg-3);
+    cursor: pointer;
+    align-self: flex-end;
+  }
+  .cmp-mobile-plus:active { background: var(--bg-hover); }
+  /* Desktop-only row buttons leave the row on a phone: attach and ⌘K
+     moved into the ＋ panel, the dead dictation button is simply gone,
+     and while streaming the stop key (cmp-mobile-send, above in the
+     DOM) replaces steer/abort — approve (plan mode) rides the plan
+     strip / message flow, not the row. */
+  .composer-row > .btn.icon.ghost,
+  .composer-row > .btn.outlined,
+  .composer-row > .btn.danger { display: none; }
+
+  /* The textarea capsule: 16px text (no iOS focus zoom), 21px radius,
+     42px min height, max ~5 lines before it scrolls. */
+  .composer-input { padding: 0; }
+  .composer-input.has-clear textarea { padding-right: 34px; }
+  .composer-input textarea {
+    min-height: 42px; max-height: 128px;
+    border-radius: 21px;
+    border: 1px solid var(--line-bright);
+    background: var(--bg-input);
+    font-size: 16px;
+    line-height: 1.4;
+    padding: 11px 16px;
+  }
+  .composer-input textarea:focus-visible { border-color: var(--accent); }
+  .composer-clear { top: 6px; right: 6px; width: 30px; height: 30px; }
+
+  /* The send key: 42px solid accent circle (the desktop primary button,
+     restyled in place), or the stop key while streaming (composer.jsx
+     swaps them under isTouch()). */
+  .composer-row .btn.primary,
+  .cmp-mobile-send {
+    display: flex; align-items: center; justify-content: center;
+    flex: none;
+    width: 42px; height: 42px;
+    min-width: 42px; min-height: 42px;
+    padding: 0;
+    border-radius: 50%;
+    border: 0;
+    background: var(--accent);
+    color: var(--bg-app);
+    font-size: 0; /* icon-only on a phone */
+  }
+  .composer-row .btn.primary:disabled { opacity: .35; }
+  .cmp-mobile-send.cmp-mobile-stop { background: var(--rose); color: var(--bg-app); }
+
+  /* Row two (c-meta): model pill, thinking pill, mode indicator. The
+     plan/goal pills moved into the ＋ panel; the chord-hint span is
+     already display:none (mobile.css). */
+  .composer-foot {
+    padding: 7px 2px 0;
+    gap: 6px;
+  }
+  .composer-foot .composer-pill { padding: 6px 11px; min-height: 34px; }
+  .composer-pill span { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .composer-foot .plan-pill, .composer-foot .goal-pill { display: none; }
+  .cmp-mobile-mode {
+    display: inline-flex; align-items: center; gap: 4px;
+    margin-left: auto;
+    color: var(--fg-4);
+    font-size: var(--d-text-xs);
+    white-space: nowrap;
+  }
+  .cmp-mobile-mode.warn { color: var(--amber); }
+
+  /* Supersedes mobile.css's .composer .thinking-pop {position: fixed;
+     bottom: calc(100% + 6px)} — that anchors to the *viewport* (bottom
+     relative to a fixed box = off-screen). The menu re-anchors to the
+     composer itself: absolute, opening upward from the foot row, full
+     phone width. The foot row is a scroll container (mobile.css), which
+     clips absolute children — so the pop is portalled out by making the
+     .composer the positioning context (position: relative already) and
+     anchoring to its bottom. */
+  .composer .thinking-pop {
+    position: absolute;
+    bottom: calc(100% - 4px);
+    left: 10px; right: 10px;
+    width: auto; min-width: 0; max-width: none;
+    z-index: 30;
+  }
+
+  /* Sheet rows (the ＋ panel body). */
+  .cmp-sheet-notice {
+    display: block;
+    color: var(--rose);
+    font-size: var(--d-text-sm);
+    padding: 2px 12px 6px;
+  }
+  .cmp-sheet-row {
+    display: flex; align-items: center; gap: 13px;
+    width: 100%;
+    min-height: 48px;
+    padding: 6px 10px;
+    border: 0; border-radius: var(--r-2);
+    background: transparent;
+    color: var(--fg-2);
+    font: inherit; font-size: 15px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .cmp-sheet-row:active { background: var(--bg-hover); }
+  .cmp-sheet-row.on { color: var(--fg); background: var(--bg-hover); }
+  .cmp-sheet-ic {
+    flex: none;
+    width: 34px; height: 34px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 9px;
+    background: color-mix(in oklab, var(--bg-hover) 60%, transparent);
+  }
+  .cmp-sheet-tx { flex: 1; min-width: 0; }
+  .cmp-sheet-tx .s { display: block; font-size: 11.5px; color: var(--fg-4); }
+  .cmp-sheet-val { color: var(--accent); font-size: 13px; flex: none; }
+  .cmp-sheet-sep { height: 1px; background: var(--line); margin: 6px 10px; }
+}
+
+/* MobileSheet (design/mobile-sheet.jsx) — global, not composer-scoped,
+   but the same phone tier. Desktop never mounts one; the classes below
+   are inert above 760px. */
+.ms-root { display: none; }
+@media (max-width: 760px) {
+  .ms-root {
+    display: block;
+    position: fixed; inset: 0;
+    z-index: 95;
+  }
+  .ms-scrim {
+    position: absolute; inset: 0;
+    background: rgb(0 0 0 / .5);
+  }
+  .ms-sheet {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--bg-elevated);
+    border-top: 1px solid var(--line-bright);
+    border-radius: 18px 18px 0 0;
+    padding: 8px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -18px 50px rgb(0 0 0 / .5);
+    max-height: calc(var(--vvh, 100vh) - 90px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    transition: transform 200ms var(--ease-out);
+    animation: msUp 240ms var(--ease-out) both;
+    touch-action: none; /* the sheet itself is the drag surface */
+  }
+  .ms-grab {
+    width: 38px; height: 4.5px;
+    border-radius: 3px;
+    background: var(--fg-5);
+    margin: 2px auto 10px;
+  }
+  .ms-title {
+    text-align: center;
+    color: var(--fg-3);
+    font-size: var(--d-text-xs);
+    padding: 0 0 6px;
+  }
+}
+@keyframes msUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}

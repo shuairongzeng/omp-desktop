@@ -302,3 +302,23 @@
   padding: 10px 14px;
   border-top: 1px solid var(--line);
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Phone tier (≤760px) — the approvals panel a thumb can use. Desktop
+   never sees any of this. The mode segment rows and rule rows squeeze
+   at 390px: the label and the 4-way segment fight for one line, and a
+   22px segment button is not a touch target. */
+@media (max-width: 760px) {
+  /* Mode rows: label on its own line, the segment full-width below it
+     with 40px buttons. */
+  .mode-row { flex-direction: column; align-items: stretch; gap: 6px; }
+  .mode-seg { width: 100%; }
+  .mode-seg button { flex: 1; min-height: 40px; padding: 6px 4px; font-size: 13px; }
+  .mode-seg button[aria-checked="true"] { font-weight: 600; }
+  /* Rules rows: taller, the tool name wraps instead of overflowing. */
+  .rules-row { align-items: center; gap: 8px; min-height: 48px; flex-wrap: wrap; }
+  .rules-tool { overflow-wrap: anywhere; }
+  /* The revoke button in each row (a 24px .btn.icon) — 32px, still
+     fits the row, a real tap target. */
+  .rules-row .btn.icon { width: 32px; height: 32px; }
+}

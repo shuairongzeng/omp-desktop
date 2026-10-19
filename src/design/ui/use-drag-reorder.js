@@ -21,6 +21,12 @@
 
 (function () {
   const { pastThreshold, dropSlot } = window.OMP_DRAG_REORDER;
+  // Coarse pointers (touchscreens) reorder through the touch threshold +
+  // main-axis gate (drag-reorder.js). Resolved once at hook creation: the
+  // pointer type does not change under a running window, and reading
+  // matchMedia per pointermove would be needless work.
+  const COARSE = typeof window.matchMedia === "function" &&
+    window.matchMedia("(pointer: coarse)").matches;
   // Controls inside an item that keep their own press. `data-no-reorder`
   // marks a region inside an item (a dropdown) that only its own nested
   // items may drag from.
@@ -95,7 +101,9 @@
       const move = ev => {
         if (ev.pointerId !== pointerId || cancelled) return;
         if (!started) {
-          if (!pastThreshold(ev.clientX - x0, ev.clientY - y0)) return;
+          // Touch: the 16px threshold and the list-axis gate (a vertical
+          // swipe on a horizontal bar is a scroll, not a reorder).
+          if (!pastThreshold(ev.clientX - x0, ev.clientY - y0, { coarse: COARSE, axis })) return;
           started = true;
           try { item.setPointerCapture(pointerId); } catch (_) { /* pointer already gone */ }
           document.body.classList.add("reordering");

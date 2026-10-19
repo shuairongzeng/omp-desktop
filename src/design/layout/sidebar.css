@@ -129,3 +129,68 @@ body.reordering [data-reorder-axis="x"].drop-after { margin-inline: 0 4px; }
 [data-reorder-axis="y"].drop-before::after { left: 0; right: 0; top: 0; height: 2px; }
 [data-reorder-axis="y"].drop-after::after  { left: 0; right: 0; bottom: 0; height: 2px; }
 
+/* ── Phone drawer (≤760px): finger-sized rows + the app menu foot ──────
+   The drawer itself (fixed overlay, scrim, slide-in) is layout/mobile.css's
+   820px layer; this block refines its content for real handsets, per the
+   mobile redesign. Supersedes in mobile.css: nothing — its ≤760px tier has
+   no sidebar rules; its 820px drawer geometry (width min(78vw, 320px)) is
+   narrowed here to the draft's 304px.
+   Desktop never sees any of this. */
+.psb-app { display: none; }
+
+@media (max-width: 760px) {
+  /* 304px drawer (the draft's measure), inside the 820px layer's shell. */
+  .mobile-sidebar-open .project-sidebar { width: 304px; }
+
+  /* Finger-first rows: 48px minimum, 15px type, safe-area at the foot. */
+  .psb-row { min-height: 48px; height: auto; font-size: 15px; }
+  .psb-name { font-size: 15px; }
+  .psb-head { min-height: 44px; height: auto; padding-top: env(safe-area-inset-top, 0px); }
+  .psb-history .psb-name { font-size: 13.5px; }
+  .psb-time { font-size: 11px; }
+  .psb-empty, .psb-section { font-size: 12px; }
+
+  /* No hover on a touchscreen: the rename/close actions render always,
+     32px each (the 18px desktop buttons are un-tappable). The count chip
+     keeps its place — the actions sit after it. */
+  .psb-actions { display: inline-flex; }
+  .psb-row:hover .psb-count,
+  .psb-row:focus-within .psb-count { display: inline-flex; }
+  .psb-act {
+    width: 32px; height: 32px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .psb-chev { width: 32px; height: 32px; }
+  .psb-foot { min-height: 48px; height: auto; }
+
+  /* App menu: settings + profile, pinned under the open-folder foot. */
+  .psb-app {
+    display: flex; flex-direction: column; flex: none;
+    border-top: 1px solid var(--line-soft);
+    padding: 6px 0 calc(env(safe-area-inset-bottom, 0px) + 6px);
+  }
+  .psb-app-row {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 48px; padding: 4px 12px;
+    appearance: none; border: 0; background: transparent;
+    font: inherit; font-size: 14.5px; color: var(--fg-2);
+    text-align: left; cursor: pointer;
+  }
+  .psb-app-row:active { background: var(--bg-hover); }
+  .psb-app-name { flex: 1; }
+
+  /* The profile chip inside the drawer: the desktop chip is a 24px .btn;
+     here it's the full-width row the draft draws, and its popover grows
+     from the drawer's right edge (the drawer is 304px; the desktop's
+     right-anchored 260px minimum fits, but left: 0 keeps it inside). */
+  .psb-app-profile { padding: 0 6px 4px; }
+  .psb-app-profile .profile-trigger {
+    width: 100%; min-height: 48px; padding: 0 10px;
+    border-radius: var(--r-1);
+  }
+  .psb-app-profile .profile-pop {
+    left: 0; right: auto;
+    min-width: 240px; max-width: calc(304px - 16px);
+  }
+}
+

@@ -33,6 +33,14 @@
   animation: chat-jump-in 0.15s var(--ease-out);
 }
 .chat-jump-latest:hover { border-color: var(--accent); color: var(--accent); }
+/* A pending ask (approval/dialog) while the view is unpinned
+   (chat-view.jsx `hasPendingAsk`): the jump button becomes the alert,
+   not a navigation hint — amber text/border everywhere, solid amber
+   fill on the phone tier below (the thumb zone's single most urgent
+   action, mobile-draft frame 4's "⚠ 等待你的批准"). */
+.chat-jump-latest.needs-approval { color: var(--amber); border-color: color-mix(in oklab, var(--amber) 45%, var(--line)); }
+.chat-jump-latest.needs-approval:hover { border-color: var(--amber); color: var(--amber); }
+
 @keyframes chat-jump-in {
   from { opacity: 0; transform: translateX(-50%) translateY(6px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -625,4 +633,121 @@
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--line-bright) transparent;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   Phone tier (≤760px / touch) — docs/design/mobile-draft.html v1.
+   Everything below is width- or pointer-gated; desktop never sees any
+   of it. Density here comes from the collapse system (PREVIEW_LINES=3,
+   app/chat-collapse.js — mode/after/overrides apply on every screen),
+   so the inner max-height caps flatten to none and the chat scroll
+   stays the ONE scroll container. */
+@media (hover: none) {
+  /* Copy buttons (#33): visible without a hover to reveal them, and a
+     40px hit target (24px box + padding; the icon stays 11px). The
+     reveal-on-hover rules at lines 420-426 are re-scoped to
+     (hover: hover) further down, so iOS never sticky-hovers a copy
+     button after a tap. */
+  .copy-btn {
+    opacity: 1;
+    height: 40px;
+    min-width: 40px;
+    padding: 0 10px;
+    /* The desktop 120ms opacity fade reads as a flicker when N buttons
+       are always visible; color still transitions on the copied flash. */
+    transition: color 0.1s;
+  }
+}
+@media (hover: hover) {
+  /* The reveal set from the copy-button section above, re-scoped so a
+     touch environment cannot enter :hover in the first place (iOS taps
+     leave :hover sticky on the last-tapped button). */
+  .copy-host:hover > .copy-btn,
+  .plan-block:hover .code-block > .copy-btn,
+  .row.assistant:hover .copy-btn.ass-copy,
+  .diff-wrap:hover .copy-btn.diff-copy,
+  .copy-btn:focus-visible,
+  .copy-btn.is-copied,
+  .copy-btn.is-failed { opacity: 1; }
+}
+
+@media (max-width: 760px) {
+  /* ── The chat scroll is the only scroller ─────────────────────────── */
+  .chat-scroll {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ── Card bodies flatten; collapse states own the density ────────── */
+  /* Inner max-height caps turn a phone scroll into a maze of nested
+     scrollers (scroll chaining, momentum traps, a stuck .chat-scroll).
+     The collapse system keeps the same preview density it always did —
+     collapsed tool bodies already render PREVIEW_LINES=3 worth of
+     lines (chat-collapse.js collapseStates runs on every screen), and
+     the .collapse-clip mask is width-independent. */
+  .tool-bash,
+  .eval-code,
+  .eval-output,
+  .diff-body,
+  .compact-body,
+  .ta-body,
+  .ta-stream,
+  .approval-row-details { max-height: none; overflow: visible; }
+
+  /* ── Long lines must wrap, not push width ────────────────────────── */
+  /* bash output is pre-wrapped per line, but a 500-char token (a path,
+     a minified string) still forced horizontal overflow: break at any
+     character so the card keeps the chat's width. */
+  .tool-bash { overflow-wrap: anywhere; word-break: break-word; }
+  /* Search rows: the file-path span is the shrinking middle; "N hits"
+     is fixed. */
+  .search-row > span:nth-of-type(1) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── Code blocks at 390px ─────────────────────────────────────────── */
+  /* Fenced markdown code (platform.css sets 0.83em ≈ 10.6px): 12px is
+     the floor for a monospace read at arm's length. The right-edge
+     mask fades the last 16px of a horizontally scrolling block — the
+     affordance that "this scrolls sideways" that a scrollbar-less
+     touch scroller otherwise hides. .eval-code wraps (pre-wrap), so its
+     mask only bites the rare long token; .diff-body is the horizontal
+     scroller the mask was made for. */
+  .md-content .code-block code.hljs { font-size: 12px; }
+  .eval-code { font-size: 12px; }
+  .eval-output { font-size: 12px; }
+  .md-content .code-block,
+  .eval-code,
+  .diff-body {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent 100%);
+    mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent 100%);
+  }
+
+  /* ── Diff at 390px ────────────────────────────────────────────────── */
+  /* 44px gutter + 14px mark + 2×12px code padding ≈ 94px of chrome on a
+     390px screen: the line-number column shrinks so the code column
+     keeps ~40 chars/line. `white-space: pre` stays — a diff must not
+     reflow. */
+  .diff-line { grid-template-columns: 36px 14px auto; }
+  .diff-gutter { padding-right: 6px; }
+  .diff-code { padding: 0 8px; }
+  /* The scrub track is a mouse-position widget (onMouseMove; no touch
+     handler exists). On a phone it renders as a dead rail that costs a
+     row — hide the whole strip; the static diff stays, fully readable. */
+  .diff-track-wrap { display: none; }
+
+  /* ── Jump-to-latest: a 40px touch target ─────────────────────────── */
+  .chat-jump-latest { min-height: 40px; }
+  /* Pending-approval state (mobile-draft frame 4): solid amber, the
+     warn palette's own text colour on the fill — unmissable in the
+     thumb zone, exactly one tap away from the prompt. */
+  .chat-jump-latest.needs-approval {
+    background: var(--amber);
+    border-color: var(--amber);
+    color: var(--amber-fg, #06241B);
+    font-weight: 700;
+  }
 }

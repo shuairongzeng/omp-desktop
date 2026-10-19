@@ -107,6 +107,32 @@ announces the drop, the socket reopens with capped backoff
    (`get_state` + `get_messages`): completed messages missed during the
    gap merge in by `ts`, streaming resumes from live events.
 
+## Pending approvals survive a phone attach
+
+A tool approval / ask dialog exists only as a one-shot event — omp's
+`get_state` has no pending-request field — so a phone that attaches (or
+reloads) after one fired would never see it: the desktop stays blocked,
+the phone looks idle. The desktop answers `js:get_pending_asks` with the
+tab's unanswered ask bubbles (live state for the active tab, the tab
+snapshot otherwise, plus the not-yet-flushed buffer); the phone merges
+the ones it missed after every `activateSession` and `_remoteResync`
+(`_mergeRemotePendingAsks`, dedupe by request id — ask bubbles carry no
+`ts`, so the get_messages merge keeps them). Answering on the phone is
+the normal RPC path; answering on the desktop reaches the phone as the
+usual resolve event.
+
+### Settle echo (both directions)
+
+omp broadcasts no request-resolved event, so an ask bubble settles only
+on the client that answered it. To keep the peer's copy from hanging
+"unanswered", `_resolveAsk` echoes every settle: a phone calls
+`js:settle_ask` (the desktop patches its live messages or the tab
+snapshot, whitelisted keys `answered/answer/answers/cancelled`, and
+never re-sends to omp — the phone already did), and the desktop
+broadcasts an `ask-settled` evt frame the phones' `_attachRemoteTabs`
+listener applies the same way. Crossed answers are no-ops via the
+re-answer guard on both sides.
+
 `visibilitychange` (visible) and `pageshow` (persisted) trigger an
 immediate reconnect attempt instead of waiting out the backoff — phone
 browsers suspend timers while backgrounded, so the socket is usually

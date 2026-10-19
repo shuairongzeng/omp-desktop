@@ -48,7 +48,18 @@
     },
   };
 
+  // Phone placeholders (docs/design/mobile-draft.html v1): on a coarse-
+  // pointer device the desktop's chord hints ("Press ⎋…", "⌘K opens the
+  // bridge") are keyboard noise. OMP_MOBILE.placeholder is the single
+  // source (app/mobile.js); composer.jsx reads it directly at render
+  // time, and this branch keeps the published OMP_DATA.microcopy honest
+  // for anything else that ever shows those strings.
+  if (window.OMP_MOBILE?.isTouch?.()) {
+    DEFAULT_DATA.microcopy.streamingTip = window.OMP_MOBILE.placeholder("streaming") ?? DEFAULT_DATA.microcopy.streamingTip;
+    DEFAULT_DATA.microcopy.paletteTip   = window.OMP_MOBILE.placeholder("idle") ?? DEFAULT_DATA.microcopy.paletteTip;
+  }
   window.OMP_DATA = JSON.parse(JSON.stringify(DEFAULT_DATA));
+
 
   // ── Active session state ───────────────────────────────────────────────────
   // These are the "current session's" live variables. _resetSessionVars() wipes
@@ -598,7 +609,48 @@
   // replaced, {value}/{confirmed}/{cancelled} payload shapes preserved
   // per caller, and re-answer + unknown-id both send nothing).
   function _resolveAsk(id, patch, payload) {
-    if (_settleAsk(id, patch)) _send({ type: "extension_ui_response", id, ...payload });
+    if (_settleAsk(id, patch)) {
+      _send({ type: "extension_ui_response", id, ...payload });
+      _echoAskSettle(id, patch);
+    }
+  }
+
+  // omp never broadcasts a request-resolved event: a bubble settles only
+  // via the answering client's own `_resolveAsk`. With a phone attached
+  // that strands the OTHER side's copy "unanswered" forever (the phone's
+  // card settled, the desktop's card hung — seen live). Echo the settle to
+  // the peer: a phone tells the desktop (`js:settle_ask` — the handler
+  // patches live state or the tab snapshot, never re-sends to omp), the
+  // desktop tells every phone in the room (`ask-settled` evt frame). The
+  // re-answer guard on the receiving side makes a crossed answer a no-op.
+  const ASK_PATCH_KEYS = ["answered", "answer", "answers", "cancelled"];
+  function _askPatch(patch) {
+    const clean = {};
+    for (const k of ASK_PATCH_KEYS) if (k in (patch ?? {})) clean[k] = patch[k];
+    return clean;
+  }
+  function _echoAskSettle(id, patch) {
+    if (window.__OMP_REMOTE__) {
+      _invokeSafe("js:settle_ask", { id, tab: activeSessionId, patch: _askPatch(patch) }, false);
+    } else {
+      window.OMP_BRIDGE?.remoteSend?.({ t: "evt", name: "ask-settled", payload: { id, tab: activeSessionId, patch: _askPatch(patch) } })?.catch?.(() => {});
+    }
+  }
+
+  // Settle in a specific tab's message list: the live state when it is the
+  // active tab, its snapshot otherwise (a phone can settle a tab the other
+  // side is not looking at). Snapshots get a REPLACED array, like state.
+  function _settleAskIn(tab, id, patch) {
+    if (!tab || tab === activeSessionId) return _settleAsk(id, patch);
+    const snap = sessionSnapshots.get(tab);
+    if (!snap) return false;
+    let settled = false;
+    const next = snap.messages.map(m =>
+      m?.kind === "ask" && m.id === id && !m.answered && !m.cancelled
+        ? (settled = true, { ...m, ...patch })
+        : m);
+    if (settled) snap.messages = next;
+    return settled;
   }
 
   // Append a synthetic assistant note (process exited, startup failed,
@@ -1941,6 +1993,25 @@
     void _drainExternalOpens();
   }
 
+  /** Phone only: a pending ask/approval is a one-shot event, so attaching
+   *  (or resyncing) after it fired would hide it forever — the desktop sits
+   *  blocked while the phone looks idle. Pull the desktop's authoritative
+   *  unanswered asks for this tab and merge the ones this client missed
+   *  (dedupe by request id: an ask whose event this phone DID see is already
+   *  in state.messages). No `ts` on ask bubbles, so the get_messages merge
+   *  keeps them in place regardless of arrival order. */
+  async function _mergeRemotePendingAsks(id) {
+    const asks = await _invokeSafe("js:get_pending_asks", { tab: id }, []);
+    if (!Array.isArray(asks) || asks.length === 0 || id !== activeSessionId) return;
+    const known = new Set();
+    for (const m of state.messages) if (m.kind === "ask") known.add(m.id);
+    for (const m of pendingAskBubbles) known.add(m.id);
+    const fresh = asks.filter(a => a && a.id != null && !known.has(a.id));
+    if (fresh.length === 0) return;
+    state.messages = [...state.messages, ...fresh];
+    notify();
+  }
+
   /** Phone boot (remote-control.md): never replay open-tabs.json — that
    *  file is the desktop's layout, and replaying it would spawn a second
    *  omp per project on the workstation. Mirror the desktop's live tab
@@ -1951,6 +2022,13 @@
     try {
       const snap = await _invokeSafe("js:list_tabs", {}, null);
       if (!snap || !Array.isArray(snap.tabs)) return;
+      // The desktop's `_resolveAsk` echoes its own answers as `ask-settled`
+      // frames (omp broadcasts no resolve event); settle this client's copy
+      // the same way — live state for the shown tab, the snapshot otherwise.
+      window.__TAURI__.event.listen("ask-settled", (ev) => {
+        const { id, tab, patch } = ev?.payload ?? {};
+        if (typeof id === "string" && id) _settleAskIn(tab, id, _askPatch(patch));
+      });
       for (const tab of snap.tabs) {
         if (!tab || !tab.id || sessionRegistry.has(tab.id)) continue;
         sessionRegistry.set(tab.id, {
@@ -4383,6 +4461,10 @@
         return;
       }
       await _switchToSession(id);
+      // Phone: surface asks that fired before this client attached (see
+      // `_mergeRemotePendingAsks`; desktop tabs carry them in their
+      // snapshots already, so this is remote-only).
+      if (window.__OMP_REMOTE__) void _mergeRemotePendingAsks(id);
     },
 
     /** List saved sessions on disk for the active tab's profile
@@ -4437,7 +4519,7 @@
      *  active tab's state (get_state + get_messages merge fills in
      *  completed messages; streaming resumes from live events). */
     _remoteResync() {
-      if (activeSessionId) _initFetch();
+      if (activeSessionId) { _initFetch(); void _mergeRemotePendingAsks(activeSessionId); }
     },
 
     _remoteHandlers: {
@@ -4455,6 +4537,28 @@
             sessionFile: t.sessionFile ?? null,
           })),
         };
+      },
+      // A pending tool approval / ask dialog reaches clients only as a live
+      // event (omp's get_state carries no pending-request field), so a phone
+      // that attaches or resyncs after the request fired could never see it
+      // — the desktop sits blocked and the phone looks idle. The desktop's
+      // own copies are authoritative: the active tab's live `state.messages`
+      // (plus the not-yet-flushed ask buffer), a background tab's snapshot.
+      // Plain JSON data only — the ask's buttons resolve through the normal
+      // RPC path with the request id, which the phone can send itself.
+      get_pending_asks({ tab } = {}) {
+        const msgs = tab === activeSessionId
+          ? [...state.messages, ...pendingAskBubbles]
+          : sessionSnapshots.get(tab)?.messages;
+        if (!Array.isArray(msgs)) return [];
+        return msgs.filter(m => m?.kind === "ask" && !m.answered && !m.cancelled);
+      },
+      // A phone answered an ask: settle the desktop's copy too (omp
+      // broadcasts no resolve event). The phone already sent omp its
+      // extension_ui_response — this only patches the bubble, never sends.
+      settle_ask({ id, tab, patch } = {}) {
+        if (typeof id !== "string" || !id) return false;
+        return _settleAskIn(tab, id, _askPatch(patch));
       },
       // A tab the phone created: mirror it into the desktop registry so the
       // desktop UI shows it too. The Rust spawn follows as a normal

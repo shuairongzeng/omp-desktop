@@ -312,3 +312,98 @@
 .ask-sum-a .typed { color: var(--fg-4); font-size: var(--d-text-xs); white-space: nowrap; }
 .ask-sum-a.none { color: var(--fg-4); font-style: italic; }
 .ask-dialog.closed .chip { color: var(--fg-4); border-color: var(--line-bright); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Phone tier (≤760px) — the approval card a thumb can use
+   (docs/design/mobile-draft.html v1, frame 4). Desktop never sees any
+   of this. The pending ask renders as a full-bleed card inside the
+   sheet (ask-bubble.jsx touch branch), so the rules below style both
+   the sheet copy and the settled-history inline copy the same way. */
+@media (max-width: 760px) {
+  /* ── Approval detail lines: flatten, wrap ────────────────────────── */
+  /* Same rationale as chat.css's tool bodies: no nested scroller — the
+     sheet/chat scrolls; the text wraps (the block is already
+     overflow-wrap: anywhere). */
+  .ask-approval-details,
+  .ask-row-preview { max-height: none; overflow: visible; }
+  .ask-row-preview { padding: 4px 0; }
+
+  /* ── Option stack: vertical, 48px, full width ────────────────────── */
+  .ask-options {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .ask-opt {
+    width: 100%;
+    min-height: 48px;
+    font-size: 15px;
+    border-radius: 12px;
+    justify-content: center;
+    padding: 10px 16px;
+  }
+  /* The primary action (Approve / Allow / Confirm / yes-shaped options)
+     is solid accent — the one-button answer a thumb expects. Accent-fg
+     keeps the text readable on the accent fill in every theme, the same
+     pairing .btn.primary uses. */
+  .ask-opt.is-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg, #06241B);
+    font-weight: 600;
+  }
+  .theme-phosphor .ask-opt.is-primary { color: var(--accent-fg, #001000); }
+  .theme-daylight .ask-opt.is-primary { color: var(--accent-fg, #FAF7EF); }
+  .theme-sakura    .ask-opt.is-primary { color: var(--accent-fg, #FFF5F7); }
+  .theme-midnight  .ask-opt.is-primary { color: var(--accent-fg, #14142A); }
+  /* Deny stays a quiet outline with rose text: the destructive option
+     is one deliberate tap, never a mis-tap of the thumb. */
+  .ask-opt.is-danger {
+    background: transparent;
+    border-color: color-mix(in oklab, var(--rose) 40%, var(--line));
+    color: var(--rose-fg, var(--rose));
+    font-weight: 600;
+  }
+  /* Selected/dimmed history states keep their meaning on the big
+     buttons: selected shows the accent border + soft fill, dimmed the
+     usual 0.3 opacity. */
+  .ask-opt.selected { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+  .ask-opt.is-primary.selected { color: var(--accent); }
+  .ask-opt.dimmed { opacity: 0.3; }
+
+  /* ── Remember-rules: text links under the primary ────────────────── */
+  /* 40px tap rows, but visually secondary — a plain text link, no
+     border, no fill — so "always allow in this project" never reads as
+     a third answer. */
+  .ask-approval-rules {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    margin-top: 8px;
+  }
+  .ask-opt.ask-remember {
+    width: 100%;
+    min-height: 40px;
+    justify-content: center;
+    padding: 8px 12px;
+    font-size: 13px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--fg-3);
+    font-weight: 400;
+  }
+
+  /* ── Ask dialog rows in the sheet ─────────────────────────────────── */
+  .ask-row-btn { min-height: 48px; padding: 10px 12px; font-size: 15px; }
+  .ask-other { margin-top: 8px; }
+  .ask-other-input { min-height: 44px; font-size: 16px; } /* iOS: no focus zoom */
+  .ask-editor-textarea { font-size: 16px; } /* same: no zoom on focus */
+  .ask-submit { min-height: 48px; font-size: 15px; padding: 10px 16px; }
+  .ask-dialog-foot { padding: 10px 14px; }
+  .ask-dialog-foot .ask-opt { min-height: 44px; }
+
+  /* ── Full-bleed settled history cards ─────────────────────────────── */
+  .ask-dialog { max-width: none; }
+}

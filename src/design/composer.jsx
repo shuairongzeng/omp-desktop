@@ -3,6 +3,18 @@
    ═════════════════════════════════════════════════════════════════════ */
 
 const { Icon } = window;
+/* Phone-side helpers (app/mobile.js): read through `window.OMP_MOBILE`
+ * at render time, never destructured at top level — the module loads
+ * before this file, but the late-bound read keeps the dependency visible
+ * where it is used. Null-safe: a window without it (an old cached
+ * index.html) simply takes the desktop branch. */
+const _cmpMobile = () => window.OMP_MOBILE;
+// The phone's "＋" action panel rows, built once: labels/sub-labels are
+// app-convention english, lowercase, no terminal punctuation. Icons are
+// the shared Icon set; the terminal/usage/git rows fire the omp:mobile
+// CustomEvent the app root (app-live.jsx) listens for — the composer
+// never owns those panels.
+const _CMP_SHEET_MS = 3000; // inline sheet notice, self-dismissing
 const { parseMentionQuery, applyMention } = window.OMP_MENTIONS;
 const { prepareImage, carriesFiles, dropHoverAfter, imageFilesFromTransfer, imageFilesFromClipboardAsync, toDataUrl, MAX_ATTACHMENTS } = window.OMP_IMAGES;
 const { splitDroppedPaths, pathsInsertText } = window.OMP_DROPPED;
@@ -39,7 +51,7 @@ function hintKeyFor(actionId, fallback) {
 // ── The composer (input + plan/steer modes + send) ────────────────────
 // `submitKey` ("enter" | "ctrl+enter") and `pasteCollapseLines` come from the
 // tweaks (Settings › Composer); the defaults match TWEAK_DEFAULTS.
-function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePlan, planBlocked = "", goalMode = false, goalTint = false, onToggleGoal, goalBlocked = "", goalStrip = null, onOpenCmd, onOpenModel, currentModel, thinking, onLoadThinkingLevels, onSetThinking, isStreaming, backgroundWork = false, onAbort, onApprove, annotationCount = 0, microcopy, onFollowUp, draftInsert, promptHistory = [], promptInsert, queue, queueSending, onRemoveQueued, onPromoteQueued, onSendQueuedNow, browserChips = [], onRemoveBrowserChip, onBrowserChipClick, submitKey = "enter", pasteCollapseLines = 5 }) {
+function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePlan, planBlocked = "", goalMode = false, goalTint = false, onToggleGoal, goalBlocked = "", goalStrip = null, onOpenCmd, onOpenModel, currentModel, thinking, onLoadThinkingLevels, onSetThinking, isStreaming, backgroundWork = false, onAbort, onApprove, annotationCount = 0, microcopy, onFollowUp, draftInsert, promptHistory = [], promptInsert, queue, queueSending, onRemoveQueued, onPromoteQueued, onSendQueuedNow, browserChips = [], onRemoveBrowserChip, onBrowserChipClick, submitKey = "enter", pasteCollapseLines = 5, approvalCell = null }) {
   // Drafts are per tab (issue #28). The composer stays mounted across tab
   // switches and keeps one draft per session id (app/session-ui.js
   // DRAFT_IDLE): text, pending image attachments (sent alongside the next
@@ -104,6 +116,66 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   // highlight and the drop hit-test its rect.
   const rootRef = React.useRef(null);
 
+  // ── Phone tier: the "＋" action panel ───────────────────────────────
+  // isTouch() decides everything mobile here; the flag is read once per
+  // render. The sheet state is the composer's own: the ＋ button, its
+  // rows and the notice line all live inside this component; only the
+  // terminal/usage/git rows delegate through the omp:mobile CustomEvent.
+  const touch = Boolean(_cmpMobile()?.isTouch?.());
+  const [sheetOpen, setSheetOpen] = React.useState(false);
+  // The thinking-menu row in the sheet opens the real menu, which lives
+  // on ThinkingMenu's own pill in the foot row (thinking-menu.jsx is not
+  // this package's file to extend). Late-bound DOM trigger: the sheet
+  // closes first, then the pill gets one synthetic click. The pill is
+  // always in the composer root; a missing one (a model-less tab still
+  // renders it) is a no-op.
+  // A one-line notice at the top of the open sheet (a blocked toggle
+  // tap): red, self-dismissing after _CMP_SHEET_MS. The contract's
+  // fallback chain runs first — a real notify mechanism, when one
+  // exists, wins over the in-sheet line.
+  const [sheetNotice, setSheetNotice] = React.useState(null);
+  React.useEffect(() => {
+    if (!sheetNotice) return undefined;
+    const t = setTimeout(() => setSheetNotice(null), _CMP_SHEET_MS);
+    return () => clearTimeout(t);
+  }, [sheetNotice]);
+  const sheetNotify = (msg) => {
+    if (typeof window.OMP_BRIDGE?.notify === "function") { try { window.OMP_BRIDGE.notify(msg); return; } catch { /* fall through */ } }
+    setSheetNotice(msg);
+  };
+  const closeSheet = () => setSheetOpen(false);
+  // Sheet row "thinking": close, then click the real pill once — after
+  // the sheet unmounts, so the pop it opens is not inside a closing
+  // sheet. rAF defers past React's unmount commit.
+  const openThinkingFromSheet = () => {
+    closeSheet();
+    requestAnimationFrame(() => {
+      rootRef.current?.querySelector(".thinking-menu > button.composer-pill")?.click();
+    });
+  };
+  // The sheet rows that map to app-level panels (terminal/usage/git):
+  // one CustomEvent, `action` the contract's verb, the app root owns
+  // every one of those panels.
+  const dispatchMobile = (action) => {
+    closeSheet();
+    window.dispatchEvent(new CustomEvent("omp:mobile", { detail: { action } }));
+  };
+  const togglePlanInSheet = () => {
+    if (!planMode && planBlocked) { sheetNotify(planBlocked); return; }
+    onTogglePlan?.();
+    closeSheet();
+  };
+  const toggleGoalInSheet = () => {
+    if (!goalMode && goalBlocked) { sheetNotify(goalBlocked); return; }
+    onToggleGoal?.();
+    closeSheet();
+  };
+  // The mode pill at the foot's right end reads the *active tab*'s
+  // approval cell, which app-live.jsx already computes for the status
+  // bar. Composer never received it; the mobile foot needs it, so the
+  // prop is optional and the pill simply doesn't render without it
+  // (demo mode / old callers stay correct).
+  const approvalModeLabel = approvalCell?.label ?? null;
   const cmds = window.OMP_DATA?.commands || [];
 
   // ── @-mention file-path autocomplete ─────────────────────────────────
@@ -259,6 +331,10 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   // opened from the page (the approvals panel), which sit outside it.
   React.useEffect(() => {
     if (isStreaming) return;
+    // Phone: refocusing here would pop the software keyboard open the
+    // moment a stream ends — over whatever the user is reading. The
+    // draft is kept; focus returns when they tap the input themselves.
+    if (touch) return;
     requestAnimationFrame(() => {
       const el = document.activeElement;
       if (el && window.OMP_KEYMAP?.isTypingTarget(el)) return;
@@ -274,7 +350,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
       if (el?.closest?.(".st-host, .settings")) return;
       taRef.current?.focus();
     });
-  }, [isStreaming]);
+  }, [isStreaming, touch]);
 
   // Shared by the inline `/` popup's non-desktop pick and the ⌘K bridge's
   // draftInsert below — both replace the composer's text with a command
@@ -440,7 +516,9 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     updateDraft(sessionId, d => (d.pendingImages ? { ...DRAFT_IDLE, pendingImages: d.pendingImages } : DRAFT_IDLE));
     setMentionDismissedKey(null);
     setSlashDismissedKey(null);
-    requestAnimationFrame(() => taRef.current?.focus());
+    // Phone: no refocus after send — the keyboard is only up when the
+    // user is holding it up; a programmatic focus would re-summon it.
+    if (!touch) requestAnimationFrame(() => taRef.current?.focus());
   };
 
   // ✎ on a queued message (QueueStrip): omp removes it first, and only a
@@ -791,6 +869,21 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
         return;
       }
     }
+    // Phone: Enter never sends — the send button is the only sender. The
+    // textarea's own default inserts the newline; the IME guard above
+    // already ran, and the send chord is not even computed (a hardware
+    // keyboard paired to a phone would fire chords through OMP_KEYMAP
+    // below, which is a global, keymap-bound path — untouched here).
+    // Keymap chords (Ctrl/Cmd+Enter via app.message.followUp and any
+    // rebound global send) still work for the rare physical-keyboard case;
+    // only the *bare* Enter chord is disabled.
+    if (touch && _cmpMobile()?.submitOnEnter?.() === false) {
+      if (window.OMP_KEYMAP?.matches(e.nativeEvent ?? e, "app.message.followUp")) {
+        e.preventDefault();
+        if (onFollowUp) sendWith(onFollowUp, { followUp: true });
+      }
+      return;
+    }
     // isSubmitKey (app/constants.js) owns the IME-composition guard and the
     // `submitKey` chord. With "ctrl+enter" the send check runs first, as
     // `ctrl+enter` is also a default followUp chord; with "enter" followUp
@@ -834,6 +927,11 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   };
   const streamingPlaceholder = fillHints(microcopy?.streamingTip) || "agent is working…";
   const palettePlaceholder    = fillHints(microcopy?.paletteTip) || `what should we ship?  ·  / for commands${bridgeHint ? `  ·  ${bridgeHint} for the bridge` : ""}`;
+  // Phone placeholder (OMP_MOBILE.placeholder): touch flavour, or null
+  // when the environment is not touch — the desktop expressions below
+  // stand. The kind matches the desktop ternary's own two states: idle
+  // (goal/plan/plain, all one short hint on a phone) and streaming.
+  const mobilePlaceholder = _cmpMobile()?.placeholder?.(isStreaming ? "streaming" : "idle") ?? null;
 
   return (
     <div className={`composer${planMode ? " plan-on" : ""}${goalTint ? " goal-on" : ""}${goalMode ? " goal-draft" : ""}${dropActive ? " drop-on" : ""}`}
@@ -915,6 +1013,13 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
       <PasteStrip key={sessionId} pastes={collapsed} onExpand={expandPaste} />
 
       <div className="composer-row">
+        {/* Phone "＋" (the action-panel trigger): cmp-only class — desktop
+            CSS keeps it display:none, the ≤760px tier in composer.css
+            shows it. Renders on every width so a narrow desktop window
+            gets the same panel; behaviour (sheet) is the same. */}
+        <button className="cmp-mobile-plus" title="more actions" aria-label="more actions" onClick={() => setSheetOpen(true)}>
+          <Icon name="plus" size={14} color="var(--fg-3)" />
+        </button>
         <button className="btn icon ghost" title="attach image" aria-label="attach image" onClick={() => fileInputRef.current?.click()}>
           <Icon name="image" size={13} />
         </button>
@@ -934,7 +1039,9 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
             ref={taRef}
             rows="1"
             placeholder={
-              goalMode && !isStreaming
+              mobilePlaceholder !== null
+                ? mobilePlaceholder
+                : goalMode && !isStreaming
                 ? "describe the goal — the agent works toward it until it calls it done…"
                 : planMode && !isStreaming
                 ? (microcopy?.planTip ?? "describe what to build, or give feedback on the plan…")
@@ -965,6 +1072,16 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
           <Icon name="command" size={11} />
           {bridgeKeyHint && <span className="kbd" style={{ marginLeft: 2 }}>{bridgeKeyHint}</span>}
         </button>
+        {/* Phone streaming row: the send key turns into the stop key
+            (mobile-draft frame 1/2). cmp-mobile-send is display:none on
+            desktop and shows ≤760px, where the steer/abort buttons
+            (plain .btn classes) are hidden by the same tier — the pair
+            is width-gated, matching the layout convention. */}
+        {isStreaming && (
+          <button className="cmp-mobile-send cmp-mobile-stop" title="stop" aria-label="stop" onClick={onAbort}>
+            <Icon name="stop" size={12} />
+          </button>
+        )}
         {isStreaming ? (
           <>
             {steerable && (
@@ -1006,7 +1123,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
         </button>
         <ThinkingMenu key={sessionId} model={currentModel} level={thinking}
           cycleHint={cycleThinkingHint} onLoad={onLoadThinkingLevels} onSet={onSetThinking} />
-        <button className={`composer-pill ${planMode ? "on" : ""}`} onClick={onTogglePlan}
+        <button className={`composer-pill plan-pill${planMode ? " on" : ""}`} onClick={onTogglePlan}
           disabled={!!planBlocked && !planMode} title={planBlocked && !planMode ? planBlocked : undefined}>
           <Icon name="plan" size={11} color={planMode ? "var(--amber)" : "var(--fg-3)"} />
           <span style={{ color: planMode ? "var(--amber)" : "var(--fg-2)" }}>plan mode</span>
@@ -1038,7 +1155,67 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
             ...(abortHint ? [`${abortHint} abort`] : []),
           ].join(" · ")}
         </span>
+        {/* Phone: the right-end mode indicator (mobile-draft frame 1).
+            yolo shows the ⚠; any other mode shows its plain name.
+            cmp-only class, hidden above 760px; only rendered when the
+            app passed the cell (PkgB wires approvalCell=approvalCell),
+            so old callers see nothing. */}
+        {approvalModeLabel && (
+          <span className={`cmp-mobile-mode${approvalCell?.warn ? " warn" : ""}`}
+            title={approvalCell?.warn ? "yolo: every tool runs without asking" : "tool approval mode"}>
+            {approvalCell?.warn ? <><Icon name="warn" size={10} color="var(--amber)" /> yolo</> : approvalModeLabel}
+          </span>
+        )}
       </div>
+
+      {/* Phone: the "＋" action panel (mobile-draft frame 3). Mounted only
+          on a touch device — the sheet's whole gesture surface assumes a
+          finger. window.MobileSheet is read here, inside the render, per
+          the late-bound cross-package contract. */}
+      {touch && sheetOpen && (() => {
+        const MobileSheet = window.MobileSheet;
+        if (!MobileSheet) return null;
+        return (
+          <MobileSheet title="actions" onClose={closeSheet}>
+            {sheetNotice && <div className="cmp-sheet-notice" role="status">{sheetNotice}</div>}
+            <button className="cmp-sheet-row" onClick={() => { closeSheet(); fileInputRef.current?.click(); }}>
+              <span className="cmp-sheet-ic"><Icon name="image" size={14} /></span>
+              <span className="cmp-sheet-tx">image<span className="s">photos / files</span></span>
+            </button>
+            <button className="cmp-sheet-row" onClick={() => { closeSheet(); onOpenCmd?.(); }}>
+              <span className="cmp-sheet-ic"><Icon name="command" size={14} /></span>
+              <span className="cmp-sheet-tx">commands<span className="s">slash commands and skills</span></span>
+            </button>
+            <div className="cmp-sheet-sep" />
+            <button className="cmp-sheet-row" onClick={openThinkingFromSheet}>
+              <span className="cmp-sheet-ic"><Icon name="thinking" size={14} color="var(--lilac)" /></span>
+              <span className="cmp-sheet-tx">thinking<span className="s">reasoning depth</span></span>
+              <span className="cmp-sheet-val">{thinking ?? "auto"}</span>
+            </button>
+            <button className={`cmp-sheet-row${planMode ? " on" : ""}`} onClick={togglePlanInSheet}>
+              <span className="cmp-sheet-ic"><Icon name="plan" size={14} color={planMode ? "var(--amber)" : undefined} /></span>
+              <span className="cmp-sheet-tx">{planMode ? "plan mode on" : "plan mode"}<span className="s">draft first, then write · not with goal mode</span></span>
+            </button>
+            <button className={`cmp-sheet-row${goalMode ? " on" : ""}`} onClick={toggleGoalInSheet}>
+              <span className="cmp-sheet-ic"><Icon name="goal" size={14} color={goalMode ? "var(--lilac)" : undefined} /></span>
+              <span className="cmp-sheet-tx">{goalMode ? "goal mode on" : "goal mode"}<span className="s">run until the goal is done · not with plan mode</span></span>
+            </button>
+            <div className="cmp-sheet-sep" />
+            <button className="cmp-sheet-row" onClick={() => dispatchMobile("open-terminal")}>
+              <span className="cmp-sheet-ic"><Icon name="terminal" size={14} /></span>
+              <span className="cmp-sheet-tx">terminal</span>
+            </button>
+            <button className="cmp-sheet-row" onClick={() => dispatchMobile("open-usage")}>
+              <span className="cmp-sheet-ic"><Icon name="radar" size={14} /></span>
+              <span className="cmp-sheet-tx">usage and stats</span>
+            </button>
+            <button className="cmp-sheet-row" onClick={() => dispatchMobile("open-git")}>
+              <span className="cmp-sheet-ic"><Icon name="branch" size={14} /></span>
+              <span className="cmp-sheet-tx">git changes</span>
+            </button>
+          </MobileSheet>
+        );
+      })()}
     </div>
   );
 }

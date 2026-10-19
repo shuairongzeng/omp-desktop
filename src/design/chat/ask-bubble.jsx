@@ -12,6 +12,19 @@ const { approvalInfo: _AskApprovalInfo } = window.OMP_APPROVAL;
 
 // `submitKey` ("enter" | "ctrl+enter", the tweak) is the editor textarea's
 // send chord (constants.js isSubmitKey); the single-line input keeps Enter.
+
+// The phone CSS (ask.css) styles these class flags: an option whose text
+// is a yes-shaped word (Approve / Allow / Confirm / …) gets the
+// solid-accent primary, one that reads Deny gets the rose outline;
+// anything else (extension pickers) stays a neutral large button. Pure,
+// exported for the regression test.
+function _AskToneOf(text) {
+  const t = String(text ?? "").trim().toLowerCase();
+  if (t === "deny" || t === "no") return "is-danger";
+  if (t === "approve" || t === "allow" || t === "confirm" || t === "ok" || t === "yes") return "is-primary";
+  return "";
+}
+
 function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm, onCancelAsk, onGrant, hasProjectPath, submitKey = "enter" }) {
   const [draft, setDraft] = React.useState(msg.method === "editor" ? (msg.prefill ?? "") : "");
   const done = msg.answered || msg.cancelled;
@@ -50,6 +63,22 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
     onCancelAsk(msg.id);
   };
 
+  // ── Phone: the pending approval renders in a bottom sheet ──────────
+  // The chat-stream card stays where it is (history, answered bubbles
+  // keep the inline layout); while the prompt still needs an answer, a
+  // touch device gets it as the sheet mobile-draft frame 4 draws —
+  // vertical big buttons in the thumb zone, no scrim dismissal (an
+  // approval is a decision; a stray scrim tap must not drop it). The
+  // sheet is the same bubble's own markup re-wrapped, so every answer
+  // path (submit / confirm / grant / decline) runs exactly once and the
+  // settled state below takes over the moment `done` flips.
+  // window.OMP_MOBILE / window.MobileSheet are read here, inside the
+  // render, per the late-bound cross-package contract — never
+  // destructured at top level.
+  const onTouch = Boolean(window.OMP_MOBILE?.isTouch?.());
+  const isApproval = Boolean(approval);
+
+
   let body;
   if (method === "ask") {
     body = (
@@ -68,7 +97,7 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
         {msg.message && <div className="ask-confirm-message selectable">{msg.message}</div>}
         <div className="ask-options">
           <button
-            className={`ask-opt${confirmedYes ? " selected" : ""}${done && !confirmedYes ? " dimmed" : ""}`}
+            className={`ask-opt is-primary${confirmedYes ? " selected" : ""}${done && !confirmedYes ? " dimmed" : ""}`}
             disabled={done}
             onClick={() => confirm(true)}
           >
@@ -76,7 +105,7 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
             Confirm
           </button>
           <button
-            className={`ask-opt${confirmedNo ? " selected" : ""}${done && !confirmedNo ? " dimmed" : ""}`}
+            className={`ask-opt is-danger${confirmedNo ? " selected" : ""}${done && !confirmedNo ? " dimmed" : ""}`}
             disabled={done}
             onClick={() => confirm(false)}
           >
@@ -153,7 +182,7 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
               return (
                 <button
                   key={i}
-                  className={`ask-opt${isSelected ? " selected" : ""}${isDimmed ? " dimmed" : ""}`}
+                  className={["ask-opt", _AskToneOf(opt), isSelected && "selected", isDimmed && "dimmed"].filter(Boolean).join(" ")}
                   disabled={done}
                   onClick={() => submit(opt)}
                 >
@@ -212,8 +241,27 @@ function AskBubble({ msg, idx, highlighted, onAnswer, onAnswerDialog, onConfirm,
         </div>
         {body}
       </div>
+      {/* Phone: a pending tool-approval renders as a bottom sheet over
+          the transcript (mobile-draft frame 4). The same handlers `body`
+          already carries run inside it — one answer path, settled exactly
+          like the inline card, which stays in the flow as the transcript
+          record. dismissOnScrim={false}: an approval is a decision, a
+          stray scrim tap must not drop the prompt. Other methods (ask
+          dialog, editor, input, plain pickers) keep the inline card:
+          their free-text and multi-question layouts already fit the
+          full-width card, and the ask-dialog has its own draft state to
+          preserve. */}
+      {onTouch && isApproval && !done && (() => {
+        const MobileSheet = window.MobileSheet;
+        if (!MobileSheet) return null;
+        return (
+          <MobileSheet title="approval required" onClose={decline} dismissOnScrim={false}>
+            {body}
+          </MobileSheet>
+        );
+      })()}
     </div>
   );
 }
 
-Object.assign(window, { AskBubble });
+Object.assign(window, { AskBubble, askOptionTone: _AskToneOf });

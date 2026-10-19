@@ -424,6 +424,34 @@ React.useEffect(() => {
   const handlersRef = React.useRef({});
   useKeymapDispatch(handlersRef);
 
+  // ── `omp:mobile` (phone redesign) ────────────────────────────────────────
+  // PkgA's composer action sheet and the drawer's app menu (PkgB) dispatch
+  // `omp:mobile` with `{ action }`; this is the app's single listener,
+  // mapping each action onto the existing state setters — no new state.
+  // Registered once on mount; the handlers read this render's setters and
+  // terminal through a ref so they never go stale. open-settings first
+  // drops the drawer (`mobile-sidebar-open` on <html>): the drawer (z-60)
+  // would paint over the settings page (z-20) it just opened.
+  const mobileHandlersRef = React.useRef(null);
+  mobileHandlersRef.current = {
+    "open-settings": () => openSettings(),
+    "open-terminal": () => terminal.toggle(planKeyRef.current),
+    "open-usage":    () => setStatsOpen(true),
+    "open-git":      () => setGitOpen({ path: null }),
+    "open-bridge":   () => openBridge(),
+  };
+  React.useEffect(() => {
+    const onMobile = e => {
+      const action = e?.detail?.action;
+      const run = mobileHandlersRef.current?.[action];
+      if (!run) return;
+      document.documentElement.classList.remove("mobile-sidebar-open");
+      run();
+    };
+    window.addEventListener("omp:mobile", onMobile);
+    return () => window.removeEventListener("omp:mobile", onMobile);
+  }, []);
+
   // ── Handlers ──────────────────────────────────────────────────────────────
   // Where a submit goes (OMP_SLASH.routeSubmit): decided on the typed draft.
   const routeOf = (msg, followUp) => _routeSubmit(data.commands, msg, {
@@ -945,6 +973,10 @@ React.useEffect(() => {
             onRenameProfile={handleRenameProfile}
             onDeleteProfile={handleDeleteProfile}
             onSetStartupProfile={handleSetStartupProfile}
+            connected={bridge?.isConnected ?? null}
+            profileLabel={activeProfileLabel}
+            sessions={sessions}
+            activeId={stab.active ? null : activeSessionId}
           />
           <TabBar
             profiles={profiles}
@@ -989,6 +1021,14 @@ React.useEffect(() => {
                 onOpenFolder={handleNewProject}
                 onHide={toggleSidebar}
                 onReorder={handleReorder}
+                profiles={profiles}
+                activeProfileId={activeProfileId}
+                startupProfileId={startupProfileId}
+                onSelectProfile={handleSelectProfile}
+                onCreateProfile={handleCreateProfile}
+                onRenameProfile={handleRenameProfile}
+                onDeleteProfile={handleDeleteProfile}
+                onSetStartupProfile={handleSetStartupProfile}
               />
             )}
             {showSidebar && <ResizeHandle className="at-sidebar" {...panes.handle("sidebar")} />}
@@ -1061,6 +1101,7 @@ React.useEffect(() => {
                     onBrowserChipClick={handleBrowserChipClick}
                     submitKey={t.submitKey}
                     pasteCollapseLines={t.pasteCollapseLines}
+                    approvalCell={approvalCell}
                   />
                 </>)}
               </main>

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OMP Mobile — 自适应布局草稿 v1</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    background: #05070a; color: #e8eaf0; padding: 40px 28px;
+    font: 14px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-size: 22px; margin-bottom: 6px; }
+  .sub { color: #8a92a5; margin-bottom: 8px; max-width: 900px; }
+  .legend { color: #5c6373; font-size: 12.5px; margin-bottom: 30px; max-width: 900px; }
+  .legend b { color: #5eead4; font-weight: 600; }
+  .frames { display: flex; gap: 30px; flex-wrap: wrap; align-items: flex-start; }
+
+  .fw { flex: 0 0 auto; }
+  .fl { text-align: center; color: #8a92a5; font-size: 13px; margin-bottom: 10px; line-height: 1.4; }
+  .fl b { color: #e8eaf0; display: block; font-size: 14.5px; }
+
+  .phone {
+    width: 390px; height: 844px; border-radius: 46px; border: 3px solid #262c3a;
+    background: #0b0d12; overflow: hidden; position: relative;
+    box-shadow: 0 24px 60px rgba(0,0,0,.6);
+    display: flex; flex-direction: column;
+  }
+  .phone.kb { height: 500px; } /* keyboard-open viewport */
+  .notch {
+    position: absolute; top: 11px; left: 50%; transform: translateX(-50%);
+    width: 122px; height: 27px; background: #05070a; border-radius: 14px; z-index: 60;
+  }
+
+  /* ── top bar: 44px, minimal ── */
+  .ios-sb { flex: none; height: 36px; display: flex; align-items: center; justify-content: space-between; padding: 0 26px; font-size: 12px; font-weight: 600; color: #e8eaf0; }
+  .tbar {
+    height: 44px; flex: none; display: flex; align-items: center; gap: 10px;
+    padding: 0 12px; border-bottom: 1px solid #1b2030; background: #0e1118;
+  }
+  .tbar .ic { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; color: #a6adbd; font-size: 17px; }
+  .tbar .ttl { flex: 1; min-width: 0; text-align: center; }
+  .tbar .ttl .t1 { font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tbar .ttl .t2 { font-size: 11px; color: #5c6373; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #34d399; box-shadow: 0 0 6px #34d39966; }
+
+  /* ── session strip: one tappable row replacing the tab bar ── */
+  .sstrip {
+    flex: none; margin: 8px 12px 0; height: 38px; border: 1px solid #232836; border-radius: 10px;
+    background: #12151d; display: flex; align-items: center; gap: 8px; padding: 0 10px;
+    font-size: 13px; color: #cfd4e0;
+  }
+  .sstrip .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sstrip .cnt { color: #5c6373; font-size: 11.5px; }
+  .sstrip .chev { color: #5c6373; }
+
+  /* ── messages ── */
+  .msgs { flex: 1; overflow: hidden; padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 10px; position: relative; }
+  .m-user {
+    align-self: flex-end; max-width: 82%; background: #1d2432; border: 1px solid #2a3244;
+    border-radius: 14px 14px 4px 14px; padding: 9px 12px; font-size: 15px; line-height: 1.55;
+  }
+  .m-ai { align-self: flex-start; max-width: 94%; font-size: 15px; line-height: 1.65; color: #dfe3ec; }
+  .m-ai .who { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; color: #5eead4; font-size: 12px; font-weight: 600; }
+  .m-card {
+    background: #10131b; border: 1px solid #1f2532; border-radius: 10px; margin-top: 6px;
+    font: 12.5px/1.5 ui-monospace, Consolas, monospace; color: #9aa3b5; overflow: hidden;
+  }
+  .m-card .hd { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #1b2030; color: #a6adbd; font-family: inherit; }
+  .m-card .hd .ok { color: #34d399; }
+  .m-card .bd { padding: 8px 10px; white-space: pre-wrap; word-break: break-word; }
+  .m-card .bd .dim { color: #4c5262; }
+  .jump {
+    position: absolute; right: 14px; bottom: 12px; height: 34px; padding: 0 13px;
+    border-radius: 17px; background: #b45309; color: #fff7ed; font-size: 12.5px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.5);
+  }
+
+  /* ── composer: two rows ── */
+  .composer { flex: none; padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px)); background: #0e1118; border-top: 1px solid #1b2030; }
+  .c-row { display: flex; align-items: flex-end; gap: 8px; }
+  .c-plus {
+    width: 42px; height: 42px; flex: none; border-radius: 50%; border: 1px solid #2a3244;
+    background: #151a24; color: #a6adbd; font-size: 20px; display: grid; place-items: center;
+  }
+  .c-input {
+    flex: 1; min-height: 42px; max-height: 130px; border-radius: 21px; border: 1px solid #2a3244;
+    background: #151a24; padding: 10px 16px; font-size: 16px; line-height: 1.4; color: #5c6373;
+    display: flex; align-items: center;
+  }
+  .c-send {
+    width: 42px; height: 42px; flex: none; border-radius: 50%; background: #5eead4;
+    color: #0b0d12; font-size: 17px; font-weight: 700; display: grid; place-items: center;
+  }
+  .c-meta {
+    display: flex; align-items: center; gap: 6px; margin-top: 7px; padding: 0 4px;
+    font-size: 11.5px; color: #5c6373;
+  }
+  .c-meta .pill { border: 1px solid #232836; background: #12151d; border-radius: 999px; padding: 3px 9px; color: #8a92a5; }
+  .c-meta .grow { flex: 1; }
+  .c-meta .warn { color: #fbbf24; }
+
+  /* ── status strip ── */
+  .sbar {
+    flex: none; height: 24px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    font-size: 11px; color: #5c6373; border-top: 1px solid #161a24; background: #0b0d12;
+  }
+
+  /* ── bottom sheet ── */
+  .scrim { position: absolute; inset: 0; background: rgba(3,5,9,.55); z-index: 40; }
+  .sheet {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 41;
+    background: #12151d; border-radius: 18px 18px 0 0; border-top: 1px solid #262c3a;
+    padding: 8px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -18px 50px rgba(0,0,0,.5);
+  }
+  .grab { width: 38px; height: 4.5px; border-radius: 3px; background: #333a4c; margin: 2px auto 10px; }
+  .sh-item { display: flex; align-items: center; gap: 13px; min-height: 48px; padding: 6px 10px; border-radius: 10px; font-size: 15px; }
+  .sh-item .ic { width: 34px; height: 34px; border-radius: 9px; background: #181d29; display: grid; place-items: center; font-size: 15px; flex: none; }
+  .sh-item .tx { flex: 1; }
+  .sh-item .tx .s { display: block; font-size: 11.5px; color: #5c6373; }
+  .sh-item .val { color: #5eead4; font-size: 13px; }
+  .sh-sep { height: 1px; background: #1b2030; margin: 6px 10px; }
+  .sh-cap { padding: 2px 12px 8px; font-size: 11.5px; color: #5c6373; }
+
+  .cmdbox {
+    margin: 4px 10px 10px; background: #0b0e14; border: 1px solid #1f2532; border-radius: 10px;
+    padding: 10px 12px; font: 12.5px/1.5 ui-monospace, Consolas, monospace; color: #cdd3e0;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .btn-p {
+    display: block; width: calc(100% - 20px); margin: 0 10px 8px; height: 48px; border-radius: 12px;
+    background: #5eead4; color: #0b0d12; font-size: 16px; font-weight: 700; border: 0;
+  }
+  .btn-s {
+    display: block; width: calc(100% - 20px); margin: 0 10px 8px; height: 48px; border-radius: 12px;
+    background: transparent; color: #fb7185; font-size: 15px; font-weight: 600; border: 1px solid #3d2430;
+  }
+  .btn-t { display: block; margin: 2px auto 4px; background: none; border: 0; color: #8a92a5; font-size: 13px; padding: 8px 16px; }
+
+  /* drawer */
+  .drawer { position: absolute; top: 0; bottom: 0; left: 0; width: 304px; background: #0e1118; border-right: 1px solid #1f2532; z-index: 45; display: flex; flex-direction: column; }
+  .d-hd { padding: 54px 16px 10px; font-size: 12px; color: #5c6373; letter-spacing: .08em; }
+  .d-item { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 4px 16px; font-size: 15px; }
+  .d-item .n { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .d-item .t { font-size: 11px; color: #5c6373; }
+  .d-item.on { background: #141926; }
+  .d-sub { padding: 4px 16px 2px 34px; font-size: 13.5px; color: #a6adbd; min-height: 40px; display: flex; align-items: center; gap: 8px; }
+  .d-foot { margin-top: auto; border-top: 1px solid #1b2030; padding: 6px 6px calc(8px + env(safe-area-inset-bottom, 0px)); }
+  .d-foot .d-item { font-size: 14.5px; color: #cfd4e0; }
+
+  .tag { position: absolute; top: 10px; right: 12px; z-index: 70; font-size: 10.5px; color: #5eead4; border: 1px solid #1f4a42; background: #0d1715; padding: 2px 7px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<h1>OMP Mobile 自适应布局草稿 v1</h1>
+<p class="sub">综合 4 路走查（导航 / 输入 / 消息流 / 原生范式）41 项发现后的重设计。原则：<b>底部是手的地方</b>——输入、发送、审批、切换全在拇指区；顶部只放"看"的信息。</p>
+<p class="legend">标注：<b>绿字</b>=相对现状的关键改动 · 全部改动落点为 CSS 媒体查询 + composer/chrome 少量 JSX 条件分支，<b>不动 React 树结构</b>、不动桌面端任何像素。</p>
+
+<div class="frames">
+
+<!-- ═══ Frame 1: main chat ═══ -->
+<div class="fw">
+  <div class="fl"><b>① 聊天主界面</b>顶栏 44px 只留上下文 · 会话条替代横滚 tab 栏</div>
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="ios-sb"><span>9:41</span><span>?? ??</span></div>
+    <div class="tbar">
+      <div class="ic">☰</div>
+      <div class="ttl"><div class="t1">omp-desktop</div><div class="t2">master · default</div></div>
+      <div class="dot"></div>
+    </div>
+    <div class="sstrip">
+      <span>💬</span><span class="nm">Fix git browser footer…</span>
+      <span class="cnt">3 个会话</span><span class="chev">▾</span>
+    </div>
+    <div class="msgs">
+      <div class="m-user">把 footer 里 git browser 的黑屏修一下，顺便看看提交图渲染</div>
+      <div class="m-ai">
+        <div class="who">✦ GLM 5.3</div>
+        找到了——上游无障碍提交误删了 <b>_GH_WORKTREE</b> 常量，GitHistory 首渲染即抛异常，没有 error boundary 所以整树卸载黑屏。已恢复常量并回归测试。
+        <div class="m-card">
+          <div class="hd"><span class="ok">✓</span> git commit &amp; push <span style="flex:1"></span> ⧉</div>
+          <div class="bd">cb56aba..3895c68 master<br><span class="dim">1 file changed, 2 insertions(+)</span></div>
+        </div>
+      </div>
+      <div class="m-user">手机上看长回复会不会卡？</div>
+      <div class="m-ai">
+        <div class="who">✦ GLM 5.3</div>
+        不会。行数有 169 条硬上限（13×13 网格），每个流式 delta 只重渲染当前气泡，其余行全部 React.memo 跳过……
+      </div>
+    </div>
+    <div class="composer">
+      <div class="c-row">
+        <div class="c-plus">＋</div>
+        <div class="c-input">说点什么…</div>
+        <div class="c-send">➤</div>
+      </div>
+      <div class="c-meta">
+        <span class="pill">GLM 5.3 ▾</span><span class="pill">thinking · high ▾</span>
+        <span class="grow"></span><span class="warn">⚠ yolo</span>
+      </div>
+    </div>
+    <div class="sbar"><span>● 已连接</span><span>todo 0/0</span><span style="flex:1"></span><span>v0.11</span></div>
+  </div>
+</div>
+
+<!-- ═══ Frame 2: keyboard open ═══ -->
+<div class="fw">
+  <div class="fl"><b>② 键盘弹起（视口 500px）</b>composer 贴键盘 · 消息区压缩仍可读 3-4 条</div>
+  <div class="phone kb">
+    <div class="notch"></div>
+    <div class="ios-sb"><span>9:41</span><span>?? ??</span></div>
+    <div class="tbar">
+      <div class="ic">☰</div>
+      <div class="ttl"><div class="t1">omp-desktop</div><div class="t2">master · default</div></div>
+      <div class="dot"></div>
+    </div>
+    <div class="msgs" style="padding-top:10px">
+      <div class="m-ai">
+        <div class="who">✦ GLM 5.3</div>
+        行数有 169 条硬上限，流式只重渲染当前气泡……
+      </div>
+      <div class="m-user">那工具卡片呢，bash 输出很长的时候</div>
+    </div>
+    <div class="composer">
+      <div class="c-row">
+        <div class="c-plus">＋</div>
+        <div class="c-input" style="color:#e8eaf0">默认只留 3 行预览，展开才是全高，滚动不会被卡片吃掉|</div>
+        <div class="c-send">➤</div>
+      </div>
+    </div>
+    <div style="flex:none;height:330px;background:#0d0f14;border-top:1px solid #1b2030;display:grid;place-items:center;color:#3c4354;font-size:13px">— 系统键盘区域（~330px）—</div>
+  </div>
+</div>
+
+<!-- ═══ Frame 3: + action sheet ═══ -->
+<div class="fw">
+  <div class="fl"><b>③ "＋" 动作面板（bottom sheet）</b>附件/命令/模式全收进 · 48px 行 · 拖把下滑关闭</div>
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="ios-sb"><span>9:41</span><span>?? ??</span></div>
+    <div class="tbar">
+      <div class="ic">☰</div>
+      <div class="ttl"><div class="t1">omp-desktop</div><div class="t2">master · default</div></div>
+      <div class="dot"></div>
+    </div>
+    <div class="msgs" style="filter:brightness(.6)">
+      <div class="m-user">把 footer 里 git browser 的黑屏修一下</div>
+      <div class="m-ai"><div class="who">✦ GLM 5.3</div>找到了——上游误删了常量……</div>
+    </div>
+    <div class="scrim"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="sh-item"><div class="ic">🖼</div><div class="tx">图片<span class="s">拍照 / 相册 / 文件</span></div></div>
+      <div class="sh-item"><div class="ic">⌘K</div><div class="tx">命令桥<span class="s">斜杠命令与技能</span></div></div>
+      <div class="sh-sep"></div>
+      <div class="sh-item"><div class="ic">🧠</div><div class="tx">Thinking<span class="s">推理深度</span></div><div class="val">high ▾</div></div>
+      <div class="sh-item"><div class="ic">📋</div><div class="tx">Plan mode<span class="s">先出计划再动手</span></div></div>
+      <div class="sh-item"><div class="ic">🎯</div><div class="tx">Goal mode<span class="s">自动续跑到目标达成</span></div></div>
+      <div class="sh-sep"></div>
+      <div class="sh-item"><div class="ic">🖥</div><div class="tx">终端</div></div>
+      <div class="sh-item"><div class="ic">📊</div><div class="tx">用量与统计</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Frame 4: approval sheet ═══ -->
+<div class="fw">
+  <div class="fl"><b>④ 审批请求（bottom sheet）</b>竖排 48px 大按钮 · 主操作实心 · 不再并排误触</div>
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="ios-sb"><span>9:41</span><span>?? ??</span></div>
+    <div class="tbar">
+      <div class="ic">☰</div>
+      <div class="ttl"><div class="t1">omp-desktop</div><div class="t2">master · default</div></div>
+      <div class="dot"></div>
+    </div>
+    <div class="msgs" style="filter:brightness(.6)">
+      <div class="m-ai"><div class="who">✦ GLM 5.3</div>需要先删掉旧的构建产物再重新打包……</div>
+    </div>
+    <div class="jump" style="bottom:auto;top:110px">⚠ 等待你的批准</div>
+    <div class="scrim"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <div class="sh-cap">⚠ agent 请求执行命令</div>
+      <div class="cmdbox">rm -rf dist node_modules/.cache &amp;&amp; npm run build:frontend</div>
+      <button class="btn-p">✓ 允许执行</button>
+      <button class="btn-s">拒绝</button>
+      <button class="btn-t">本会话内不再询问 · 这个项目永久允许</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Frame 5: drawer ═══ -->
+<div class="fw">
+  <div class="fl"><b>⑤ 抽屉 = 项目 + 应用菜单</b>行高 48px · 底部固定设置/主题 · 右缘滑出/滑关</div>
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="ios-sb"><span>9:41</span><span>?? ??</span></div>
+    <div class="tbar" style="filter:brightness(.6)">
+      <div class="ic">☰</div>
+      <div class="ttl"><div class="t1">omp-desktop</div><div class="t2">master · default</div></div>
+      <div class="dot"></div>
+    </div>
+    <div class="msgs" style="filter:brightness(.6)">
+      <div class="m-user">把 footer 里 git browser 的黑屏修一下</div>
+    </div>
+    <div class="scrim" style="background:rgba(3,5,9,.45)"></div>
+    <div class="drawer">
+      <div class="d-hd">进行中的项目</div>
+      <div class="d-item on"><span>▸</span><span class="n">omp-desktop</span><span class="t">3</span></div>
+      <div class="d-sub">💬 Fix git browser footer… <span class="t">22m</span></div>
+      <div class="d-sub">💬 Design phone remote… <span class="t">2h</span></div>
+      <div class="d-sub">💬 Say hello… <span class="t">17h</span></div>
+      <div class="d-item"><span>▸</span><span class="n">relay-server</span><span class="t"></span></div>
+      <div class="d-item"><span>＋</span><span class="n" style="color:#8a92a5">打开文件夹…</span></div>
+      <div class="d-foot">
+        <div class="d-item"><span>⚙️</span><span class="n">设置</span></div>
+        <div class="d-item"><span>🎨</span><span class="n">主题</span><span class="t">dark</span></div>
+        <div class="d-item"><span>👤</span><span class="n">Profile</span><span class="t">default</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<p class="legend" style="margin-top:34px">
+v1 实施清单（本草稿覆盖）：composer 两行化 · placeholder 手机文案 · Enter 不再误发（手机上仅按钮发送）· 发送/流结束不抢焦点不弹键盘 · thinking 菜单移出视口 bug 修复（进 sheet）· 状态栏砍到 3 格 · 会话条替代横滚 tab 栏 · 复制按钮触屏常显 · 审批竖排大按钮 · 卡片内嵌滚动取消（折叠态 3 行预览）· viewport-fit=cover 补 safe-area · 抽屉行高 48px + 底部应用菜单。<br>
+<b>v2（另立迭代，需动结构）</b>：右滑返回手势 · 长按消息菜单（复制/引用/重发）· 全部模态 bottom sheet 化 · git browser/看板全屏页化。
+</p>
+</body>
+</html>

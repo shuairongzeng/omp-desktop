@@ -7,7 +7,7 @@
    ═════════════════════════════════════════════════════════════════════ */
 
 const { Icon, TokenGauge, ActivityRadar, Sparkline, TOOL_META, ProfileMenu, DEFAULT_PROFILE_ID, SubagentRailCard, TabGroupChip, TabRunDot, TabLabel, RenameField } = window;
-const { groupTabs } = window.OMP_PROJECT_NAV;
+const { groupTabs, sessionStrip } = window.OMP_PROJECT_NAV;
 
 // Thin wrappers around the shared `OMP_KEYMAP.hintFor`/`hintKeyFor` — same
 // guard and rationale as composer.jsx's copy (kept local rather than a
@@ -26,6 +26,8 @@ function WindowChrome({
   project, onCmd,
   profiles, activeProfileId, startupProfileId,
   onSelectProfile, onCreateProfile, onRenameProfile, onDeleteProfile, onSetStartupProfile,
+  connected = null, profileLabel,
+  sessions = [], activeId = null,
 }) {
   // #15: the maximize glyph must follow the window's real state, including
   // OS-level changes (double-click title bar, Win+Up, taskbar). `listen`
@@ -38,8 +40,12 @@ function WindowChrome({
   React.useEffect(() => {
     document.documentElement.classList.toggle("mobile-sidebar-open", drawer);
     if (!drawer) return undefined;
-    // Tapping a sidebar entry navigates — close the drawer with it.
-    const close = (e) => { if (e.target.closest(".psb-main, .psb-hist-row, .psb-act")) setDrawer(false); };
+    // Tapping a sidebar entry navigates — close the drawer with it. The
+    // settings row is in on it too: the drawer (z-60) would cover the
+    // settings page (z-20) it just opened. Profile rows are not: their
+    // popover lives inside the drawer and switching respawns the tab
+    // without moving the drawer.
+    const close = (e) => { if (e.target.closest(".psb-main, .psb-hist-row, .psb-act, .psb-app-row")) setDrawer(false); };
     document.addEventListener("click", close);
     return () => {
       document.removeEventListener("click", close);
@@ -57,10 +63,53 @@ function WindowChrome({
     return () => { alive = false; unlisten?.(); };
   }, []);
 
+  // `profileLabel` defaults to the id: app-live passes the resolved name.
+  const sub = [project.branch, profileLabel ?? activeProfileId]
+    .filter(Boolean).join(" · ");
+  // The session strip's label (OMP_PROJECT_NAV.sessionStrip): the active
+  // conversation's name and how many are open.
+  const strip = sessionStrip(sessions, activeId);
   return (
-    <div className="chrome" data-tauri-drag-region>
-      {/* Phone drawer toggle — hidden by CSS except on narrow screens
-          (mobile.css); opens the project sidebar as an overlay. */}
+    <>
+      {/* Phone top bar (≤760px, chrome.css): ☰ drawer · project ·
+          branch · profile · connection dot. Desktop renders it
+          display:none; the desktop `.chrome` block below is likewise
+          hidden on phones, so the two never stack. */}
+      <div className="mobile-topbar">
+        <button className="mobile-topbar-menu" aria-label="projects" onClick={() => setDrawer((v) => !v)}>
+          <Icon name="menu" size={16} color="var(--fg-2)" />
+        </button>
+        <div className="mobile-topbar-title">
+          <span className="mobile-topbar-project">{project.name}</span>
+          {sub && <span className="mobile-topbar-sub mono">{sub}</span>}
+        </div>
+        <span className={`dot ${connected === null ? "warn" : connected ? "live" : "error"}`}
+          title={connected === null ? "connecting" : connected ? "connected" : "disconnected"} />
+      </div>
+      {drawer && <div className="mobile-drawer-scrim" onClick={() => setDrawer(false)} />}
+
+      {/* Phone session strip (≤760px, chrome.css): the one tappable row
+          that replaces the horizontal tab bar. Clicking opens the drawer,
+          which lists every conversation. Desktop: display:none. The label
+          comes from OMP_PROJECT_NAV.sessionStrip (pure, tested). */}
+      <button className="mobile-session-strip" aria-label="conversations"
+        onClick={() => setDrawer(true)}>
+        <span className="mobile-session-strip-title">
+          {strip.title ?? "no conversation"}
+        </span>
+        <span className="mobile-session-strip-count mono">
+          {strip.count} session{strip.count === 1 ? "" : "s"}
+        </span>
+        <Icon name="chev" size={9} color="var(--fg-4)" />
+      </button>
+
+      {/* Desktop title bar — hidden on phones (chrome.css), where the
+          mobile topbar above replaces it. */}
+      <div className="chrome" data-tauri-drag-region>
+
+      {/* Drawer toggle for the ≤820px tablet tier (mobile.css): on real
+          phones (≤760px) this whole .chrome row is hidden and the topbar's
+          ☰ above owns the drawer. */}
       <button
         className="btn ghost mobile-menu-btn"
         aria-label="projects"
@@ -68,7 +117,6 @@ function WindowChrome({
       >
         <Icon name="menu" size={13} />
       </button>
-      {drawer && <div className="mobile-drawer-scrim" onClick={() => setDrawer(false)} />}
 
       {/* macOS traffic lights — left side, hidden on Windows */}
       {!IS_WIN && (
@@ -131,8 +179,9 @@ function WindowChrome({
             </button>
           </div>
         )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -359,7 +408,11 @@ const StatusBar = React.memo(function StatusBar({
           startup, not a third colour for a healthy session. */}
       <span className="status-cell">
         <span className={`dot ${connected === null ? "warn" : connected ? "live" : "error"}`} />
-        {connected === null ? "connecting" : connected ? "connected" : "disconnected"}
+        {/* .st-label: the words drop out on a phone (chrome.css), where the
+            mobile topbar already names the state with the same dot. */}
+        <span className="st-label">
+          {connected === null ? "connecting" : connected ? "connected" : "disconnected"}
+        </span>
       </span>
       <span className="status-sep">·</span>
       <span className="status-cell st-ctx mono">
@@ -380,34 +433,34 @@ const StatusBar = React.memo(function StatusBar({
         <Icon name="plan" size={11} color="var(--accent)" />
         <span style={{ color: "var(--accent)" }}>todo {todoDone}/{todoTotal}</span>
       </button>
-      <span className="status-sep">·</span>
-      <button className="status-cell btn ghost" onClick={onChanges} title="git browser" style={{ height: 20, padding: "0 6px" }}>
+      <span className="status-sep st-panel-sep">·</span>
+      <button className="status-cell btn ghost st-panel" onClick={onChanges} title="git browser" style={{ height: 20, padding: "0 6px" }}>
         <Icon name="diff2" size={11} color="var(--fg-3)" />
       </button>
-      <span className="status-sep">·</span>
-      <button className="status-cell btn ghost" onClick={onTree} title="conversation tree (prompt-cache status)" style={{ height: 20, padding: "0 6px" }}>
+      <span className="status-sep st-panel-sep">·</span>
+      <button className="status-cell btn ghost st-panel" onClick={onTree} title="conversation tree (prompt-cache status)" style={{ height: 20, padding: "0 6px" }}>
         <Icon name="branch" size={11} color="var(--fg-3)" />
       </button>
-      <span className="status-sep">·</span>
-      <button className="status-cell btn ghost" onClick={onBrowser} aria-pressed={browserOpen}
+      <span className="status-sep st-panel-sep">·</span>
+      <button className="status-cell btn ghost st-panel" onClick={onBrowser} aria-pressed={browserOpen}
         title={`browser panel (${hintFor("desktop.browser.toggle", "Ctrl+Shift+B")})`}
         style={{ height: 20, padding: "0 6px" }}>
         <Icon name="web" size={11} color={browserOpen ? "var(--accent)" : "var(--fg-3)"} />
       </button>
       <span className="status-sep">·</span>
       <ApprovalModeCell cell={approvalMode} onClick={onRules} />
-      <span className="status-sep">·</span>
-      <button className="status-cell btn ghost" onClick={onStats} title="usage statistics" style={{ height: 20, padding: "0 6px" }}>
+      <span className="status-sep st-panel-sep">·</span>
+      <button className="status-cell btn ghost st-panel" onClick={onStats} title="usage statistics" style={{ height: 20, padding: "0 6px" }}>
         <Icon name="cost" size={11} color="var(--fg-3)" />
       </button>
-      <span className="status-sep">·</span>
-      <button className={`status-cell btn ghost ${terminalOpen ? "on" : ""}`} onClick={onTerminal}
+      <span className="status-sep st-panel-sep">·</span>
+      <button className={`status-cell btn ghost st-panel ${terminalOpen ? "on" : ""}`} onClick={onTerminal}
         title={`terminal (${hintFor("desktop.terminal.toggle", "Ctrl+`")})`}
         aria-pressed={!!terminalOpen} style={{ height: 20, padding: "0 6px" }}>
         <Icon name="terminal" size={11} color={terminalOpen ? "var(--accent)" : "var(--fg-3)"} />
       </button>
-      <span className="status-sep">·</span>
-      <button className={`status-cell btn ghost ${settingsActive ? "on" : ""}`} onClick={onSettings}
+      <span className="status-sep st-panel-sep">·</span>
+      <button className={`status-cell btn ghost st-panel ${settingsActive ? "on" : ""}`} onClick={onSettings}
         title={`settings (${hintFor("desktop.settings.open", "Ctrl+,")})`}
         aria-pressed={settingsActive} style={{ height: 20, padding: "0 6px" }}>
         <Icon name="cog" size={11} color={settingsActive ? "var(--accent)" : "var(--fg-3)"} />
@@ -416,8 +469,8 @@ const StatusBar = React.memo(function StatusBar({
           restores it (same place the toggle lives for the sidebar). */}
       {showRailToggle && (
         <>
-          <span className="status-sep">·</span>
-          <button className="status-cell btn ghost" onClick={onToggleRail}
+          <span className="status-sep st-panel-sep">·</span>
+          <button className="status-cell btn ghost st-panel" onClick={onToggleRail}
             title={`show ambient rail${hintFor("desktop.rail.toggle") ? ` (${hintFor("desktop.rail.toggle")})` : ""}`}
             style={{ height: 20, padding: "0 6px" }}>
             <Icon name="layers" size={11} color="var(--fg-3)" />

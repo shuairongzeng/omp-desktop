@@ -357,4 +357,80 @@
   color: var(--fg-4);
   font-size: var(--d-text-xs);
 }
+/* Phone top bar + session strip (see the ≤760px block at the end): markup
+   is always rendered by chrome.jsx, hidden on desktop by these bases. */
+.mobile-topbar, .mobile-session-strip { display: none; }
+
+/* ── Phone (≤760px): topbar, session strip, status-bar cut ────────────────
+   The mobile redesign (docs/design/mobile-draft.html). Everything here is
+   width-gated; the desktop layout above is untouched. The rules in
+   layout/mobile.css that this block supersedes are listed for the main
+   integrator: its `.chrome { padding: 0 8px }` / `.chrome-title { font-size:
+   12px }` / `.tabs …` tab-bar tier and the status `.status-cell`
+   min-heights — the topbar and session strip replace the whole chrome and
+   tab rows, so those never apply. */
+@media (max-width: 760px) {
+  /* 44px top bar: ☰ 36px · centred project + branch · profile · dot.
+     The desktop `.chrome` row and the old hamburger live under it. */
+  .mobile-topbar {
+    display: flex; align-items: center; gap: 10px;
+    height: 44px; flex: none; padding: 0 10px;
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--line);
+  }
+  .mobile-topbar-menu {
+    width: 36px; height: 36px; flex: none;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 0; border-radius: var(--r-1);
+    background: transparent; color: var(--fg-2);
+    cursor: pointer;
+  }
+  .mobile-topbar-menu:hover { background: var(--bg-hover); }
+  .mobile-topbar-title {
+    flex: 1; min-width: 0; text-align: center;
+    display: flex; flex-direction: column; align-items: center; gap: 1px;
+  }
+  .mobile-topbar-project {
+    font-size: 15px; font-weight: 600; color: var(--fg);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mobile-topbar-sub {
+    font-size: 11px; color: var(--fg-4);
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* The connection dot is the bar's whole right end; the ·-label lives in
+     the status bar below. */
+  .mobile-topbar .dot { width: 8px; height: 8px; margin-right: 4px; flex: none; }
+
+  /* Session strip: 38px tappable row replacing the horizontal tab bar. */
+  .mobile-session-strip {
+    display: flex; align-items: center; gap: 8px;
+    height: 38px; margin: 8px 10px 0; padding: 0 10px;
+    border: 1px solid var(--line); border-radius: var(--r-2);
+    background: var(--bg-surface);
+    font-size: 13px; color: var(--fg-2);
+    cursor: pointer; text-align: left;
+  }
+  .mobile-session-strip:active { background: var(--bg-hover); }
+  .mobile-session-strip-title {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .mobile-session-strip-count { font-size: 11px; color: var(--fg-4); flex: none; }
+
+  /* Desktop chrome and tab bar are gone on a phone: the topbar and the
+     session strip above replace them. */
+  .chrome, .tabs { display: none; }
+
+  /* Status bar, cut to three cells: connection dot · todo · approvals.
+     The st-panel buttons (git, tree, browser, stats, terminal, settings)
+     and their separators drop; their entries moved to the composer's
+     action sheet (PkgA) and the drawer's app menu (project-sidebar). */
+  .status .st-panel,
+  .status .st-panel-sep { display: none; }
+  .status .st-label { display: none; }
+  /* The remaining cells spread across the bar instead of bunching left. */
+  .status { justify-content: space-between; }
+  .status .status-sep { display: none; }
+}
 

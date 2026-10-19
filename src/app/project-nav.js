@@ -224,6 +224,21 @@
     return list;
   }
 
+  /** The mobile session strip (chrome.jsx): what the one tappable row that
+   *  replaces the horizontal tab bar on a phone says. `{ title, count }` —
+   *  the active tab's name (the folder when the tab is nameless, which never
+   *  happens for a real snapshot, but keeps the strip from flashing
+   *  "undefined") and the number of open conversations; with no tab the
+   *  title is `null` and the caller renders its placeholder. Pure so the
+   *  strip's label logic is Node-testable without a DOM. */
+  function sessionStrip(tabs, activeId) {
+    const active = tabs.find(t => t.id === activeId) ?? null;
+    return {
+      title: active ? (active.name || basename(active.path) || "untitled") : null,
+      count: tabs.length,
+    };
+  }
+
   /** What a relaunch needs to reopen `tabs` (issue #17), in tab order: each
    *  tab's folder, profile, conversation file and label, plus the index of
    *  the active tab (`null` when none is). The shape `open_tabs_save`
@@ -277,6 +292,7 @@
     savedForProject,
     recentRows,
     sessionProjects,
+    sessionStrip,
     tabLayout,
     restoreSpec,
   };

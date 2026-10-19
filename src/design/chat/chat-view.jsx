@@ -173,6 +173,15 @@ function liveKey(messages) {
   return "none";
 }
 
+// Any ask still needing an answer (approval, dialog, confirm, editor,
+// input): the "Jump to latest" button turns amber and says so while the
+// reader is away from the bottom — on a phone the pending prompt sits
+// below the fold and nothing else signals it. Pure, exported for the
+// regression test; `hidden` matches unreadSince's convention.
+function hasPendingAsk(messages, hidden = m => window.OMP_TURN_STATUS.isHidden(m)) {
+  return messages.some(m => m.kind === "ask" && !m.answered && !m.cancelled && !hidden(m));
+}
+
 // Collapsible blocks (#44, #43): `foldModes` (`{ thinking, tool }`) and
 // `_id → collapsed` toggles, and `onToggleCollapse(id, collapsed)` flips one
 // (app/chat-collapse.js). `followOutput` and `submitKey` are tweaks too: the
@@ -201,6 +210,12 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
   // last assistant message's outcome, so only a settled turn — not every
   // streaming delta — swaps the announcement.
   const liveText = React.useMemo(() => liveSummary(messages), [liveKey(messages)]);
+  // A pending ask while the reader is away from the bottom: the jump
+  // button turns amber and names it (chat.css phone tier styles the
+  // amber state; the flag itself shows on desktop too — the pending
+  // badge is useful with a keyboard as well, and the text swap is
+  // width-independent).
+  const pendingAsk = React.useMemo(() => hasPendingAsk(messages), [messages]);
 
   const setPinned = (val) => {
     pinnedRef.current = val;
@@ -334,13 +349,13 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
           scroll region so its DOM text changes don't scroll the transcript. */}
       <div className="sr-live" role="status" aria-live="polite">{liveText}</div>
       {showJump && (
-        <button type="button" className="chat-jump-latest" onClick={jumpToLatest}>
-          <_CV_Icon name="chev" size={12} />
-          {unread > 0 ? `Jump to latest · ${unread} new` : "Jump to latest"}
+        <button type="button" className={`chat-jump-latest${pendingAsk ? " needs-approval" : ""}`} onClick={jumpToLatest}>
+          <_CV_Icon name={pendingAsk ? "warn" : "chev"} size={12} color={pendingAsk ? "var(--amber)" : undefined} />
+          {pendingAsk ? "⚠ approval needed" : unread > 0 ? `Jump to latest · ${unread} new` : "Jump to latest"}
         </button>
       )}
     </div>
   );
 }
 
-Object.assign(window, { ChatView, unreadSince, liveSummary, liveKey });
+Object.assign(window, { ChatView, unreadSince, liveSummary, liveKey, hasPendingAsk });
