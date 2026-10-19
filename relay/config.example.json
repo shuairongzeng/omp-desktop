@@ -1,0 +1,8 @@
+{
+  "bind": "127.0.0.1:8787",
+  "static_dir": "../dist",
+  "devices": {
+    "demo-device": "782920e555444d744e919f36bb885730f42b2e951f02d89407d421ab536106d8"
+  },
+  "state_file": "./relay-state.json"
+}

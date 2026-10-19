@@ -46,3 +46,4 @@ docs/superpowers/
 
 # ── Nucleus MCP index (local tool state) ─────────────────────────────────────
 .nucleus/
+relay/target/

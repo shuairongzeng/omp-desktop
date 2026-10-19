@@ -39,7 +39,7 @@ function check(label, fn) {
 
 check("sections in page order, separator before approvals", () => {
   assert.deepEqual(S.SECTIONS.map(s => s.id),
-    ["appearance", "layout", "chat", "composer", "rail", "terminal", "browser", "agent", "session", "approvals", "shortcuts"]);
+    ["appearance", "remote", "layout", "chat", "composer", "rail", "terminal", "browser", "agent", "session", "approvals", "shortcuts"]);
   assert.deepEqual(S.SECTIONS.filter(s => s.sep).map(s => s.id), ["approvals"]);
   for (const s of S.SECTIONS) assert.ok(s.icon && s.title && s.blurb && s.groups.length, s.id);
 });
@@ -59,7 +59,7 @@ check("every tweak row names a TWEAK_DEFAULTS key whose default is valid", () =>
 
 check("custom rows name the renderers the page expects", () => {
   assert.deepEqual(S.rows().filter(r => r.kind === "custom").map(r => r.type).sort(),
-    ["approvalMode", "approvalRules", "bgImage", "chromium", "goalContinue", "shell", "shortcuts", "startupProfile", "terminalHeight", "version", "widgets", "widths"]);
+    ["approvalMode", "approvalRules", "bgImage", "chromium", "goalContinue", "remoteMain", "remotePair", "shell", "shortcuts", "startupProfile", "terminalHeight", "version", "widgets", "widths"]);
   for (const r of S.rows().filter(r => r.kind === "custom")) for (const k of r.keys ?? []) assert.ok(k in D, k);
 });
 

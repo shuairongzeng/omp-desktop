@@ -33,6 +33,7 @@ mod program_setting;
 mod project_file;
 mod recent_projects;
 mod redaction;
+mod remote;
 mod saved_sessions;
 mod spawn_gate;
 mod stats;
@@ -109,6 +110,12 @@ async fn start_session(
     mut args: StartSessionArgs,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    // Idempotent on a live session: the desktop's own respawns stop first,
+    // and a remote client replaying the desktop's tab list must not
+    // restart the agents it attaches to (docs/architecture/remote-control.md).
+    if app.state::<AgentBridge>().is_alive(&args.session_id) {
+        return Ok(args.session_id);
+    }
     // Resolved before the off-thread block so a fast rejection (unknown
     // profile) needs no thread hop — it reads only the in-memory cache.
     // The `resume` validation stays inside the block: it canonicalises
@@ -1470,6 +1477,12 @@ fn setup(app: &tauri::App) {
     app.manage(Arc::new(open_tabs::OpenTabsStore::new(config_file(
         "open-tabs.json",
     ))));
+    // Phone remote control: <app_config_dir>/remote.json; connects to the
+    // relay when the user left it enabled (docs/architecture/remote-control.md).
+    app.manage(remote::RemoteManager::new(
+        app.handle(),
+        config_file("remote.json"),
+    ));
 
     // A cold start *is* how Windows and Linux file managers open a
     // folder, so the launch argv is the third delivery path into the
@@ -1632,6 +1645,10 @@ pub fn run() {
             recent_projects_remove,
             open_tabs_load,
             open_tabs_save,
+            remote::remote_get_state,
+            remote::remote_configure,
+            remote::remote_regenerate_token,
+            remote::remote_send,
             model_usage_list,
             app_update_check,
             app_update_install,

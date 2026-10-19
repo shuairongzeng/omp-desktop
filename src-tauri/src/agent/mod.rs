@@ -382,6 +382,17 @@ impl AgentBridge {
         errs.get(session_id).cloned()
     }
 
+    /// Whether a session with this id exists with a live omp process
+    /// (stdin open). `start_session` is idempotent on a live session so a
+    /// remote client restoring the desktop's tab list cannot restart the
+    /// agents it is attaching to (docs/architecture/remote-control.md).
+    pub fn is_alive(&self, session_id: &str) -> bool {
+        self.with_entry(session_id, |inner| inner.stdin.is_some())
+            .ok()
+            .flatten()
+            .unwrap_or(false)
+    }
+
     /// Events a session's frontend hasn't seen yet, per its bounded
     /// journal. Used on tab reactivation to recover state (tool cards, ask
     /// bubbles, streaming progress) that arrived while no listener was

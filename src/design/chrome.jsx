@@ -32,6 +32,20 @@ function WindowChrome({
   // ("tauri://resize") fires on both directions; isMaximized() is polled
   // once per event, not per render.
   const [maximized, setMaximized] = React.useState(false);
+  // Phone sidebar drawer (mobile.css): the class lives on <html> so CSS
+  // owns the layout, this state only decides whether the scrim renders.
+  const [drawer, setDrawer] = React.useState(false);
+  React.useEffect(() => {
+    document.documentElement.classList.toggle("mobile-sidebar-open", drawer);
+    if (!drawer) return undefined;
+    // Tapping a sidebar entry navigates — close the drawer with it.
+    const close = (e) => { if (e.target.closest(".psb-main, .psb-hist-row, .psb-act")) setDrawer(false); };
+    document.addEventListener("click", close);
+    return () => {
+      document.removeEventListener("click", close);
+      document.documentElement.classList.remove("mobile-sidebar-open");
+    };
+  }, [drawer]);
   React.useEffect(() => {
     const win = window.__TAURI__?.window?.getCurrentWindow?.();
     if (!win) return undefined;
@@ -45,6 +59,17 @@ function WindowChrome({
 
   return (
     <div className="chrome" data-tauri-drag-region>
+      {/* Phone drawer toggle — hidden by CSS except on narrow screens
+          (mobile.css); opens the project sidebar as an overlay. */}
+      <button
+        className="btn ghost mobile-menu-btn"
+        aria-label="projects"
+        onClick={() => setDrawer((v) => !v)}
+      >
+        <Icon name="menu" size={13} />
+      </button>
+      {drawer && <div className="mobile-drawer-scrim" onClick={() => setDrawer(false)} />}
+
       {/* macOS traffic lights — left side, hidden on Windows */}
       {!IS_WIN && (
         <div className="chrome-lights">

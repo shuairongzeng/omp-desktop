@@ -681,7 +681,10 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     // is the discriminator between inserting paths and attaching image
     // bytes. clipboardData dies with the event, so the images are
     // snapshotted before the await.
-    if (window.__TAURI__ && carriesFiles(e.clipboardData)) {
+    // `?.webview`: the remote shim (phone browser) provides __TAURI__
+    // without the webview API — there the OS-clipboard path is desktop-side
+    // and wrong, so the plain HTML5 paste branch below runs instead.
+    if (window.__TAURI__?.webview && carriesFiles(e.clipboardData)) {
       e.preventDefault();
       const copied = imageFilesFromTransfer(e.clipboardData);
       // The caret at paste time, snapshotted before the `copied_file_paths`
@@ -836,7 +839,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     <div className={`composer${planMode ? " plan-on" : ""}${goalTint ? " goal-on" : ""}${goalMode ? " goal-draft" : ""}${dropActive ? " drop-on" : ""}`}
       ref={rootRef}
       data-drop-kind={dropActive ? dropKind ?? "" : undefined}
-      {...(window.__TAURI__ ? {} : { onDragEnter: onFileDrag, onDragOver: onFileDrag, onDragLeave: onFileDrag, onDrop: onFileDrag })}>
+      {...(window.__TAURI__?.webview ? {} : { onDragEnter: onFileDrag, onDragOver: onFileDrag, onDragLeave: onFileDrag, onDrop: onFileDrag })}>
       {planMode && (
         <div className="plan-strip">
           <Icon name="plan" size={12} color="var(--amber)" />

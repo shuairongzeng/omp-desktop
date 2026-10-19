@@ -78,6 +78,16 @@
           { min: 0, max: 40, step: 2, unit: "px", visibleIf: v => !!v?.glassEffect }),
       ] },
     ] },
+    { id: "remote", icon: "phone", title: "Remote", blurb: "Control this app from your phone through your own relay server (docs/remote.md).", groups: [
+      { name: "Connection", rows: [
+        custom("remoteMain", "Remote access", "Connect this app to your relay server; your phone controls the very same tabs over an encrypted link.", "phone mobile relay remote control server",
+          { keys: [] }),
+      ] },
+      { name: "Phones", rows: [
+        custom("remotePair", "Paired phones", "Pair a new phone with a QR code, or revoke one you lost.", "phone qr pair revoke device",
+          { keys: [] }),
+      ] },
+    ] },
     { id: "layout", icon: "grid", title: "Layout", blurb: "What sits beside the chat and how wide each column is.", groups: [
       { name: "Columns", rows: [
         tweak("layout", "seg", "Side column", "`rail` shows the widget rail, `split` opens a subagent beside the chat, `focus` shows the chat alone.", "layout rail split focus",

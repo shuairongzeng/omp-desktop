@@ -1941,8 +1941,47 @@
     void _drainExternalOpens();
   }
 
+  /** Phone boot (remote-control.md): never replay open-tabs.json — that
+   *  file is the desktop's layout, and replaying it would spawn a second
+   *  omp per project on the workstation. Mirror the desktop's live tab
+   *  list instead (same ids: each tab's omp process, journal and replay
+   *  all key off it) and activate the desktop's active tab. Auto-rename
+   *  stays disarmed on attached tabs — the desktop owns renames. */
+  async function _attachRemoteTabs() {
+    try {
+      const snap = await _invokeSafe("js:list_tabs", {}, null);
+      if (!snap || !Array.isArray(snap.tabs)) return;
+      for (const tab of snap.tabs) {
+        if (!tab || !tab.id || sessionRegistry.has(tab.id)) continue;
+        sessionRegistry.set(tab.id, {
+          approvalMode: null,
+          sessionFile: null,
+          autoRenameArmed: false,
+          autoRenameInFlight: false,
+          autoRenameTurns: 0,
+          autoRenameLeft: 0,
+          ...tab,
+        });
+      }
+      if (snap.active && sessionRegistry.has(snap.active)) {
+        try {
+          await window.OMP_BRIDGE.activateSession(snap.active);
+        } catch (e) {
+          console.error("[live] remote activate failed:", e);
+        }
+      }
+    } finally {
+      // The layout writer stays disarmed on purpose: the phone must never
+      // persist open-tabs.json for the desktop (the shim also refuses
+      // open_tabs_save, defense in depth).
+      notify();
+    }
+  }
+
   /** Reopen the tabs that were open when the app last ran (issue #17), in
-   *  their saved order and profiles, then arm `_persistLayout`.
+   *  their saved order and profiles, then arm `_persistLayout`; a remote
+   *  client attaches to the desktop's live tabs instead
+   *  (`_attachRemoteTabs`).
    *
    *  Activation is decided after each spawn (several IPC round-trips)
    *  against the then-active tab, so a tab the user opened or picked
@@ -1951,6 +1990,7 @@
    *  adopts the layout as already written, so the file keeps them until the
    *  first real change (#34). Details: docs/architecture/reopening-tabs.md. */
   async function _restoreOpenTabs() {
+    if (window.__OMP_REMOTE__) return _attachRemoteTabs();
     const notes = [];
     const restored = []; // ids this restore registered, in order
     let autoActive = null; // the restored tab this restore activated
@@ -3238,7 +3278,8 @@
 
   // ── Window chrome (drag + controls) ──────────────────────────────────────
   function _setupWindowChrome() {
-    if (!window.__TAURI__) return;
+    // `?.window`: the remote shim (phone browser) has no window chrome API.
+    if (!window.__TAURI__?.window) return;
     const { getCurrentWindow } = window.__TAURI__.window;
     const win  = getCurrentWindow();
     const isWin = navigator.userAgent.includes("Windows") || navigator.platform.startsWith("Win");
@@ -4364,6 +4405,77 @@
       return _invokeSafe("pick_background_image", {}, null);
     },
 
+    // ── Remote control (docs/architecture/remote-control.md) ──────────
+    // The Remote settings section and the pair-approval dialog use these.
+    // remoteSend passes the frame through to the relay; errors (not
+    // connected, disabled) surface to the caller as rejections.
+    async remoteGetState() {
+      return _invokeSafe("remote_get_state", {}, null);
+    },
+    async remoteConfigure(enabled, server) {
+      return _invokeSafe("remote_configure", { enabled, server }, null);
+    },
+    async remoteRegenerateToken() {
+      return _invokeSafe("remote_regenerate_token", {}, null);
+    },
+    async remoteSend(frame) {
+      return window.__TAURI__.core.invoke("remote_send", { frame });
+    },
+
+    /** JS-side handlers the remote agent (`app/remote-agent.js`) invokes on
+     *  behalf of phones — commands whose answer lives in this webview, not
+     *  in Rust: the live tab list, mirroring a phone-created tab into the
+     *  desktop UI, and phone-initiated closes through the desktop's own
+     *  `_closeTab` path. */
+    _remoteHandlers: {
+      // Wire name is snake_case: the phone calls `js:list_tabs`.
+      list_tabs() {
+        return {
+          active: activeSessionId,
+          tabs: [...sessionRegistry.values()].map((t) => ({
+            id: t.id,
+            name: t.name,
+            path: t.path,
+            color: t.color,
+            branch: t.branch ?? null,
+            profile: t.profile ?? DEFAULT_PROFILE_ID,
+            sessionFile: t.sessionFile ?? null,
+          })),
+        };
+      },
+      // A tab the phone created: mirror it into the desktop registry so the
+      // desktop UI shows it too. The Rust spawn follows as a normal
+      // `start_session` right after this handler resolves.
+      registerTab({ id, cwd, name, profile, resume }) {
+        if (!id || sessionRegistry.has(id)) return false;
+        sessionRegistry.set(id, {
+          id,
+          name: name || _tabNameFor(cwd ?? "", resume ? "resumed" : "new session"),
+          path: cwd ?? "",
+          color: resume ? "var(--cyan)" : "var(--lilac)",
+          branch: null,
+          profile: profile || DEFAULT_PROFILE_ID,
+          approvalMode: null,
+          sessionFile: resume ?? null,
+          autoRenameArmed: !resume,
+          autoRenameInFlight: false,
+          autoRenameTurns: 0,
+          autoRenameLeft: 0,
+        });
+        notify();
+        return true;
+      },
+      async closeTab(id) {
+        if (!sessionRegistry.has(id)) return;
+        await window.OMP_BRIDGE.closeSession(id);
+      },
+      async closeAllTabs() {
+        for (const id of [...sessionRegistry.keys()]) {
+          await window.OMP_BRIDGE.closeSession(id);
+        }
+      },
+    },
+
     /** Return the full keybinding payload for the active tab's profile.
      *  Resolves to the `Payload` struct or `null` on error (network or
      *  corrupt overlay — the frontend falls back to omp + registry defaults). */
@@ -4718,7 +4830,9 @@
       .catch(e => console.error("[live] startup profile load failed:", e))
       // Tab ids are never reused across a webview reload: anything Rust still
       // holds now (omp children, shells) belongs to a previous document.
-      .then(() => _invokeSafe("close_all_tabs", {}))
+      // A remote client skips this: the tabs it sees are the desktop's own,
+      // very much alive, and closing them would end the desktop's work.
+      .then(() => window.__OMP_REMOTE__ ? null : _invokeSafe("close_all_tabs", {}))
       .then(() => _restoreOpenTabs())
       .catch(e => console.error("[live] restoring the open tabs failed:", e))
       .finally(_setupExternalOpens);

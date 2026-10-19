@@ -1,0 +1,60 @@
+# 手机远程控制（Remote control）
+
+从手机浏览器控制正在运行的 OMP Desktop：看消息、发指令、批准工具调用——手机看到的就是桌面上那同一批 tab，agent 始终跑在你的电脑上。
+
+## 组成
+
+```
+手机浏览器 ──HTTPS──▶ 你的服务器 (relay) ◀──WSS 出站── OMP Desktop
+```
+
+- **relay**：`relay/` 目录的单文件 Rust 二进制，放在你自己的服务器上。只做三件事：托管手机端页面、转发 WebSocket 帧、管配对。它不解析内容。
+- **桌面连接器**：App 内置（Settings → Remote）。只发出站连接，你的电脑不开任何入站端口。
+
+## 部署 relay（一次性，约 5 分钟）
+
+```bash
+cd relay && cargo build --release
+scp target/release/omp-relay your-server:/usr/local/bin/
+```
+
+服务器上建 `/etc/omp-relay/config.json`：
+
+```json
+{
+  "bind": "127.0.0.1:8787",
+  "static_dir": "/etc/omp-relay/public",
+  "devices": { "<桌面设备ID>": "<设备令牌的 sha256>" },
+  "state_file": "/etc/omp-relay/relay-state.json"
+}
+```
+
+在仓库里 `npm run build:frontend` 生成 `dist/`，把 `dist/` 拷到 `/etc/omp-relay/public/`（必须是预编译产物——relay 的严格 CSP 不放行 `src/` 需要的浏览器内 Babel）。
+
+systemd 单元与 Caddy/nginx 的 TLS + WebSocket 反代配置见 `relay/README.md`。**TLS 必须**（配对码走 URL，令牌走 header，明文 HTTP 等于裸奔）。
+
+## 桌面端设置
+
+1. `Ctrl+,` → **Remote** → 填 relay 地址（如 `https://relay.example.com`）→ **Enable**。
+2. 首次启用会生成设备身份；点"重新生成令牌"旁边的提示把令牌配进 relay 的 `devices`（令牌只显示一次，relay 只存哈希）。
+3. 状态点变绿（online）即可配对。
+
+## 配对手机
+
+1. Settings → Remote → **配对新手机** → 屏幕出现二维码。
+2. 手机相机扫码打开链接 → **电脑上弹出确认框** → 点"允许配对"。
+3. 手机自动进入完整界面。配对码 5 分钟有效、只能用一次；手机令牌存在它自己的 localStorage。
+
+丢手机：同页面"吊销"即可，立即生效。
+
+## 手机上能做什么
+
+全部：聊天（流式）、发消息/图片、审批工具调用、切 tab、开新会话、git browser、终端、设置——和桌面同一个界面，窄屏自适应（抽屉式侧栏、全宽面板）。
+
+手机浏览器没有的桌面能力会被明确拒绝（不会悄悄在电脑上弹窗）：原生文件对话框、系统剪贴板读取、窗口控制、自动更新安装。
+
+## 安全说明
+
+- 全链路 TLS；relay 只认令牌哈希，配对码一次性。
+- relay 能看到转发的内容——它是你自己的服务器。需要零信任中继时再开 E2E（未实现，见 `docs/architecture/remote-control.md`）。
+- 手机上的一切操作走桌面同一套审批策略（approval mode 不变）。

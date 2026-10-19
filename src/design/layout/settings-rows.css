@@ -105,3 +105,47 @@
   display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 10px 16px;
   border-top: 1px solid var(--line); color: var(--fg-4); font-size: var(--d-text-xs);
 }
+
+/* ── Remote settings section (rows-remote.jsx) + pair dialog ─────────── */
+.remote-form { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 12px; }
+.remote-server-input {
+  width: 100%; box-sizing: border-box; padding: 6px 10px;
+  background: var(--bg-input); border: 1px solid var(--line); border-radius: var(--r-1);
+  color: var(--fg); font-family: var(--font-mono); font-size: var(--d-text-sm);
+}
+.remote-server-input:focus { border-color: var(--accent); outline: none; }
+.remote-status { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-3); font-size: var(--d-text-xs); }
+.remote-status-dot { width: 8px; height: 8px; border-radius: 50%; }
+.remote-status-dot.ok { background: var(--accent); }
+.remote-status-dot.warn { background: var(--amber); }
+.remote-status-dot.off { background: var(--fg-4); }
+.remote-hint { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--fg-4); font-size: var(--d-text-xs); }
+.remote-hint code, .remote-token-line code { font-family: var(--font-mono); color: var(--fg-3); }
+.remote-token-box {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 10px;
+  border: 1px solid var(--line-bright); border-radius: var(--r-1); background: var(--bg-elevated);
+  font-size: var(--d-text-xs); color: var(--fg-3);
+}
+.remote-token-line { display: flex; align-items: center; gap: 8px; }
+.remote-token-line code { flex: 1; word-break: break-all; color: var(--amber); }
+.remote-error { color: var(--rose); font-size: var(--d-text-xs); }
+.remote-phones { display: flex; flex-direction: column; gap: 4px; }
+.remote-phone-row {
+  display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+  border: 1px solid var(--line); border-radius: var(--r-1); font-size: var(--d-text-sm);
+}
+.remote-phone-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-phone-date { color: var(--fg-4); font-size: var(--d-text-xs); }
+.remote-qr-modal {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  max-width: 320px; padding: 20px; text-align: center;
+}
+.remote-qr-title { font-weight: 600; }
+.remote-qr-svg { border-radius: var(--r-2); }
+.remote-qr-code { font-size: var(--d-text-sm); }
+.remote-qr-code code { font-family: var(--font-mono); color: var(--accent); letter-spacing: 1px; }
+.remote-pair-modal { max-width: 360px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+.remote-pair-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: var(--d-text); }
+.remote-pair-agent { color: var(--fg-3); font-size: var(--d-text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-pair-hint { color: var(--fg-4); font-size: var(--d-text-xs); line-height: 1.6; }
+.remote-pair-actions { display: flex; justify-content: flex-end; gap: 8px; }

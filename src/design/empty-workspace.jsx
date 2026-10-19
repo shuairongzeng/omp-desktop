@@ -86,7 +86,9 @@ function MatrixBackdrop() {
       fit = fitLogo(width, height, { cellW, cellH });
       rows = Math.ceil(height / RAIN_FONT);
       drops = initDrops(Math.ceil(width / RAIN_FONT), rows, Math.random);
-      logo = renderLogo(fit, theme, dpr);
+      // fit is null when the logo can't fit the viewport (a phone held
+      // narrow) — rain alone then, same as the theme-refresh path above.
+      logo = fit ? renderLogo(fit, theme, dpr) : null;
       ctx.fillStyle = theme.bg;
       ctx.fillRect(0, 0, width, height);
     };

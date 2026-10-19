@@ -46,6 +46,9 @@
        app/message-queue.js calls. -->
   <script src="marked.min.js"></script>
   <script src="highlight.min.js"></script>
+  <!-- qrcode-generator (vendored): the Remote settings section renders the
+       phone-pairing QR. Only settings/rows-remote.jsx calls it. -->
+  <script src="qrcode.js"></script>
   <script src="app/marked-setup.js"></script>
 
   <!-- App constants. Dependency-free IIFE, loaded before the design
@@ -60,6 +63,16 @@
        Dependency-free IIFE; must load before any Babel file (composer.jsx,
        use-keymap.jsx, settings/shortcuts-editor.jsx). -->
   <script src="app/keymap.js"></script>
+
+  <!-- Remote control (docs/architecture/remote-control.md).
+       remote-transport.js: phone side — when __TAURI__ is absent (served by
+       the relay), it provides the __TAURI__ surface over the room socket;
+       inert under the desktop webview. Must load before live.js so the
+       surface exists before the bridge's first invoke. remote-agent.js:
+       desktop side — executes phone frames through the local bridge; inert
+       until the Rust connector delivers one. -->
+  <script src="app/remote-transport.js"></script>
+  <script src="app/remote-agent.js"></script>
 
   <!-- Mention-parsing helpers. Dependency-free IIFE; composer.jsx
        destructures window.OMP_MENTIONS at top level, so this must load
@@ -453,6 +466,11 @@
   <script type="text/babel" src="design/settings/rows-agent.jsx"></script>
   <script type="text/babel" src="design/settings/rows-session.jsx"></script>
   <script type="text/babel" src="design/settings/rows-approvals.jsx"></script>
+  <!-- Remote section rows (QR pairing, phone list) + the desktop's pair
+       approve/deny dialog; both need qrcode.js / OMP_BRIDGE only at
+       render time, so they sit with the settings rows. -->
+  <script type="text/babel" src="design/settings/rows-remote.jsx"></script>
+  <script type="text/babel" src="design/remote-pair-dialog.jsx"></script>
   <script type="text/babel" src="design/settings/shortcuts-editor.jsx"></script>
   <script type="text/babel" src="design/settings/page.jsx"></script>
 

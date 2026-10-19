@@ -10,7 +10,10 @@ const STORAGE_KEY = "omp-desktop:tweaks";
 function _load(defaults) {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaults;
+    // Phone (remote shim): default to chat-only — the side rail opens as a
+    // full-screen overlay when wanted (layout/mobile.css). A stored choice
+    // always wins.
+    if (!raw) return window.__OMP_REMOTE__ ? { ...defaults, layout: "focus" } : defaults;
     return { ...defaults, ...JSON.parse(raw) };
   } catch {
     return defaults;
