@@ -149,6 +149,24 @@
   }
   .mob-folder-input .btn { height: 44px; flex: none; }
 
+  /* ── Phone folder sheet's directory browser (app-live.jsx) ──────────── */
+  .mob-dir-head {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 44px; padding: 0 10px;
+  }
+  .mob-dir-head .btn { height: 44px; flex: none; padding: 0 10px; }
+  .mob-dir-path {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font: 13px ui-monospace, monospace; color: var(--fg-2);
+  }
+  .mob-dir-list {
+    max-height: 38vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 0 4px;
+  }
+  .mob-dir-list .cmp-sheet-row { min-height: 44px; }
+  .mob-dir-open .btn { flex: 1; }
+
   /* ── Full history modal (HistoryModal) at phone width ─────────────────
      The panel's inline style caps it at 80vh / 740px; on a handset give it
      near-full height and finger-sized rows — the desktop bridge's rows

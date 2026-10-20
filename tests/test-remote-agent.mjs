@@ -362,6 +362,17 @@ await check("open_project_at routes the phone's folder pick to the desktop handl
   assert.deepEqual(lastRes(E2), { t: "res", id: 46, ok: false, error: "spawn refused" });
 });
 
+await check("remote_list_dirs reaches the generic invoke (no unsupported/js wall)", async () => {
+  const E = load();
+  E.setInvoke(() => ({ parent: "/", entries: [] }));
+  E.phone({ t: "cmd", id: 70, name: "remote_list_dirs", args: { path: "/x" } });
+  await drain();
+  const call = E.invokeCalls.find(c => c.name === "remote_list_dirs");
+  assert.ok(call, "remote_list_dirs was invoked");
+  assert.deepEqual(call.args, { path: "/x" });
+  assert.deepEqual(lastRes(E), { t: "res", id: 70, ok: true, value: { parent: "/", entries: [] } });
+});
+
 await check("a pair_request control frame dispatches remote-pair-request on the window", async () => {
   const E = load();
   E.control({ t: "pair_request", token: "tok", device: "Pixel" });

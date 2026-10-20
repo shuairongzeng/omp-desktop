@@ -765,6 +765,13 @@ React.useEffect(() => {
   const [folderPath, setFolderPath] = React.useState("");
   const [folderBusy, setFolderBusy] = React.useState(false);
   const [folderError, setFolderError] = React.useState(null);
+  // Directory browser inside that sheet: the folder being listed (null =
+  // the device's roots), its parent for the up button, and the listing.
+  const [dirPath, setDirPath] = React.useState(null);
+  const [dirParent, setDirParent] = React.useState(null);
+  const [dirEntries, setDirEntries] = React.useState([]);
+  const [dirBusy, setDirBusy] = React.useState(false);
+  const [dirError, setDirError] = React.useState(null);
 
   const openRemoteProject = async (path) => {
     const p = (path || "").trim();
@@ -781,6 +788,38 @@ React.useEffect(() => {
       setFolderBusy(false);
     }
   };
+
+  // List one folder in the sheet's browser (null = the device's roots).
+  // A failure keeps the last listing on screen and reports the message.
+  const loadRemoteDirs = React.useCallback(async (path) => {
+    if (!bridge) return;
+    setDirBusy(true);
+    setDirError(null);
+    try {
+      const listing = await bridge.listDirs(path ?? null);
+      setDirPath(path ?? null);
+      setDirParent(listing?.parent ?? null);
+      setDirEntries(Array.isArray(listing?.entries) ? listing.entries : []);
+    } catch (err) {
+      setDirError(String(err?.message ?? err));
+    } finally {
+      setDirBusy(false);
+    }
+  }, [bridge]);
+
+  // Opening the sheet starts at this device's roots; closing it drops the
+  // listing so the next open never flashes a stale folder.
+  React.useEffect(() => {
+    if (!folderSheet) {
+      setDirPath(null);
+      setDirParent(null);
+      setDirEntries([]);
+      setDirError(null);
+      setDirBusy(false);
+      return;
+    }
+    loadRemoteDirs(null);
+  }, [folderSheet, loadRemoteDirs]);
 
   // Close tab → kills that session's omp process; bridge updates tab list.
   // Guarded: with `confirmBusyClose` a working tab asks first (live.js).
@@ -1367,6 +1406,37 @@ React.useEffect(() => {
                 <span className="cmp-sheet-tx">{_AL_basename(r.path)}<span className="s">{r.path}</span></span>
               </button>
             ))}
+            <div className="cmp-sheet-sep" />
+            {/* Directory browser: the desktop's folders, tap to descend,
+                back to the parent. `open this folder` commits the current
+                one; recents and the typed path below stay as escapes. */}
+            <div className="mob-dir-head">
+              <button className="btn" aria-label="up one folder"
+                disabled={dirBusy || (dirParent == null && dirPath == null)}
+                onClick={() => loadRemoteDirs(dirParent)}>
+                <Icon name="back" size={14} />
+              </button>
+              <span className="mob-dir-path">{dirPath == null ? "this device" : (_AL_basename(dirPath) || dirPath)}</span>
+            </div>
+            <div className="mob-dir-list">
+              {dirError && <div className="cmp-sheet-notice" role="alert">{dirError}</div>}
+              {dirBusy
+                ? <div className="cmp-sheet-row" aria-busy="true">loading…</div>
+                : dirEntries.map(en => (
+                  <button key={en.path} className="cmp-sheet-row"
+                    onClick={() => loadRemoteDirs(en.path)}>
+                    <span className="cmp-sheet-ic"><Icon name="folder" size={14} /></span>
+                    <span className="cmp-sheet-tx">{en.name}</span>
+                  </button>
+                ))}
+              {!dirBusy && !dirError && dirEntries.length === 0 && (
+                <div className="cmp-sheet-row">no folders here</div>
+              )}
+            </div>
+            <div className="mob-folder-input mob-dir-open">
+              <button className="btn primary" disabled={dirBusy || !dirPath}
+                onClick={() => openRemoteProject(dirPath)}>open this folder</button>
+            </div>
             <div className="cmp-sheet-sep" />
             <div className="mob-folder-input">
               <input type="text" value={folderPath} spellCheck={false}

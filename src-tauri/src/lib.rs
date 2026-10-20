@@ -34,6 +34,7 @@ mod project_file;
 mod recent_projects;
 mod redaction;
 mod remote;
+mod remote_dirs;
 mod saved_sessions;
 mod spawn_gate;
 mod stats;
@@ -1675,6 +1676,7 @@ pub fn run() {
             remote::remote_regenerate_token,
             remote::remote_send,
             remote::remote_trust_server_cert,
+            remote_dirs::remote_list_dirs,
             model_usage_list,
             app_update_check,
             app_update_install,

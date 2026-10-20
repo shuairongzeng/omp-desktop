@@ -4934,6 +4934,16 @@
       return _invokeSafe("open_project_at", { path }, null);
     },
 
+    /** The phone sheet's folder browser: `path`'s subdirectories as
+     *  `{parent, entries: [{name, path}]}` (`remote_list_dirs`), or this
+     *  device's roots when `path` is null. The Rust reply is returned
+     *  verbatim; a rejection (missing path, not a folder, unreadable)
+     *  propagates so the sheet can report it. */
+    async listDirs(path) {
+      if (!window.__TAURI__) throw new Error("not connected");
+      return window.__TAURI__.core.invoke("remote_list_dirs", { path: path ?? null });
+    },
+
     /** List project-relative file/dir paths matching `query`, for the
      *  composer's `@`-mention autocomplete. Scoped to the active tab's
      *  project path; returns [] for a pathless tab (no
