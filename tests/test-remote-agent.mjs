@@ -362,14 +362,14 @@ await check("open_project_at routes the phone's folder pick to the desktop handl
   assert.deepEqual(lastRes(E2), { t: "res", id: 46, ok: false, error: "spawn refused" });
 });
 
-await check("remote_transcript_window reaches the generic invoke (the phone's transcript window, sliced in Rust)", async () => {
-  const E = load();
-  E.setInvoke(() => ({ messages: [], hasOlder: true, nextBefore: 5 }));
-  E.phone({ t: "cmd", id: 71, name: "remote_transcript_window", args: { path: "/x.jsonl", before: null, limit: 200 } });
+await check("js:get_messages_window routes the phone's transcript fetch to the desktop slicer", async () => {
+  const seen = [];
+  const E = load({ get_messages_window: async (a) => { seen.push(a); return { messages: [], hasOlder: true, nextBefore: 5 }; } });
+  E.setInvoke(() => { throw new Error("must not run"); });
+  E.phone({ t: "cmd", id: 71, name: "js:get_messages_window", args: { sessionId: "s1", before: null, limit: 200 } });
   await drain();
-  const call = E.invokeCalls.find(c => c.name === "remote_transcript_window");
-  assert.ok(call, "remote_transcript_window was invoked");
-  assert.deepEqual(call.args, { path: "/x.jsonl", before: null, limit: 200 });
+  assert.deepEqual(seen, [{ sessionId: "s1", before: null, limit: 200 }]);
+  assert.deepEqual(E.invokeCalls.map(c => c.name), ["remote_send"]);
   assert.deepEqual(lastRes(E), { t: "res", id: 71, ok: true, value: { messages: [], hasOlder: true, nextBefore: 5 } });
 });
 

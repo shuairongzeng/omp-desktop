@@ -2127,6 +2127,12 @@
           }
         }
       }
+      // The switch's own fetch chain can be overtaken at boot (its
+      // replay/ext awaits settle after a newer generation moved on), so
+      // guarantee the handset ends its attach with content: one extra
+      // idempotent fetch when nothing arrived. Merges dedupe by `ts`, so
+      // a duplicate fetch is harmless.
+      if (state.messages.length === 0 && !state.isStreaming) _initFetch();
     } finally {
       // The layout writer stays disarmed on purpose: the phone must never
       // persist open-tabs.json for the desktop (the shim also refuses
@@ -3354,17 +3360,15 @@
     // with no file yet (fresh session) has no history to page: an empty
     // window, no round trip at all.
     if (cmd.type === "get_messages") {
-      const path = sessionRegistry.get(activeSessionId)?.sessionFile;
-      if (!path) {
-        _handleResponse({ command: "get_messages", success: true, data: { messages: [], hasOlder: false, nextBefore: 0 } });
-        return;
-      }
-      window.__TAURI__.core.invoke("remote_transcript_window", {
-        path,
+      // The desktop executor resolves the tab's session file from its own
+      // registry (always complete; the phone's registry copy can lag the
+      // attach that triggered this fetch) and slices one window in Rust.
+      window.__TAURI__.core.invoke("js:get_messages_window", {
+        sessionId: activeSessionId,
         before: cmd.before ?? null,
         limit: cmd.limit ?? 200,
       }).then((w) => _handleResponse({ command: "get_messages", success: true, data: w }),
-              (e) => console.error("[live] remote_transcript_window failed:", e));
+              (e) => console.error("[live] get_messages_window failed:", e));
       return;
     }
     _invokeSend(cmd).catch(_logSendError);
@@ -4744,6 +4748,17 @@
       remoteReplay({ sessionId, afterSeq = 0 } = {}) {
         if (typeof sessionId !== "string" || !sessionId) throw new Error("replay needs a sessionId");
         return window.__TAURI__.core.invoke("remote_replay_events", { sessionId, afterSeq });
+      },
+      // The phone's windowed transcript fetch, resolved desktop-side: the
+      // session file comes from THIS registry (the phone's copy can lag
+      // the attach that triggered the fetch), then Rust slices one window
+      // (`remote_transcript_window`). A tab with no file yet (fresh
+      // session) answers an empty window — no history to page.
+      get_messages_window({ sessionId, before = null, limit = 200 } = {}) {
+        if (typeof sessionId !== "string" || !sessionId) throw new Error("get_messages_window needs a sessionId");
+        const path = sessionRegistry.get(sessionId)?.sessionFile;
+        if (!path) return { messages: [], hasOlder: false, nextBefore: 0 };
+        return window.__TAURI__.core.invoke("remote_transcript_window", { path, before, limit });
       },
       // A pending tool approval / ask dialog reaches clients only as a live
       // event (omp's get_state carries no pending-request field), so a phone
