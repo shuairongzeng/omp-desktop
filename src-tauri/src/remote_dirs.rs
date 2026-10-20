@@ -148,14 +148,14 @@ fn root_candidates() -> Vec<PathBuf> {
 
 /// Whether a child directory is hidden and therefore not offered.
 #[cfg(not(target_os = "windows"))]
-const fn is_hidden(name: &str) -> bool {
+fn is_hidden(name: &str) -> bool {
     name.starts_with('.')
 }
 
 /// On Windows the system bookkeeping folders are hidden by name rather than
 /// by a dot prefix.
 #[cfg(target_os = "windows")]
-const fn is_hidden(name: &str) -> bool {
+fn is_hidden(name: &str) -> bool {
     name.eq_ignore_ascii_case("$Recycle.Bin")
         || name.eq_ignore_ascii_case("System Volume Information")
 }
