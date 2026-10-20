@@ -362,6 +362,17 @@ await check("open_project_at routes the phone's folder pick to the desktop handl
   assert.deepEqual(lastRes(E2), { t: "res", id: 46, ok: false, error: "spawn refused" });
 });
 
+await check("remote_transcript_window reaches the generic invoke (the phone's transcript window, sliced in Rust)", async () => {
+  const E = load();
+  E.setInvoke(() => ({ messages: [], hasOlder: true, nextBefore: 5 }));
+  E.phone({ t: "cmd", id: 71, name: "remote_transcript_window", args: { path: "/x.jsonl", before: null, limit: 200 } });
+  await drain();
+  const call = E.invokeCalls.find(c => c.name === "remote_transcript_window");
+  assert.ok(call, "remote_transcript_window was invoked");
+  assert.deepEqual(call.args, { path: "/x.jsonl", before: null, limit: 200 });
+  assert.deepEqual(lastRes(E), { t: "res", id: 71, ok: true, value: { messages: [], hasOlder: true, nextBefore: 5 } });
+});
+
 await check("remote_list_dirs reaches the generic invoke (no unsupported/js wall)", async () => {
   const E = load();
   E.setInvoke(() => ({ parent: "/", entries: [] }));

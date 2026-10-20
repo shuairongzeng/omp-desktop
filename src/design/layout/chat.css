@@ -79,6 +79,22 @@
   box-sizing: border-box;
 }
 
+/* ── Windowed transcript: load-older row (chat-view.jsx) ──────────────── */
+/* The handset holds a tail window of the conversation; this quiet row at
+   the head of the list pages one older window up. Full width, 44px on
+   touch, and gone entirely on unwindowed (desktop) transcripts. */
+.chat-older {
+  display: block; width: 100%;
+  min-height: 40px; padding: 10px 12px;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  color: var(--fg-3); font-size: var(--d-text-sm); text-align: center;
+  cursor: pointer;
+}
+.chat-older:active { background: var(--bg-hover); }
+@media (hover: none) {
+  .chat-older { min-height: 44px; }
+}
+
 /* ── Empty-conversation welcome (chat-view.jsx) ───────────────────────── */
 /* Low-key prompt while there is nothing to read: sparkle + two lines,
    deliberately quiet (fg-3) so it never competes with a real reply. */

@@ -187,7 +187,7 @@ function hasPendingAsk(messages, hidden = m => window.OMP_TURN_STATUS.isHidden(m
 // (app/chat-collapse.js). `followOutput` and `submitKey` are tweaks too: the
 // first lets new output move a view at the bottom, the second is the ask
 // editor's send chord.
-function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, onAskAnswer, onAskDialogAnswer, onConfirmAsk, onCancelAsk, onGrantApproval, onStopRetry, hasProjectPath, onInspectSubagent, onOpenFile, onPreviewFile, projectRoot, foldModes, collapseAfter, collapseOverrides, onToggleCollapse, onOpenKanban, followOutput = true, submitKey = "enter" }) {
+function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, onAskAnswer, onAskDialogAnswer, onConfirmAsk, onCancelAsk, onGrantApproval, onStopRetry, hasProjectPath, onInspectSubagent, onOpenFile, onPreviewFile, projectRoot, foldModes, collapseAfter, collapseOverrides, onToggleCollapse, onOpenKanban, followOutput = true, submitKey = "enter", windowed = false, windowCursor = null, onLoadOlder = null }) {
   const scrollRef   = React.useRef(null);
   const pinnedRef   = React.useRef(true);   // assume start pinned to bottom
   const prevTopRef  = React.useRef(0);
@@ -195,6 +195,14 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
   const renderedRef = React.useRef(false); // first transcript effect done
   const followRef   = React.useRef(followOutput);
   followRef.current = followOutput;
+  // Phone windowed transcript (transcript-window.js): the handset holds a
+  // tail window of the conversation, so the head of the list is a "load
+  // older" row instead of the real first message. Prepending a window must
+  // not move what the reader sees: the click records the scroll offset the
+  // prepend has to restore (height grown above), applied once after the
+  // messages change lands.
+  const olderBusyRef   = React.useRef(false);
+  const pendingAnchorRef = React.useRef(null);
   // Mirrors pinnedRef into render so the "Jump to latest" button can show —
   // scroll position itself must not force a re-render on every wheel tick.
   const [showJump, setShowJump] = React.useState(false);
@@ -251,6 +259,28 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
     stickToBottom(el);
     setPinned(true);
   };
+
+  // One older window for a windowed transcript. The row is the only caller;
+  // a click while a window is in flight is dropped (the cursor only moves
+  // when the reply lands, so a double fetch would repeat a window).
+  const loadOlder = () => {
+    const el = scrollRef.current;
+    if (!el || olderBusyRef.current || !onLoadOlder) return;
+    olderBusyRef.current = true;
+    pendingAnchorRef.current = el.scrollHeight - el.scrollTop;
+    onLoadOlder();
+  };
+
+  // Restore the reading position after a prepend: the content above grew,
+  // so scrollTop has to grow by exactly that much. One-shot per click.
+  React.useEffect(() => {
+    const el = scrollRef.current;
+    const anchor = pendingAnchorRef.current;
+    if (!el || anchor == null) return;
+    pendingAnchorRef.current = null;
+    olderBusyRef.current = false;
+    el.scrollTop = el.scrollHeight - anchor;
+  }, [messages]);
 
   // Auto-scroll only while pinned and following output. A new message
   // block (tool card, new assistant turn, …) during a run must NOT itself
@@ -320,6 +350,12 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
              MINIMAP_COLS = 156). Streaming re-renders are unaffected. Driving annotable
              and scroll-targeting off _id instead of idx would make trim zero-cost for
              history, but requires a larger refactor. */}
+          {windowed && windowCursor > 0 && (
+            <button className="chat-older" onClick={loadOlder}
+              aria-label="load older messages">
+              load older messages…
+            </button>
+          )}
           {messages.map((m, i) => {
             const hl = hoveredMsgIdx === i;
             if (window.OMP_TURN_STATUS.isHidden(m)) return null;

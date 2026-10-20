@@ -56,6 +56,21 @@
     send(frame);
   }
 
+  /** Whether one stdout line is worth a phone's wire. The desktop's own
+   *  large fetches ride the same `agent://line/{id}` channel the phone
+   *  subscribes to: their rpc_chunk frames are tens of MB the handset
+   *  neither asked for nor can afford, and the phone's own large replies
+   *  travel as WS `res` frames now (`remote_transcript_window`) — so chunk
+   *  frames never need the wire. Everything else (events, single-frame
+   *  responses the phone correlates) passes. */
+  function forwardableLine(payload) {
+    const text = payload?.text;
+    if (typeof text !== "string") return true;
+    let obj;
+    try { obj = JSON.parse(text); } catch { return true; }
+    return !(obj && typeof obj === "object" && obj.type === "rpc_chunk");
+  }
+
   function addSub(phoneId, name) {
     if (typeof name !== "string" || name.length > 200) return;
     let perPhone = byPhone.get(phoneId);
@@ -67,6 +82,7 @@
     const entry = { count: 1, unlisten: null };
     active.set(name, entry);
     listenTauri(name, (ev) => {
+      if (name.startsWith("agent://line/") && !forwardableLine(ev.payload)) return;
       send({ t: "evt", name, payload: ev.payload ?? null });
     }).then((un) => {
       if (active.get(name) === entry) entry.unlisten = un;
