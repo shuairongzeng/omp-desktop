@@ -512,6 +512,11 @@
        reads window.OMP_SESSION_TITLE at its top-level init, so it must
        load before live.js. -->
   <script src="app/session-title.js"></script>
+  <!-- Phone tab-table merge: snapshot rows from `js:list_tabs` into the
+       live registry with the attach defaults. Dependency-free IIFE;
+       live.js's `_syncRemoteTabs` reads window.OMP_REMOTE_TABS, so it must
+       load before live.js. -->
+  <script src="app/remote-tabs.js"></script>
   <script src="live.js"></script>
 
   <!-- App root — wired to OMP_BRIDGE, no demo effects -->

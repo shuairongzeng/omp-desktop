@@ -780,8 +780,14 @@ React.useEffect(() => {
     setFolderError(null);
     try {
       const id = await bridge.openProjectAt(p);
-      if (id) setFolderSheet(false), setFolderPath("");
-      else setFolderError("the desktop could not open that folder");
+      if (id) {
+        // The desktop registered the tab in its own registry; pull it into
+        // this client's copy and switch to it before the sheet closes, so
+        // the new conversation is on screen without a manual resync.
+        await bridge.syncRemoteTabs();
+        await bridge.activateSession(id);
+        setFolderSheet(false), setFolderPath("");
+      } else setFolderError("the desktop could not open that folder");
     } catch (err) {
       setFolderError(String(err?.message ?? err));
     } finally {

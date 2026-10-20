@@ -1796,6 +1796,18 @@
     if (rearm) _send({ type: "get_state" });
   }
 
+  /** The tab table changed (a tab registered or ended): tell a paired phone
+   *  its registry snapshot is stale. The phone's copy is filled once at
+   *  attach (`_attachRemoteTabs`), so without this a folder the desktop
+   *  opens — including one the phone itself asked for — stays invisible
+   *  there until a manual resync. `omp://tabs-changed` rides remote-agent's
+   *  generic event forwarder (a phone subscription makes the desktop listen
+   *  and re-emit); the desktop has no listener of its own, so emitting is a
+   *  no-op locally. */
+  function _announceTabs() {
+    if (window.__OMP_REMOTE__ || !window.__TAURI__?.event?.emit) return;
+    window.__TAURI__.event.emit("omp://tabs-changed").catch(() => {});
+  }
   /** Spawn omp for `cwd` (optionally resuming a saved session), register the
    *  tab, wire the git-branch watcher, and activate it. Shared by
    *  `openSession` (new project tab), `resumeSession` (resume from disk) and
@@ -1850,6 +1862,7 @@
       autoRenameLeft: 0,
       autoRenameSessionId: null,
     });
+    _announceTabs();
     try {
       await _spawnSession(id, cwd, { resume, profile });
     } catch (e) {
@@ -1871,6 +1884,7 @@
       // would strand both — with no tab, nothing ever ends this id again.
       _closeTab(id);
       sessionRegistry.delete(id);
+      _announceTabs();
       notify();
       throw e;
     }
@@ -2017,6 +2031,35 @@
     notify();
   }
 
+  /** Pull the desktop's tab table into this client's registry
+   *  (`js:list_tabs` + `OMP_REMOTE_TABS.mergeSnapshot`): the phone's copy is
+   *  a snapshot, so anything the desktop opens or closes afterwards only
+   *  arrives here. Returns the ids the merge added. */
+  async function _syncRemoteTabs() {
+    const snap = await _invokeSafe("js:list_tabs", {}, null);
+    if (!snap || !Array.isArray(snap.tabs)) return [];
+    const { added } = window.OMP_REMOTE_TABS.mergeSnapshot(sessionRegistry, snap.tabs);
+    for (const { id, entry } of added) sessionRegistry.set(id, entry);
+    // The merge only adds; a tab the desktop closed would otherwise stay
+    // in this registry forever. Drop every id the snapshot no longer has
+    // (this client never owns a tab the desktop's table lacks), and follow
+    // the desktop's own activation when it had to leave a closed tab.
+    const live = new Set(snap.tabs.map((t) => t.id));
+    for (const id of [...sessionRegistry.keys()]) {
+      if (!live.has(id)) sessionRegistry.delete(id);
+    }
+    if (activeSessionId && !sessionRegistry.has(activeSessionId)
+        && snap.active && sessionRegistry.has(snap.active)) {
+      try {
+        await window.OMP_BRIDGE.activateSession(snap.active);
+      } catch (e) {
+        console.error("[live] remote activate failed:", e);
+      }
+    }
+    notify();
+    return added.map((a) => a.id);
+  }
+
   /** Phone boot (remote-control.md): never replay open-tabs.json — that
    *  file is the desktop's layout, and replaying it would spawn a second
    *  omp per project on the workstation. Mirror the desktop's live tab
@@ -2025,8 +2068,6 @@
    *  stays disarmed on attached tabs — the desktop owns renames. */
   async function _attachRemoteTabs() {
     try {
-      const snap = await _invokeSafe("js:list_tabs", {}, null);
-      if (!snap || !Array.isArray(snap.tabs)) return;
       // The desktop's `_resolveAsk` echoes its own answers as `ask-settled`
       // frames (omp broadcasts no resolve event); settle this client's copy
       // the same way — live state for the shown tab, the snapshot otherwise.
@@ -2034,23 +2075,21 @@
         const { id, tab, patch } = ev?.payload ?? {};
         if (typeof id === "string" && id) _settleAskIn(tab, id, _askPatch(patch));
       });
-      for (const tab of snap.tabs) {
-        if (!tab || !tab.id || sessionRegistry.has(tab.id)) continue;
-        sessionRegistry.set(tab.id, {
-          approvalMode: null,
-          sessionFile: null,
-          autoRenameArmed: false,
-          autoRenameInFlight: false,
-          autoRenameTurns: 0,
-          autoRenameLeft: 0,
-          ...tab,
-        });
-      }
-      if (snap.active && sessionRegistry.has(snap.active)) {
-        try {
-          await window.OMP_BRIDGE.activateSession(snap.active);
-        } catch (e) {
-          console.error("[live] remote activate failed:", e);
+      // The desktop's tab table changes without this client knowing (a
+      // folder it opens — including one this phone asked for — a tab it
+      // closes): re-pull on its announcement instead of waiting for a
+      // manual resync.
+      window.__TAURI__.event.listen("omp://tabs-changed", () => { void _syncRemoteTabs(); });
+      const snap = await _invokeSafe("js:list_tabs", {}, null);
+      if (snap && Array.isArray(snap.tabs)) {
+        const { added } = window.OMP_REMOTE_TABS.mergeSnapshot(sessionRegistry, snap.tabs);
+        for (const { id, entry } of added) sessionRegistry.set(id, entry);
+        if (snap.active && sessionRegistry.has(snap.active)) {
+          try {
+            await window.OMP_BRIDGE.activateSession(snap.active);
+          } catch (e) {
+            console.error("[live] remote activate failed:", e);
+          }
         }
       }
     } finally {
@@ -4852,6 +4891,7 @@
     async closeSession(id) {
       _closeTab(id);
       sessionRegistry.delete(id);
+      _announceTabs();
       promptHistories.delete(id);
       _modeRestartMissed.delete(id);
       if (id === activeSessionId) {
@@ -4932,6 +4972,15 @@
      *  its own "open folder…" would. Null on failure (the sheet reports). */
     async openProjectAt(path) {
       return _invokeSafe("open_project_at", { path }, null);
+    },
+
+    /** Re-pull the desktop's tab table into this client's registry and
+     *  return the ids the merge added (`_syncRemoteTabs`). The phone calls
+     *  it right after an open it asked for, so the new tab is in the
+     *  registry before it is activated; the `omp://tabs-changed`
+     *  subscription covers every other change. */
+    async syncRemoteTabs() {
+      return _syncRemoteTabs();
     },
 
     /** The phone sheet's folder browser: `path`'s subdirectories as
