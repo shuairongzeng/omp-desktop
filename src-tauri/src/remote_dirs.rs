@@ -227,6 +227,7 @@ mod tests {
     #[test]
     fn skips_windows_system_directories() {
         let root = unique_temp_dir("hidden");
+        std::fs::create_dir_all(&root).expect("create fixture root");
         for dir in ["$Recycle.Bin", "System Volume Information", "src"] {
             std::fs::create_dir(root.join(dir)).expect("create fixture dir");
         }

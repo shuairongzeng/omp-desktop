@@ -402,6 +402,20 @@
      the status bar below. */
   .mobile-topbar .dot { width: 8px; height: 8px; margin-right: 4px; flex: none; }
 
+  /* Device chip (phone remote only, design/remote-device-chip.jsx): names
+     the desktop being controlled; tap opens the device hub to switch. */
+  .mobile-topbar-device {
+    flex: none; max-width: 96px;
+    display: inline-flex; align-items: center;
+    height: 26px; padding: 0 9px;
+    border: 1px solid var(--line); border-radius: 99px;
+    background: var(--bg-surface); color: var(--fg-3);
+    font-size: 11px; cursor: pointer;
+  }
+  .mobile-topbar-device .mtd-name {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
   /* Session strip: 38px tappable row replacing the horizontal tab bar. */
   .mobile-session-strip {
     display: flex; align-items: center; gap: 8px;

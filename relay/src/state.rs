@@ -232,6 +232,21 @@ impl App {
 
     // ---- persisted phone registry ----
 
+    /// Store the desktop's self-reported display info (`device_info`).
+    pub async fn persist_device_info(&self, device: &str, info: crate::config::DeviceInfo) {
+        let mut st = self.state.lock().await;
+        st.devices.entry(device.to_string()).or_default().info = Some(info);
+        if let Err(e) = st.save(self.state_path()) {
+            tracing::error!("relay: state save failed: {e}");
+        }
+    }
+
+    /// The stored display info for a device (greeting a joining phone).
+    pub async fn device_info(&self, device: &str) -> Option<crate::config::DeviceInfo> {
+        let st = self.state.lock().await;
+        st.devices.get(device).and_then(|d| d.info.clone())
+    }
+
     /// Mint a phone token and persist its hash under the device.
     pub async fn persist_phone(&self, device: &str, hash: String, entry: PhoneEntry) {
         let mut st = self.state.lock().await;
@@ -525,6 +540,24 @@ mod tests {
         assert!(!app.has_phone("dev1", &hash).await);
         assert!(!app.revoke_phone("dev1", &hash).await);
         assert!(app.phone_list("dev1").await.is_empty());
+
+        // Device info: none until reported, then stored and persisted.
+        assert_eq!(app.device_info("dev1").await, None);
+        app.persist_device_info(
+            "dev1",
+            crate::config::DeviceInfo {
+                name: "My PC".into(),
+                os: "windows".into(),
+            },
+        )
+        .await;
+        assert_eq!(
+            app.device_info("dev1").await,
+            Some(crate::config::DeviceInfo {
+                name: "My PC".into(),
+                os: "windows".into()
+            })
+        );
         // State actually persisted (fresh App sees it).
         let cfg2: Config = serde_json::from_str(&format!(
             r#"{{"bind":"127.0.0.1:0","devices":{{}},"state_file":"{}/s.json"}}"#,

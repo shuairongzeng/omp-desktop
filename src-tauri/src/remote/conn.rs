@@ -137,6 +137,7 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAll {
 /// Connect once (accepting anything) and return the server's leaf cert as
 /// PEM. Only ever called from `remote_trust_server_cert`.
 pub async fn fetch_server_cert_pem(settings: &RemoteSettings) -> Result<String, String> {
+    use base64::Engine;
     let config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(std::sync::Arc::new(AcceptAll))
@@ -164,7 +165,6 @@ pub async fn fetch_server_cert_pem(settings: &RemoteSettings) -> Result<String, 
             .ok_or("server presented no certificate")?,
         _ => return Err("not a TLS connection".into()),
     };
-    use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(der.as_ref());
     let mut pem = String::from("-----BEGIN CERTIFICATE-----\n");
     for chunk in b64.as_bytes().chunks(64) {
@@ -188,6 +188,17 @@ pub fn cert_fingerprint_pem(pem: &str) -> String {
         .map(|c| std::str::from_utf8(c).unwrap_or("??").to_string())
         .collect::<Vec<_>>()
         .join(":")
+}
+
+/// The `device_info` frame: this desktop's display identity for the
+/// phone's device picker. Sent first on every connect (and on a rename);
+/// the relay persists it and forwards it to the room's phones.
+pub(super) fn device_info_frame(settings: &RemoteSettings) -> Value {
+    serde_json::json!({
+        "t": "device_info",
+        "name": settings.display_name(),
+        "os": RemoteSettings::os_name(),
+    })
 }
 
 async fn connect_once(
@@ -214,6 +225,9 @@ async fn connect_once(
     };
     let (mut sink, mut source) = stream.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Value>();
+    // Announce the picker identity before any phone frame can queue: the
+    // channel buffers it and the writer task flushes it in order.
+    let _ = tx.send(device_info_frame(settings));
     mgr.set_outbox(generation, tx);
     mgr.set_status(app, "online");
 
@@ -251,7 +265,10 @@ async fn connect_once(
                 }
                 Some(Ok(tokio_tungstenite::tungstenite::Message::Close(cf))) => {
                     writer.abort();
-                    break End::Retry(format!("closed by relay: {}", cf.map(|c| c.code.to_string()).unwrap_or_default()));
+                    break End::Retry(format!(
+                        "closed by relay: {}",
+                        cf.map_or(String::new(), |c| c.code.to_string())
+                    ));
                 }
                 None => {
                     writer.abort();
@@ -297,6 +314,22 @@ mod tests {
             b = (b * 2).min(BACKOFF_MAX);
         }
         assert_eq!(b, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn device_info_frame_shape() {
+        let s = RemoteSettings {
+            device_name: "  Studio  ".into(),
+            ..Default::default()
+        };
+        let f = device_info_frame(&s);
+        assert_eq!(f["t"], "device_info");
+        assert_eq!(f["name"], "Studio");
+        assert_eq!(f["os"], std::env::consts::OS);
+        // No chosen name: the hostname fallback keeps `name` non-empty.
+        let s2 = RemoteSettings::default();
+        let f2 = device_info_frame(&s2);
+        assert_ne!(f2["name"].as_str().unwrap_or("").trim(), "");
     }
     #[test]
     fn tls_failure_reason_names_the_untrusted_cert() {

@@ -31,7 +31,9 @@ cargo build --release   # target/release/omp-relay
 - `devices`: one entry per desktop. The desktop's Settings → Remote shows
   its device id and (once) the token; store only the token's SHA-256 here:
   `printf %s "<token>" | sha256sum` (Git Bash on Windows works too).
-- `state_file`: paired phones (hashed tokens), rewritten atomically.
+- `state_file`: paired phones (hashed tokens) and each desktop's
+  self-reported display info (name/os, for the phone's device picker),
+  rewritten atomically.
 
 ## Run
 

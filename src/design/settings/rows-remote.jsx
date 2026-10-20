@@ -58,12 +58,13 @@ function _SRR_Main({ row, query }) {
   const { SettingsRow: Row, SettingsButton: Button, Icon } = window;
   const [st, setSt] = React.useState(null);
   const [server, setServer] = React.useState("");
+  const [name, setName] = React.useState("");
   const [newToken, setNewToken] = React.useState(null);
   const [error, setError] = React.useState(null);
 
   React.useEffect(() => {
     window.OMP_BRIDGE?.remoteGetState().then((v) => {
-      if (v) { setSt(v); setServer(v.server); }
+      if (v) { setSt(v); setServer(v.server); setName(v.device_name || ""); }
     });
     // Live status changes (connecting → online → reconnecting) arrive as
     // connector events.
@@ -77,6 +78,14 @@ function _SRR_Main({ row, query }) {
     const v = await window.OMP_BRIDGE.remoteConfigure(enabled, (url ?? server).trim());
     if (v) setSt(v);
     else setError("保存失败——检查配置目录可写。");
+  };
+
+  const rename = async () => {
+    if (!st || name === (st.device_name || "")) return;
+    setError(null);
+    const v = await window.OMP_BRIDGE.remoteSetName(name);
+    if (v) setSt(v), setName(v.device_name || "");
+    else setError("改名失败——检查配置目录可写。");
   };
 
   const regenerate = async () => {
@@ -112,6 +121,18 @@ function _SRR_Main({ row, query }) {
           onBlur={() => { if (st && server.trim() !== st.server) apply(st.enabled, server); }}
           spellCheck={false}
         />
+        {st?.enabled && (
+          <input
+            className="remote-server-input"
+            type="text"
+            placeholder="设备名称（手机端的设备列表里显示；留空用计算机名）"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={rename}
+            spellCheck={false}
+            maxLength={80}
+          />
+        )}
         {st?.enabled && (
           <div className="remote-hint">
             <Icon name="phone" size={11} />

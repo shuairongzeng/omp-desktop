@@ -2,15 +2,18 @@
 // Regression script for src/app/remote-transport.js — the phone side of
 // remote control: the window.__TAURI__ WebSocket shim a plain browser
 // gets when the relay serves the app. Covers the inert-under-real-Tauri
-// guard, the three boot states (pairing landing, stored auth, unpaired
-// overlay), the pre-open send queue and its on-open flush order, res/evt
-// frame handling, per-name sub refcounting, the noop/unsupported command
-// walls, and the desktop-offline overlay — plus the in-place reconnect:
-// a non-blocking banner instead of a page reload, exponential backoff
-// (1s→2s→…→15s cap), a reopen flush that skips timed-out invokes and
-// queued subs in favor of one fresh sub per listener, _remoteResync on
-// reopen and peer-wake, the 500-frame queue bound, and immediate
-// reconnect on visibilitychange/pageshow.
+// guard, the boot states (pairing landing, selected device, paired-but-
+// unselected picker hand-off, unpaired overlay), the multi-device
+// registry interactions (legacy-key migration, appending pairings, the
+// `device` frame routing), the pre-open send queue and its on-open flush
+// order, res/evt frame handling, per-name sub refcounting, the
+// noop/unsupported command walls, and the desktop-offline overlay with
+// its switch-device action — plus the in-place reconnect: a non-blocking
+// banner instead of a page reload, exponential backoff (1s→2s→…→15s cap),
+// a reopen flush that skips timed-out invokes and queued subs in favor of
+// one fresh sub per listener, _remoteResync on reopen and peer-wake, the
+// 500-frame queue bound, and immediate reconnect on
+// visibilitychange/pageshow.
 // Run: node tests/test-remote-transport.mjs
 
 import assert from "node:assert/strict";
@@ -20,6 +23,7 @@ import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const src = readFileSync(join(root, "src/app/remote-transport.js"), "utf8");
+const devicesSrc = readFileSync(join(root, "src/app/remote-devices.js"), "utf8");
 
 // ── the browser the shim boots in ──────────────────────────────────────────
 // No real network: WebSocket is a fake whose open/message/close the test
@@ -66,6 +70,7 @@ function makeEnv(opts = {}) {
     removeItem: (k) => { store.delete(k); },
   };
   if (opts.auth) localStorage.setItem("omp-remote:auth", JSON.stringify(opts.auth));
+  if (opts.devices) localStorage.setItem("omp-remote:devices", JSON.stringify(opts.devices));
 
   const replaceCalls = [];
   const reloadCalls = [];
@@ -128,18 +133,37 @@ function makeEnv(opts = {}) {
   if (opts.tauri) win.__TAURI__ = opts.tauri;
   const dispatchWindowEvent = dispatchFrom(winListeners);
 
+  const quiet = { log() {}, warn() {}, error() {} };
+  // The paired-desktop registry the shim reads at boot — the real pure
+  // module (it has no DOM or socket surface of its own).
+  // eslint-disable-next-line no-new-func
+  new Function("window", "localStorage", "console", devicesSrc)(win, localStorage, quiet);
+  // The picker stays a fake: all the transport owes it is delegation —
+  // open() when nothing is selected, noteDevice() for `device` frames.
+  // (Its own behaviour is tests/test-remote-hub.mjs.) opts.hub === null
+  // omits it entirely, proving the shim's optional chaining.
+  const hubCalls = { open: 0, noteDevice: [] };
+  if (opts.hub !== null) {
+    win.OMP_REMOTE_HUB = {
+      open: () => { hubCalls.open++; },
+      close: () => {},
+      isOpen: () => false,
+      current: () => null,
+      noteDevice: (device, frame) => { hubCalls.noteDevice.push([device, frame]); },
+    };
+  }
   // eslint-disable-next-line no-new-func
   new Function(
     "window", "document", "localStorage", "location", "WebSocket",
     "setTimeout", "clearTimeout", "console",
     src,
   )(win, document, localStorage, location, FakeWebSocket,
-    fakeTimers.setTimeout, fakeTimers.clearTimeout,
-    { log() {}, warn() {}, error() {} });
+    fakeTimers.setTimeout, fakeTimers.clearTimeout, quiet);
 
   return {
     win, document, location, localStorage, sockets,
-    replaceCalls, reloadCalls, classList, fakeTimers,
+    replaceCalls, reloadCalls, classList, fakeTimers, hubCalls,
+    saved: () => JSON.parse(localStorage.getItem("omp-remote:devices") || "null"),
     dispatchWindowEvent, dispatchDocumentEvent,
     overlay: () => document.body.children.find((c) => c.id === "remote-overlay") || null,
     banner: () => document.body.children.find((c) => c.id === "remote-banner") || null,
@@ -286,14 +310,19 @@ await check("noop commands answer locally; a deliberate close_all_tabs passes th
   assert.deepEqual(sock.sent, [{ t: "cmd", id: 1, name: "close_all_tabs", args: {} }]);
 });
 
-await check("the /p#token pairing landing exchanges the token for stored auth and redirects", async () => {
+await check("the /p#token pairing landing exchanges the token for a registry entry and redirects", async () => {
   const E = makeEnv({ pathname: "/p", hash: "#tok42", protocol: "http:", host: "relay.local" });
   assert.equal(E.sockets.length, 1);
   assert.equal(E.sockets[0].url, "ws://relay.local/ws?role=phone&pair=tok42");
   assert.equal(E.overlay().style.display, "flex");
 
   E.sockets[0].message({ t: "paired", device: "dev-9", token: "tk-9" });
-  assert.deepEqual(JSON.parse(E.localStorage.getItem("omp-remote:auth")), { device: "dev-9", token: "tk-9" });
+  const saved = E.saved();
+  assert.equal(saved.devices.length, 1);
+  assert.deepEqual(
+    { device: saved.devices[0].device, token: saved.devices[0].token },
+    { device: "dev-9", token: "tk-9" });
+  assert.equal(saved.selected, "dev-9");
   assert.deepEqual(E.replaceCalls, ["/"]);
   assert.equal(E.overlay().style.display, "flex"); // the success card until the redirect lands
 });
@@ -301,7 +330,7 @@ await check("the /p#token pairing landing exchanges the token for stored auth an
 await check("a denied pairing stores nothing and redirects nowhere", async () => {
   const E = makeEnv({ pathname: "/p", hash: "#tok42", protocol: "http:", host: "relay.local" });
   E.sockets[0].message({ t: "pair_denied" });
-  assert.equal(E.localStorage.getItem("omp-remote:auth"), null);
+  assert.equal(E.localStorage.getItem("omp-remote:devices"), null);
   assert.deepEqual(E.replaceCalls, []);
   assert.equal(E.overlay().style.display, "flex");
 });
@@ -519,6 +548,100 @@ await check("waking the page (visibilitychange visible / persisted pageshow) rec
     E.fakeTimers.run(stale.id); // elapse the leftover backoff timer
     assert.equal(E.sockets.length, 3); // no extra dial: already connecting
   }
+});
+
+// ── multi-device: registry, picker hand-off, device-frame routing ─────────
+
+const twoDevices = (selected = "d1") => ({
+  devices: [
+    { device: "d1", token: "t1", name: "One", os: "windows", lastUsed: 2 },
+    { device: "d2", token: "t2", name: "", os: "", lastUsed: 0 },
+  ],
+  selected,
+});
+
+await check("a legacy single-pairing phone migrates at boot and connects unchanged", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  assert.equal(E.sockets.length, 1);
+  assert.equal(E.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d1&token=t1");
+  const saved = E.saved();
+  assert.equal(saved.devices.length, 1);
+  assert.equal(saved.selected, "d1");
+  assert.equal(E.localStorage.getItem("omp-remote:auth"), null, "the legacy key is consumed");
+});
+
+await check("with several devices paired, boot connects the SELECTED room and leaves the picker shut", async () => {
+  const E = makeEnv({ devices: twoDevices("d2") });
+  assert.equal(E.sockets.length, 1);
+  assert.equal(E.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d2&token=t2");
+  assert.equal(E.hubCalls.open, 0);
+});
+
+await check("paired but nothing selected: the picker takes over, no socket dials, invokes reject", async () => {
+  const E = makeEnv({ devices: twoDevices(null) });
+  assert.equal(E.sockets.length, 0);
+  assert.equal(E.hubCalls.open, 1);
+  await assert.rejects(E.win.__TAURI__.core.invoke("get_state"), (e) => e.message === "not paired");
+  assert.equal(E.fakeTimers.pending(), 0);
+});
+
+await check("a missing hub module degrades gracefully (optional chaining, invokes still reject)", async () => {
+  const E = makeEnv({ devices: twoDevices(null), hub: null });
+  assert.equal(E.sockets.length, 0);
+  await assert.rejects(E.win.__TAURI__.core.invoke("get_state"), (e) => e.message === "not paired");
+});
+
+await check("pairing a SECOND desktop appends without touching the first and selects the newcomer", async () => {
+  const E = makeEnv({ pathname: "/p", hash: "#tok42", devices: twoDevices("d1") });
+  E.sockets[0].message({ t: "paired", device: "d3", token: "t3" });
+  const saved = E.saved();
+  assert.deepEqual(saved.devices.map((d) => d.device), ["d1", "d2", "d3"]);
+  assert.equal(saved.devices[0].token, "t1", "the first pairing is untouched");
+  assert.equal(saved.devices[0].name, "One");
+  assert.equal(saved.selected, "d3");
+  assert.ok(saved.devices[2].lastUsed > 0);
+  assert.deepEqual(E.replaceCalls, ["/"]);
+});
+
+await check("re-pairing a KNOWN desktop swaps its token and keeps name and selection", async () => {
+  const E = makeEnv({ pathname: "/p", hash: "#tok42", devices: twoDevices("d1") });
+  E.sockets[0].message({ t: "paired", device: "d2", token: "t2-fresh" });
+  const saved = E.saved();
+  assert.equal(saved.devices.length, 2);
+  assert.equal(saved.devices[1].token, "t2-fresh");
+  assert.equal(saved.selected, "d1");
+});
+
+await check("a `device` frame routes to the hub tagged with the room's device id", async () => {
+  const E = makeEnv({ devices: twoDevices("d1") });
+  E.sockets[0].message({ t: "device", name: "Renamed", os: "windows" });
+  assert.deepEqual(E.hubCalls.noteDevice, [
+    ["d1", { t: "device", name: "Renamed", os: "windows" }],
+  ]);
+});
+
+await check("the offline overlay offers a switch-device action that opens the picker", async () => {
+  const E = makeEnv({ devices: twoDevices("d1") });
+  const sock = E.sockets[0];
+  sock.open();
+  sock.message({ t: "peer", desktop: false });
+  const act = E.overlay().querySelector(".ro-action");
+  assert.equal(act.style.display, "block");
+  assert.equal(act.textContent, "切换设备");
+  act.onclick();
+  assert.equal(E.hubCalls.open, 1);
+  assert.equal(E.overlay().style.display, "none", "the overlay steps aside for the hub");
+
+  // The desktop returning hides everything again; the action is disarmed
+  // for the next plain overlay (the unpaired card must not carry it).
+  sock.message({ t: "peer", desktop: true });
+  assert.equal(E.overlay().style.display, "none");
+});
+
+await check("remote_set_name joins the desktop-only command wall", async () => {
+  const E = makeEnv({ devices: twoDevices("d1") });
+  await assert.rejects(E.win.__TAURI__.core.invoke("remote_set_name", { name: "x" }),
+    (e) => e.message === "remote_set_name is unsupported on remote");
 });
 
 // ── summary ────────────────────────────────────────────────────────────────

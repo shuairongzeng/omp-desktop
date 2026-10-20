@@ -1677,6 +1677,7 @@ pub fn run() {
             remote::remote_get_state,
             remote::remote_configure,
             remote::remote_regenerate_token,
+            remote::remote_set_name,
             remote::remote_send,
             remote::remote_trust_server_cert,
             remote_dirs::remote_list_dirs,

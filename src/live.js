@@ -4710,6 +4710,11 @@
     async remoteTrustServerCert() {
       return _invokeSafe("remote_trust_server_cert", {}, null);
     },
+    /** Rename this desktop in the phones' device picker (persisted; the
+     *  connector pushes it to the relay live, no reconnect). */
+    async remoteSetName(name) {
+      return _invokeSafe("remote_set_name", { name }, null);
+    },
 
     /** JS-side handlers the remote agent (`app/remote-agent.js`) invokes on
      *  behalf of phones — commands whose answer lives in this webview, not
