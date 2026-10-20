@@ -107,6 +107,23 @@ announces the drop, the socket reopens with capped backoff
    (`get_state` + `get_messages`): completed messages missed during the
    gap merge in by `ts`, streaming resumes from live events.
 
+## Windowed transcripts and projected replays
+
+A handset's uplink is the relay's narrowest pipe, so nothing large rides
+it raw. `get_messages` on a phone never reaches omp: the desktop reads
+ONE window straight from the tab's session file
+(`remote_transcript_window`, `src-tauri/src/remote_transcript.rs` —
+byte-offset scan, tail seek, 4000-char block caps, 300 KB wire budget)
+and the chat view's "load older messages…" row pages up by cursor
+(`state.windowed` / `state.windowCursor`, `transcript-window.js` holds
+the cursor math). The journal replay follows the same rule: the phone's
+`replay_events` goes to `remote_replay_events`, which projects the ring
+(drops `rpc_chunk` envelopes, caps at the newest 400, marks `dropped`
+when the cap cut — the windowed `get_messages` below recovers whatever
+the projection shed). Reply values over 32 KB ride gzipped
+(`{gz: base64}`, inflated by the shim's `decodeValue`); the relay stays
+an opaque forwarder throughout.
+
 ## Pending approvals survive a phone attach
 
 A tool approval / ask dialog exists only as a one-shot event — omp's

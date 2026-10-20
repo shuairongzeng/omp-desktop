@@ -35,6 +35,7 @@ mod recent_projects;
 mod redaction;
 mod remote;
 mod remote_dirs;
+mod remote_replay;
 mod remote_transcript;
 mod saved_sessions;
 mod spawn_gate;
@@ -1624,6 +1625,7 @@ pub fn run() {
             browser::commands::browser_scroll_to,
             session_status,
             replay_events,
+            remote_replay::remote_replay_events,
             extension_ui_state,
             open_project,
             take_pending_open_projects,

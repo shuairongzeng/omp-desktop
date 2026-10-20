@@ -1205,7 +1205,13 @@
     // events between `lastSeq` and the ring's window were evicted and are
     // gone for good; get_messages still recovers the persisted text below.
     try {
-      const replay = await window.__TAURI__.core.invoke("replay_events", { sessionId: id, afterSeq: lastSeq });
+      // Phone: the projected replay (`remote_replay_events`) — chunked
+      // stdout frames and the journal's oldest overflow never cross the
+      // handset's uplink; its history comes from the file window instead.
+      // `dropped` then also means "gap beyond the projection": the
+      // windowed get_messages below recovers the persisted text either way.
+      const replayCmd = window.__OMP_REMOTE__ ? "remote_replay_events" : "replay_events";
+      const replay = await window.__TAURI__.core.invoke(replayCmd, { sessionId: id, afterSeq: lastSeq });
       if (!current()) return; // superseded by a newer switch, or detached
       if (replay.dropped) {
         console.warn(`[live] session '${id}' replay desynced — recovered ${replay.events.length} event(s); earlier ones fell outside the journal window`);
@@ -4729,6 +4735,15 @@
             sessionFile: t.sessionFile ?? null,
           })),
         };
+      },
+      // The phone's disconnect-gap catch-up, projected in Rust
+      // (`remote_replay_events`): chunked stdout frames and the journal's
+      // oldest overflow never cross its uplink. Same wire shape as
+      // `replay_events` (events/headSeq/dropped), so the phone's switch
+      // path consumes it unchanged.
+      remoteReplay({ sessionId, afterSeq = 0 } = {}) {
+        if (typeof sessionId !== "string" || !sessionId) throw new Error("replay needs a sessionId");
+        return window.__TAURI__.core.invoke("remote_replay_events", { sessionId, afterSeq });
       },
       // A pending tool approval / ask dialog reaches clients only as a live
       // event (omp's get_state carries no pending-request field), so a phone
