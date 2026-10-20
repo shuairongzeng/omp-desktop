@@ -61,7 +61,37 @@ fn tls_connector(settings: &RemoteSettings) -> Option<tokio_tungstenite::Connect
     let config = rustls::ClientConfig::builder()
         .with_root_certificates(roots)
         .with_no_client_auth();
-    Some(tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(config)))
+    Some(tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(
+        config,
+    )))
+}
+
+/// The one connect failure the user can fix from Settings: the relay's
+/// cert is not trusted (self-signed, nothing pinned yet). Naming it in the
+/// status is what makes the TOFU prompt's trigger honest — a bare
+/// `error: …` left the user staring at a reconnect loop with no way in.
+/// Every other failure stays generic; the caller formats those itself.
+///
+/// tokio-tungstenite 0.30 surfaces a rustls handshake failure two ways:
+/// `Error::Tls` on the config path, and — what the async connect actually
+/// produces — `Error::Io(InvalidData)` whose source *is* the rustls error.
+/// Match both, classify once.
+fn tls_failure_reason(e: &tokio_tungstenite::tungstenite::Error) -> Option<String> {
+    use tokio_tungstenite::tungstenite::error::TlsError;
+    let re: &rustls::Error = match e {
+        tokio_tungstenite::tungstenite::Error::Tls(TlsError::Rustls(re)) => re,
+        tokio_tungstenite::tungstenite::Error::Io(io) => {
+            io.get_ref()?.downcast_ref::<rustls::Error>()?
+        }
+        _ => return None,
+    };
+    match re {
+        rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer) => {
+            Some("certificate not trusted (self-signed?)".into())
+        }
+        rustls::Error::InvalidCertificate(ce) => Some(format!("certificate rejected: {ce}")),
+        _ => None,
+    }
 }
 
 // ── TOFU cert fetch ─────────────────────────────────────────────────────
@@ -148,10 +178,7 @@ pub async fn fetch_server_cert_pem(settings: &RemoteSettings) -> Result<String, 
 /// SHA-256 fingerprint of a PEM cert, colon-separated hex for display.
 pub fn cert_fingerprint_pem(pem: &str) -> String {
     use base64::Engine;
-    let b64: String = pem
-        .lines()
-        .filter(|l| !l.starts_with("-----"))
-        .collect();
+    let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
     let der = base64::engine::general_purpose::STANDARD
         .decode(b64)
         .unwrap_or_default();
@@ -173,18 +200,13 @@ async fn connect_once(
 ) -> End {
     let stream = match tokio::time::timeout(
         Duration::from_secs(15),
-        tokio_tungstenite::connect_async_tls_with_config(
-            url,
-            None,
-            false,
-            tls_connector(settings),
-        ),
+        tokio_tungstenite::connect_async_tls_with_config(url, None, false, tls_connector(settings)),
     )
     .await
     {
         Ok(Ok((stream, _))) => stream,
         Ok(Err(e)) => {
-            return End::Retry(format!("error: {e}"));
+            return End::Retry(tls_failure_reason(&e).unwrap_or_else(|| format!("error: {e}")));
         }
         Err(_) => {
             return End::Retry("error: connect timeout (15s)".into());
@@ -250,7 +272,9 @@ async fn connect_once(
 /// One inbound frame: phone commands go to the executor in the webview,
 /// control frames (pairing, phone list, drop notices) to the Settings UI.
 fn route(app: &AppHandle, text: &str) {
-    let Ok(frame) = serde_json::from_str::<Value>(text) else { return };
+    let Ok(frame) = serde_json::from_str::<Value>(text) else {
+        return;
+    };
     match frame.get("t").and_then(Value::as_str) {
         Some("cmd") => {
             let _ = app.emit(EVT_PHONE, &frame);
@@ -273,5 +297,41 @@ mod tests {
             b = (b * 2).min(BACKOFF_MAX);
         }
         assert_eq!(b, Duration::from_secs(30));
+    }
+    #[test]
+    fn tls_failure_reason_names_the_untrusted_cert() {
+        use tokio_tungstenite::tungstenite::error::TlsError;
+        let rustls_err = rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer);
+        // The Settings trust prompt triggers on these substrings — the two
+        // ends of the flow meet here.
+        let check = |reason: String| {
+            assert!(reason.contains("certificate"), "{reason}");
+            assert!(reason.contains("not trusted"), "{reason}");
+        };
+        // The config-path wrap.
+        let tls = tokio_tungstenite::tungstenite::Error::Tls(TlsError::Rustls(Box::new(
+            rustls_err.clone(),
+        )));
+        check(tls_failure_reason(&tls).expect("unknown issuer is the TOFU case"));
+        // The wrap the async connect actually produces: an io::Error whose
+        // source is the rustls error (verified against the live relay).
+        let io = tokio_tungstenite::tungstenite::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            rustls_err,
+        ));
+        check(tls_failure_reason(&io).expect("the io-wrapped handshake failure"));
+    }
+
+    #[test]
+    fn tls_failure_reason_passes_other_failures_through() {
+        use tokio_tungstenite::tungstenite::error::TlsError;
+        // A non-TLS failure: no classification, the caller's generic text.
+        let plain = tokio_tungstenite::tungstenite::Error::ConnectionClosed;
+        assert_eq!(tls_failure_reason(&plain), None);
+        // A TLS failure that is not about the cert's trust: still None.
+        let other = tokio_tungstenite::tungstenite::Error::Tls(TlsError::Rustls(Box::new(
+            rustls::Error::General("boom".into()),
+        )));
+        assert_eq!(tls_failure_reason(&other), None);
     }
 }

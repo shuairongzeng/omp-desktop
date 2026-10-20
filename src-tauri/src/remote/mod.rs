@@ -109,7 +109,12 @@ impl RemoteManager {
             enabled: settings.enabled,
             server: settings.server,
             device_id: settings.device_id,
-            status: self.status.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            status: self
+                .status
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            pinned_cert: !settings.pinned_cert_pem.trim().is_empty(),
         }
     }
 
@@ -202,7 +207,9 @@ pub fn remote_send(frame: Value, mgr: State<'_, Arc<RemoteManager>>) -> Result<(
     }
     let guard = mgr.outbox.lock().unwrap_or_else(|e| e.into_inner());
     match &*guard {
-        Some((_, tx)) => tx.send(frame).map_err(|_| "connection is closing".to_string()),
+        Some((_, tx)) => tx
+            .send(frame)
+            .map_err(|_| "connection is closing".to_string()),
         None => Err("not connected".to_string()),
     }
 }

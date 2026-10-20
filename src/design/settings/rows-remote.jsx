@@ -43,6 +43,17 @@ function _SRR_StatusDot({ status }) {
   return <span className={`remote-status-dot ${cls}`} title={status} />;
 }
 
+/* The trust prompt's trigger, pure so a regression test can pin it: the
+   connector classifies the one connect failure the user can fix here
+   (conn.rs `tls_failure_reason` names the cert in the status), and a
+   stored pin rewords the prompt as a re-trust. Everything else — a dead
+   relay, a bad URL, a refused token — must NOT offer to trust a cert. */
+function _SRR_trustPrompt(st) {
+  if (!st || !st.enabled || !st.status.includes("certificate")) return null;
+  return st.pinned_cert ? "retrust" : "first";
+}
+window.OMP_REMOTE_UI = { trustPrompt: _SRR_trustPrompt };
+
 function _SRR_Main({ row, query }) {
   const { SettingsRow: Row, SettingsButton: Button, Icon } = window;
   const [st, setSt] = React.useState(null);
@@ -108,9 +119,13 @@ function _SRR_Main({ row, query }) {
             <Button onClick={regenerate}>重新生成令牌</Button>
           </div>
         )}
-        {st?.enabled && st.status.startsWith("error") && (
+        {st?.enabled && _SRR_trustPrompt(st) && (
           <div className="remote-token-box">
-            <div>TLS 校验失败（自签证书？）。信任服务器证书（TOFU，之后只认这一张）：</div>
+            <div>
+              {_SRR_trustPrompt(st) === "retrust"
+                ? "服务器证书与已信任的不一致（relay 换了证书？）。重新信任当前证书（TOFU，之后只认这一张）："
+                : "TLS 校验失败（自签证书？）。信任服务器证书（TOFU，之后只认这一张）："}
+            </div>
             <div className="remote-token-line">
               <Button onClick={async () => {
                 setError(null);

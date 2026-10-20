@@ -25,10 +25,7 @@ impl RemoteSettings {
         if pem.is_empty() {
             return None;
         }
-        let b64: String = pem
-            .lines()
-            .filter(|l| !l.starts_with("-----"))
-            .collect();
+        let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.decode(b64).ok()
     }
@@ -75,6 +72,11 @@ pub struct RemoteStateView {
     pub server: String,
     pub device_id: String,
     pub status: String,
+    /// A cert is pinned (TOFU done): the connector trusts exactly that one.
+    /// The UI words the trust prompt by it — first trust, or re-trust after
+    /// the server's cert changed (a pinned root rejects the new leaf as
+    /// unknown-issuer again, so re-pinning is the fix there too).
+    pub pinned_cert: bool,
 }
 
 /// 256 bits of OS randomness as hex (device id, device token).
