@@ -151,6 +151,16 @@ function App() {
   const [approvalModes, setApprovalModes] = React.useState(null);
 
   // ── Cross-cutting effects ─────────────────────────────────────────────────
+  // The window is created `visible: false` (tauri.conf.json) and revealed
+  // after the first React commit, so the scripts' load — and, in dev, the
+  // in-browser Babel transpile — never paints a white frame. Demo mode (no
+  // `__TAURI__`) and the phone's remote shim (`__TAURI__` carries only
+  // `core`/`event`, no `.window`) no-op through the optional chain; Rust's
+  // `on_page_load` handler is the fallback if React never mounts. `show`
+  // is idempotent.
+  React.useEffect(() => {
+    window.__TAURI__?.window?.getCurrentWindow?.()?.show?.()?.catch?.(() => {});
+  }, []);
   useBridgeSnapshot(bridge, {
     setMessages, setStreaming, setCtx, setKanban, setPlanMeta, setTrimmedCount,
     setModels, setActivity, setSparkline,

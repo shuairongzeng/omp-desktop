@@ -273,6 +273,22 @@
     };
   }
 
+  /** Activation try-order for the startup restore's parallel spawns (issue
+   *  #17): the saved active tab's index first — an invalid one (null when
+   *  no tab was active, out of range, or not an integer) falls back to 0,
+   *  the file's first tab — then every other index in saved order, so a
+   *  primary that fails to spawn or to take the focus still activates the
+   *  first tab that did come up. `[]` for an empty restore. */
+  function restoreOrder(savedActive, count) {
+    if (!(count > 0)) return [];
+    const primary = Number.isInteger(savedActive) && savedActive >= 0 && savedActive < count
+      ? savedActive
+      : 0;
+    const order = [];
+    for (let i = 0; i < count; i++) if (i !== primary) order.push(i);
+    return [primary, ...order];
+  }
+
   window.OMP_PROJECT_NAV = {
     normPath,
     basename,
@@ -295,5 +311,6 @@
     sessionStrip,
     tabLayout,
     restoreSpec,
+    restoreOrder,
   };
 })();

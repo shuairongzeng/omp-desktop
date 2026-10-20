@@ -138,6 +138,10 @@
   // left but leaves the flag alone, so _initFetch applies it to the next one.
   let subagentInspecting = false;
   let _transcriptReq = 0; // monotonic token: only the latest load per agent may write
+  // get_available_models' ~2 MiB reply is fetched lazily (`ensureModels` /
+  // `refreshModels`), not in `_initFetch`; this dedupes concurrent lazy
+  // fetches (the picker's effect re-runs per open) while one is in flight.
+  let _modelsFetchInFlight = false;
 
   // ── Minimap / message-history trim ───────────────────────────────────────
   const MINIMAP_COLS = 13;
@@ -814,6 +818,7 @@
     // Keep OMP_DATA in sync for design components that read it directly
     window.OMP_DATA.messages  = state.messages;
     window.OMP_DATA.models    = state.models;
+    window.OMP_DATA.model     = state.model;
     window.OMP_DATA.commands  = state.commands;
     window.OMP_DATA.kanban    = state.kanban;
     window.OMP_DATA.planMeta  = state.planMeta;
@@ -2061,12 +2066,15 @@
    *  client attaches to the desktop's live tabs instead
    *  (`_attachRemoteTabs`).
    *
-   *  Activation is decided after each spawn (several IPC round-trips)
-   *  against the then-active tab, so a tab the user opened or picked
-   *  meanwhile keeps the focus. Tabs that fail to reopen are reported, not
-   *  retried; when the tabs are exactly what the restore produced, arming
-   *  adopts the layout as already written, so the file keeps them until the
-   *  first real change (#34). Details: docs/architecture/reopening-tabs.md. */
+   *  The spawns run in parallel — dispatched in one synchronous pass, so
+   *  the registry registrations and the `session-<ms>` ids keep the saved
+   *  order — and the saved active tab (`restoreOrder`) is the first and
+   *  only activation, decided after its spawn against the then-active tab,
+   *  so a tab the user opened or picked meanwhile keeps the focus. Tabs
+   *  that fail to reopen are reported, not retried; when the tabs are
+   *  exactly what the restore produced, arming adopts the layout as
+   *  already written, so the file keeps them until the first real change
+   *  (#34). Details: docs/architecture/reopening-tabs.md. */
   async function _restoreOpenTabs() {
     if (window.__OMP_REMOTE__) return _attachRemoteTabs();
     const notes = [];
@@ -2086,27 +2094,52 @@
           saved.skipped.map(p => `- \`${p}\``).join("\n"),
         );
       }
-      for (const [i, tab] of saved.tabs.entries()) {
+      // Every spawn is dispatched in this same synchronous tick, so the
+      // registry registrations and the `session-<ms>` ids keep the saved
+      // order (`_startProjectSession`'s first await is inside
+      // `_spawnSession`). The wrappers can never reject, so the
+      // `Promise.all` below always settles. A cold start may run
+      // `omp --version` once per concurrent first spawn — the resolved-path
+      // cache fills once; harmless.
+      const results = saved.tabs.map((tab) => {
         const { cwd, ...opts } = window.OMP_PROJECT_NAV.restoreSpec(tab);
-        let id;
+        return _startProjectSession(cwd, { ...opts, activate: false, remember: false })
+          .then(
+            id => ({ ok: true, id }),
+            e => ({ ok: false, error: e, cwd, label: tab.name || cwd || "a tab" }),
+          );
+      });
+      // Activation follows `restoreOrder`: the saved active tab first, the
+      // rest in saved order as the fallback. Only one tab activates — the
+      // saved active one when it spawns, else the first that did — and the
+      // focus guard (the then-active tab, several IPC round-trips after the
+      // spawn started) keeps a tab the user opened or picked meanwhile.
+      const tryActivate = async (r) => {
+        // The bridge entry point: it skips a tab closed or respawning since
+        // the spawn resolved. Guarded so a failed switch cannot abort the
+        // restore and leave the rest of the saved tabs unopened.
         try {
-          id = await _startProjectSession(cwd, { ...opts, activate: false, remember: false });
+          await window.OMP_BRIDGE.activateSession(r.id);
         } catch (e) {
-          console.error(`[live] reopening tab '${cwd}' failed:`, e);
-          notes.push(`**Could not reopen ${tab.name || cwd || "a tab"}:** ${String(e?.message ?? e)}`);
-          continue;
+          console.error(`[live] activating restored tab '${r.id}' failed:`, e);
         }
-        restored.push(id);
-        if (activeSessionId === null || (i === saved.active && activeSessionId === autoActive)) {
-          // The bridge entry point: it skips a tab closed or respawning
-          // since the spawn resolved. Guarded so a failed switch cannot
-          // abort the loop and leave the rest of the saved tabs unopened.
-          try {
-            await window.OMP_BRIDGE.activateSession(id);
-          } catch (e) {
-            console.error(`[live] activating restored tab '${id}' failed:`, e);
-          }
-          if (activeSessionId === id) autoActive = id;
+        if (activeSessionId === r.id) autoActive = r.id;
+        return autoActive === r.id;
+      };
+      const focusIsFree = () => activeSessionId === null || activeSessionId === autoActive;
+      for (const i of window.OMP_PROJECT_NAV.restoreOrder(saved.active, results.length)) {
+        const r = await results[i];
+        if (!r.ok || !focusIsFree()) continue;
+        if (await tryActivate(r)) break;
+      }
+      // All settled by now (the activation pass awaited most of them);
+      // failures are reported in saved order, not retried.
+      await Promise.all(results);
+      for (const [i, r] of results.entries()) {
+        if (r.ok) restored.push(r.id);
+        else {
+          console.error(`[live] reopening tab '${r.cwd}' failed:`, r.error);
+          notes.push(`**Could not reopen ${r.label}:** ${String(r.error?.message ?? r.error)}`);
         }
       }
     } finally {
@@ -2315,16 +2348,7 @@
       notify();
 
     } else if (command === "get_available_models") {
-      state.models = (data.models ?? []).map(m => ({
-        id:       m.id,
-        name:     m.name ?? window.MODEL_NAMES?.[m.id] ?? window.formatModelId(m.id),
-        provider: m.provider,
-        note:     m.provider,
-        latency:  0,
-        current:  state.rpcState?.model?.id === m.id,
-      }));
-      notify();
-      console.log(`[live] models loaded (${state.models.length}) for session '${activeSessionId}'`);
+      _applyModels(data);
 
     } else if (command === "get_available_commands") {
       _applyCommands(data.commands);
@@ -2382,6 +2406,24 @@
       latency:  0,
       current:  true,
     };
+  }
+
+  // Apply a get_available_models payload to `state.models`. Shared by the
+  // response branch above (uncorrelated sends) and `ensureModels` /
+  // `refreshModels`, whose `_sendWithResponse` reply resolves through the id
+  // correlation and so never reaches that branch. `data` may be null (a
+  // success with no payload) — an empty list then.
+  function _applyModels(data) {
+    state.models = (data?.models ?? []).map(m => ({
+      id:       m.id,
+      name:     m.name ?? window.MODEL_NAMES?.[m.id] ?? window.formatModelId(m.id),
+      provider: m.provider,
+      note:     m.provider,
+      latency:  0,
+      current:  state.rpcState?.model?.id === m.id,
+    }));
+    notify();
+    console.log(`[live] models loaded (${state.models.length}) for session '${activeSessionId}'`);
   }
 
   // Local desktop entries always win; RPC entries (builtin/skill/extension/
@@ -3158,8 +3200,9 @@
   }
 
   function _initFetch() {
-    // Negotiate protocol v2 first so oversized responses (get_available_models
-    // is ~2 MiB, well past the v1 1 MiB frame cap) arrive as reassembled
+    // Negotiate protocol v2 first so oversized responses (get_messages and
+    // the lazily fetched get_available_models both reach ~2 MiB, well past
+    // the v1 1 MiB frame cap) arrive as reassembled
     // rpc_chunk sequences instead of failing with a transport-limit error.
     // Await the negotiate response so v2 is active before the large fetches are
     // dispatched (stdin is processed in order, but this avoids any IPC-ordering
@@ -3186,7 +3229,6 @@
         if (!sessionPrefs.autoRetry) _send({ type: "set_auto_retry", enabled: false });
         _send({ type: "get_state" });
         _send({ type: "get_messages" });
-        _send({ type: "get_available_models" });
         _send({ type: "get_available_commands" });
         // Subscription level is per process and survives tab switches, but a
         // respawned process starts at "off" — so (re)assert it every time.
@@ -3857,7 +3899,36 @@
     },
     newSession()       { _send({ type: "new_session" }); },
     exportHtml()       { _send({ type: "export_html" }); },
-    refreshModels()    { _initFetch(); },
+    /** Side-effectful (RPC to the active tab's omp process) and so not
+     *  unit-tested directly. The ~2 MiB get_available_models reply is
+     *  fetched lazily, when the model picker or the commands view first
+     *  needs it, instead of in `_initFetch`: it stays off the startup and
+     *  per-tab-switch critical path, and the commands view's current-model
+     *  name falls back to get_state's `state.model` until the list lands.
+     *  A reply from an activation this tab has already lost is dropped
+     *  (`_switchGen`), like `_initFetch`'s batch. */
+    ensureModels() {
+      if (!window.__TAURI__ || !activeSessionId) return;
+      if (state.models.length > 0 || _modelsFetchInFlight) return;
+      _modelsFetchInFlight = true;
+      const gen = _switchGen;
+      _sendWithResponse({ type: "get_available_models" })
+        .then(data => { if (_switchGen === gen) _applyModels(data); })
+        .catch(err => console.warn("[live] get_available_models failed:", err))
+        .finally(() => { _modelsFetchInFlight = false; });
+    },
+    /** The picker's refresh button: a forced refetch, skipping the lazy
+     *  path's in-flight and non-empty guards — the list is rebuilt even
+     *  when one is already shown or a fetch is still running. */
+    refreshModels() {
+      if (!window.__TAURI__ || !activeSessionId) return;
+      _modelsFetchInFlight = true;
+      const gen = _switchGen;
+      _sendWithResponse({ type: "get_available_models" })
+        .then(data => { if (_switchGen === gen) _applyModels(data); })
+        .catch(err => console.warn("[live] get_available_models failed:", err))
+        .finally(() => { _modelsFetchInFlight = false; });
+    },
 
     // ── Subagent manager ──────────────────────────────────────────────────────
 

@@ -1293,6 +1293,9 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
   React.useEffect(() => {
     if (!open || view !== "models") return undefined;
     let live = true;
+    // The model list is fetched lazily, on this first open — not at startup
+    // or on every tab switch (live.js `ensureModels`).
+    window.OMP_BRIDGE?.ensureModels?.();
     window.OMP_BRIDGE?.recentModels?.(profileId).then((keys) => {
       if (live && Array.isArray(keys)) setRecent({ profileId, keys });
     });
@@ -1489,7 +1492,9 @@ function CommandBridge({ open, onClose, onPick, onPickModel, currentModelId, pro
   const cmdHits = cmds.filter((c) => matchesQuery(c, q));
   const groups  = {};
   cmdHits.forEach((c) => { (groups[c.group] = groups[c.group] || []).push(c); });
-  const activeModelName = models.find((m) => m.id === currentModelId)?.name ?? "–";
+  // The model list loads lazily (live.js `ensureModels`); until it arrives,
+  // the current-model name falls back to get_state's `model.name`.
+  const activeModelName = models.find((m) => m.id === currentModelId)?.name ?? window.OMP_DATA.model?.name ?? "–";
   // Groups render in insertion order, so the flat list matches the DOM.
   const flatCmds = Object.values(groups).flat();
   const clampedIdx = Math.min(activeIdx, flatCmds.length - 1);

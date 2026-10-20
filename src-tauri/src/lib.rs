@@ -1372,10 +1372,6 @@ fn config_dir<E: std::fmt::Display>(resolved: Result<PathBuf, E>) -> Option<Path
 /// with" argv — `run()`'s `setup` hook. No omp process starts here: the app
 /// opens with no tab until the user (or an OS folder open) picks a project.
 fn setup(app: &tauri::App) {
-    #[cfg(debug_assertions)]
-    if let Some(win) = app.get_webview_window("main") {
-        win.open_devtools();
-    }
     // Every store below is memory-only without it (see `config_dir`).
     let resolved_config_dir = config_dir(app.path().app_config_dir());
     let config_file = |name: &str| resolved_config_dir.as_deref().map(|dir| dir.join(name));
@@ -1528,15 +1524,20 @@ fn single_instance_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
         // into a minimised or buried window would otherwise add its tab
         // out of sight and read as a no-op.
         if let Some(win) = app.get_webview_window("main") {
+            // The window stays `visible: false` until the webview's first
+            // React commit: a forwarded open racing the startup window needs
+            // the explicit show, or `set_focus` hits a hidden window and
+            // does nothing.
+            let _ = win.show();
             let _ = win.unminimize();
             let _ = win.set_focus();
         }
     })
 }
 
-/// The plugins after the single-instance one, and the app-wide state the
-/// commands read. Split out of [`run`], whose command list alone nears
-/// the function-length lint.
+/// The plugins after the single-instance one, the app-wide state the
+/// commands read, and the setup / page-load hooks. Split out of [`run`],
+/// whose command list alone nears the function-length lint.
 fn with_plugins_and_state(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     builder
         .plugin(navigation_guard::init())
@@ -1547,6 +1548,30 @@ fn with_plugins_and_state(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder
         .manage(OpenProjectState::new())
         .manage(updater::UpdaterState::default())
         .manage(CloseGuard::default())
+        .setup(|app| {
+            setup(app);
+            Ok(())
+        })
+        .on_page_load(reveal_main_window)
+}
+
+/// The deferred window reveal's fallback. The window is created
+/// `visible: false` (tauri.conf.json); the frontend shows it after its first
+/// React commit — a crash before that effect would leave it invisible, so
+/// reveal the main window here once its page finished loading. Idempotent
+/// (`show` on an already-visible window is a no-op); in dev the Babel
+/// transpile runs after load, so this can flash an empty window, matching
+/// the pre-change behaviour. Split out of [`run`] for the same reason as
+/// [`with_plugins_and_state`]: the function-length lint.
+fn reveal_main_window(
+    webview: &tauri::Webview<tauri::Wry>,
+    payload: &tauri::webview::PageLoadPayload<'_>,
+) {
+    if webview.label() == "main"
+        && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+    {
+        let _ = webview.window().show();
+    }
 }
 
 /// Run the Tauri application. Panics if the runtime fails to initialise.
@@ -1655,10 +1680,6 @@ pub fn run() {
             app_update_install,
             set_close_guard,
         ])
-        .setup(|app| {
-            setup(app);
-            Ok(())
-        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
