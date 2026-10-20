@@ -362,6 +362,17 @@ await check("open_project_at routes the phone's folder pick to the desktop handl
   assert.deepEqual(lastRes(E2), { t: "res", id: 46, ok: false, error: "spawn refused" });
 });
 
+await check("js:get_messages_window routes the phone's transcript fetch to the desktop slicer", async () => {
+  const seen = [];
+  const E = load({ get_messages_window: async (a) => { seen.push(a); return { messages: [], hasOlder: true, nextBefore: 5 }; } });
+  E.setInvoke(() => { throw new Error("must not run"); });
+  E.phone({ t: "cmd", id: 71, name: "js:get_messages_window", args: { sessionId: "s1", before: null, limit: 200 } });
+  await drain();
+  assert.deepEqual(seen, [{ sessionId: "s1", before: null, limit: 200 }]);
+  assert.deepEqual(E.invokeCalls.map(c => c.name), ["remote_send"]);
+  assert.deepEqual(lastRes(E), { t: "res", id: 71, ok: true, value: { messages: [], hasOlder: true, nextBefore: 5 } });
+});
+
 await check("remote_list_dirs reaches the generic invoke (no unsupported/js wall)", async () => {
   const E = load();
   E.setInvoke(() => ({ parent: "/", entries: [] }));
@@ -371,6 +382,38 @@ await check("remote_list_dirs reaches the generic invoke (no unsupported/js wall
   assert.ok(call, "remote_list_dirs was invoked");
   assert.deepEqual(call.args, { path: "/x" });
   assert.deepEqual(lastRes(E), { t: "res", id: 70, ok: true, value: { parent: "/", entries: [] } });
+});
+
+await check("replay_events routes to the projected desktop handler, never the raw journal", async () => {
+  const seen = [];
+  const E = load({ remoteReplay: async (a) => { seen.push(a); return { events: [], headSeq: 7, dropped: false }; } });
+  E.setInvoke(() => { throw new Error("must not run"); });
+  E.phone({ t: "cmd", id: 73, name: "replay_events", args: { sessionId: "s1", afterSeq: 3 } });
+  await drain();
+  assert.deepEqual(seen, [{ sessionId: "s1", afterSeq: 3 }]);
+  assert.deepEqual(E.invokeCalls.map(c => c.name), ["remote_send"]);
+  assert.deepEqual(lastRes(E), { t: "res", id: 73, ok: true, value: { events: [], headSeq: 7, dropped: false } });
+});
+
+await check("reply values over the gzip threshold ride compressed and inflate back", async () => {
+  const big = { messages: Array.from({ length: 4000 }, (_, i) => `row-${i}-padding-padding-padding`) };
+  const E = load({ bigThing: async () => big });
+  E.setInvoke(() => { throw new Error("must not run"); });
+  E.phone({ t: "cmd", id: 74, name: "js:bigThing", args: {} });
+  await new Promise((r) => setTimeout(r, 100)); // CompressionStream resolves on real tasks
+  const res = lastRes(E);
+  assert.equal(res.ok, true);
+  assert.equal(typeof res.value.gz, "string", "value rode gzipped");
+  const bin = atob(res.value.gz);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).text();
+  assert.deepEqual(JSON.parse(text), big);
+  // small values stay verbatim
+  const E2 = load({ smallThing: async () => ({ a: 1 }) });
+  E2.phone({ t: "cmd", id: 75, name: "js:smallThing", args: {} });
+  await drain();
+  assert.deepEqual(lastRes(E2).value, { a: 1 });
 });
 
 await check("a pair_request control frame dispatches remote-pair-request on the window", async () => {

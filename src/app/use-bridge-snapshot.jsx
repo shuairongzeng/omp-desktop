@@ -16,6 +16,8 @@ function useBridgeSnapshot(bridge, setters) {
       setters.setStreaming(snap.isStreaming);
       setters.setCtx(snap.ctx);
       if (setters.setTrimmedCount) setters.setTrimmedCount(snap.trimmedCount ?? 0);
+      if (setters.setWindowed) setters.setWindowed(snap.windowed ?? false);
+      if (setters.setWindowCursor) setters.setWindowCursor(snap.windowCursor ?? null);
       setters.setKanban(snap.kanban);
       setters.setPlanMeta(snap.planMeta);
       setters.setModels(snap.models);

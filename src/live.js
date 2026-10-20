@@ -90,6 +90,14 @@
     // #19: total messages dropped from the head across all trims, so the
     // minimap can say "−N earlier" instead of a bare count of what's left.
     trimmedCount:   0,
+    // Phone-only windowed transcript (transcript-window.js): the handset's
+    // get_messages fetches one window at a time over a narrow uplink, so
+    // `messages` is a tail slice of the conversation and `windowCursor`
+    // (absolute head index of the oldest delivered row) addresses the next
+    // older window. Desktop tabs stay unwindowed (false/null) and read the
+    // whole transcript.
+    windowed:       false,
+    windowCursor:   null,
     // Subagent manager (src/app/subagents.js). Terminal agents are kept here
     // for the life of the session — omp's own registry forgets them.
     subagents:           SUB.emptySubagents(),
@@ -360,6 +368,10 @@
   function _buildSnapshot() {
     return {
       messages:        state.messages,
+      // Phone windowed-transcript cursor (transcript-window.js); desktop
+      // tabs read the whole transcript and keep these unset.
+      windowed:        state.windowed,
+      windowCursor:    state.windowCursor,
       isStreaming:     state.isStreaming,
       // #19: head-trim tally for the minimap's "−N earlier" badge.
       trimmedCount:    state.trimmedCount,
@@ -972,6 +984,8 @@
       exitReason:    null,
       asyncPending:  false,
       trimmed:       false,
+      windowed:      false,
+      windowCursor:  null,
       subagents:           SUB.emptySubagents(),
       subagentTranscripts: {},
       queue:         QUEUE.EMPTY_QUEUE,
@@ -1016,6 +1030,8 @@
       sessionCost:   state.sessionCost,
       currentTps:    state.currentTps,
       exitReason:    state.exitReason,
+      windowed:      state.windowed,
+      windowCursor:  state.windowCursor,
       asyncPending:  state.asyncPending,
       trimmed:       state.trimmed,
       trimmedCount:  state.trimmedCount,
@@ -1062,6 +1078,8 @@
       exitReason:    snap.exitReason ?? null,
       asyncPending:  snap.asyncPending ?? false,
       trimmed:       snap.trimmed ?? false,
+      windowed:      snap.windowed ?? false,
+      windowCursor:  snap.windowCursor ?? null,
       trimmedCount:  snap.trimmedCount ?? 0,
       subagents:     snap.subagents ?? SUB.emptySubagents(),
       subagentTranscripts: {},
@@ -1109,7 +1127,7 @@
     for (const ul of activeListeners) { try { await ul(); } catch (_) {} }
     if (_switchGen !== myGen) return; // superseded by a newer switch
     activeListeners = [];
-    _chunkAcc = null; // drop any partial chunk run from the previous session
+    _chunkAccs.clear(); // drop any partial chunk runs from the previous session
 
     activeSessionId = id;
     _noTabProfileId = null;
@@ -1187,7 +1205,13 @@
     // events between `lastSeq` and the ring's window were evicted and are
     // gone for good; get_messages still recovers the persisted text below.
     try {
-      const replay = await window.__TAURI__.core.invoke("replay_events", { sessionId: id, afterSeq: lastSeq });
+      // Phone: the projected replay (`remote_replay_events`) — chunked
+      // stdout frames and the journal's oldest overflow never cross the
+      // handset's uplink; its history comes from the file window instead.
+      // `dropped` then also means "gap beyond the projection": the
+      // windowed get_messages below recovers the persisted text either way.
+      const replayCmd = window.__OMP_REMOTE__ ? "remote_replay_events" : "replay_events";
+      const replay = await window.__TAURI__.core.invoke(replayCmd, { sessionId: id, afterSeq: lastSeq });
       if (!current()) return; // superseded by a newer switch, or detached
       if (replay.dropped) {
         console.warn(`[live] session '${id}' replay desynced — recovered ${replay.events.length} event(s); earlier ones fell outside the journal window`);
@@ -1323,21 +1347,32 @@
   }
   window.reassembleRpcChunks = reassembleRpcChunks;
 
-  // Stateful accumulator for the in-flight chunk sequence. Chunks arrive as an
-  // uninterrupted run; a chunkId change mid-run means the prior run was dropped.
-  let _chunkAcc = null; // { chunkId, count, frames: [] }
+  // Partial rpc_chunk runs in flight, keyed by chunkId: two sequences can
+  // interleave in one process's stdout (the desktop's own fetch and a
+  // phone's windowed fetch of the same tab), and a single accumulator
+  // would drop the first run's frames when the second's arrive.
+  const _chunkAccs = new Map(); // chunkId → { count, frames: [] }
 
+  // `seen` makes ingestion idempotent per index: a chunk envelope can reach
+  // `_ingestChunk` from more than one listener for the same process during
+  // a switch (an unlisten is async), and a duplicate index must not poison
+  // the run.
   function _ingestChunk(frame) {
-    if (!_chunkAcc || _chunkAcc.chunkId !== frame.chunkId) {
-      if (_chunkAcc) console.warn(`[live] rpc_chunk '${_chunkAcc.chunkId}' interrupted by '${frame.chunkId}'`);
-      _chunkAcc = { chunkId: frame.chunkId, count: frame.count, frames: [] };
+    let acc = _chunkAccs.get(frame.chunkId);
+    if (!acc) {
+      // A run that never completes (the process died mid-chunk) must not
+      // accumulate forever: keep only the newest few.
+      if (_chunkAccs.size >= 8) _chunkAccs.delete(_chunkAccs.keys().next().value);
+      acc = { count: frame.count, frames: [], seen: new Set() };
+      _chunkAccs.set(frame.chunkId, acc);
     }
-    _chunkAcc.frames.push(frame);
-    if (_chunkAcc.frames.length < _chunkAcc.count) return null;
-    const frames = _chunkAcc.frames;
-    _chunkAcc = null;
+    if (acc.seen.has(frame.index)) return null;
+    acc.seen.add(frame.index);
+    acc.frames.push(frame);
+    if (acc.frames.length < acc.count) return null;
+    _chunkAccs.delete(frame.chunkId);
     try {
-      return reassembleRpcChunks(frames);
+      return reassembleRpcChunks(acc.frames);
     } catch (e) {
       console.error(`[live] rpc_chunk reassembly failed: ${e.message}`);
       return null;
@@ -2092,6 +2127,12 @@
           }
         }
       }
+      // The switch's own fetch chain can be overtaken at boot (its
+      // replay/ext awaits settle after a newer generation moved on), so
+      // guarantee the handset ends its attach with content: one extra
+      // idempotent fetch when nothing arrived. Merges dedupe by `ts`, so
+      // a duplicate fetch is harmless.
+      if (state.messages.length === 0 && !state.isStreaming) _initFetch();
     } finally {
       // The layout writer stays disarmed on purpose: the phone must never
       // persist open-tabs.json for the desktop (the shim also refuses
@@ -2340,6 +2381,37 @@
       void _applyApprovalModes();
 
     } else if (command === "get_messages") {
+      // The phone's windowed channel (transcript-window.js): the desktop
+      // executor answered with one window of the transcript, not the whole
+      // file. `nextBefore` marks the reply as windowed; desktop replies
+      // never carry it. The merge keeps live-only entries (older windows
+      // already on screen, the streaming bubble, cards) and puts the
+      // window's copies in omp's order; `trimmed: false` because every
+      // persisted row here is wanted — nothing was head-trimmed.
+      if (typeof data.nextBefore === "number") {
+        const completed = window.adaptAgentMessages(data.messages ?? []);
+        state.messages = mergeTranscript(state.messages, completed, { trimmed: false });
+        state.windowed = true;
+        state.windowCursor = data.nextBefore;
+        state.trimmed = data.hasOlder === true;
+        state.trimmedCount = data.nextBefore;
+        activeToolCards = new Map();
+        for (let i = 0; i < state.messages.length; i++) {
+          const m = state.messages[i];
+          if (m.kind === "tool" && (m.status === "running" || m.status === "interrupted") && m._toolCallId) {
+            activeToolCards.set(m._toolCallId, i);
+          }
+        }
+        notify();
+        return;
+      }
+      // Phone: the transcript is file-windowed only (the branch above). A
+      // full omp reply reaching here is a replay of the desktop's own
+      // fetch (the handset subscribes to the same stdout line) — merging
+      // it would duplicate every window already on screen.
+      if (window.__OMP_REMOTE__) return;
+      state.windowed = false;
+      state.windowCursor = null;
       const completed = window.adaptAgentMessages(data.messages ?? []);
       // Each live entry that stands for an omp message (`ts`) takes its
       // ground-truth copy; everything else — cards, notes, job rows,
@@ -3278,6 +3350,27 @@
   // ── Send a command to the active session's omp ────────────────────────────
   function _send(cmd) {
     if (!window.__TAURI__ || !activeSessionId) return;
+    // Nobody should pull a whole transcript over a pipe: the desktop trims
+    // its own view to the minimap's ~169 rows anyway, and a handset's
+    // uplink turns every megabyte into seconds — so every client reads ONE
+    // window straight from the tab's session file in Rust
+    // (`remote_transcript_window`: no omp round trip, blocks capped, wire
+    // budget) and pages up through the chat view's "load older" row. The
+    // windowed reply's cursor drives _handleResponse's window branch; a tab
+    // with no file yet (fresh session) has no history to page: an empty
+    // window, no round trip at all.
+    if (cmd.type === "get_messages") {
+      // The desktop executor resolves the tab's session file from its own
+      // registry (always complete; the phone's registry copy can lag the
+      // attach that triggered this fetch) and slices one window in Rust.
+      window.__TAURI__.core.invoke("js:get_messages_window", {
+        sessionId: activeSessionId,
+        before: cmd.before ?? null,
+        limit: cmd.limit ?? 200,
+      }).then((w) => _handleResponse({ command: "get_messages", success: true, data: w }),
+              (e) => console.error("[live] get_messages_window failed:", e));
+      return;
+    }
     _invokeSend(cmd).catch(_logSendError);
   }
 
@@ -4652,6 +4745,26 @@
           })),
         };
       },
+      // The phone's disconnect-gap catch-up, projected in Rust
+      // (`remote_replay_events`): chunked stdout frames and the journal's
+      // oldest overflow never cross its uplink. Same wire shape as
+      // `replay_events` (events/headSeq/dropped), so the phone's switch
+      // path consumes it unchanged.
+      remoteReplay({ sessionId, afterSeq = 0 } = {}) {
+        if (typeof sessionId !== "string" || !sessionId) throw new Error("replay needs a sessionId");
+        return window.__TAURI__.core.invoke("remote_replay_events", { sessionId, afterSeq });
+      },
+      // The phone's windowed transcript fetch, resolved desktop-side: the
+      // session file comes from THIS registry (the phone's copy can lag
+      // the attach that triggered the fetch), then Rust slices one window
+      // (`remote_transcript_window`). A tab with no file yet (fresh
+      // session) answers an empty window — no history to page.
+      get_messages_window({ sessionId, before = null, limit = 200 } = {}) {
+        if (typeof sessionId !== "string" || !sessionId) throw new Error("get_messages_window needs a sessionId");
+        const path = sessionRegistry.get(sessionId)?.sessionFile;
+        if (!path) return { messages: [], hasOlder: false, nextBefore: 0 };
+        return window.__TAURI__.core.invoke("remote_transcript_window", { path, before, limit });
+      },
       // A pending tool approval / ask dialog reaches clients only as a live
       // event (omp's get_state carries no pending-request field), so a phone
       // that attaches or resyncs after the request fired could never see it
@@ -4986,6 +5099,17 @@
      *  subscription covers every other change. */
     async syncRemoteTabs() {
       return _syncRemoteTabs();
+    },
+
+    /** Page the phone's windowed transcript one window up: sends the next
+     *  older `get_messages` (routed to the desktop executor's
+     *  `get_messages_window` on a handset). False when the transcript is
+     *  not windowed or the head is reached — the chat view hides its
+     *  "load older" row on exactly this. */
+    async loadOlderMessages() {
+      if (!state.windowed || state.windowCursor == null) return false;
+      _send({ type: "get_messages", before: state.windowCursor });
+      return true;
     },
 
     /** The phone sheet's folder browser: `path`'s subdirectories as

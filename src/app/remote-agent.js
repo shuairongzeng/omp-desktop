@@ -50,11 +50,48 @@
     });
   }
 
-  function respond(id, ok, valueOrError) {
+  // Reply values above this are gzipped into `{gz: base64}` (the handset
+  // inflates with DecompressionStream): a 280 KB window frame crosses a
+  // 3 Mbit/s uplink as ~60 KB. Small values ride verbatim — the codec
+  // would cost more than it saves.
+  const GZIP_MIN_BYTES = 32 * 1024;
+  async function encodeValue(value) {
+    const json = JSON.stringify(value ?? null);
+    if (json.length <= GZIP_MIN_BYTES) return value;
+    try {
+      const stream = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+      const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      return { gz: btoa(bin) };
+    } catch (e) {
+      console.warn("[remote-agent] gzip failed, sending raw:", e);
+      return value;
+    }
+  }
+
+  async function respond(id, ok, valueOrError) {
     const frame = { t: "res", id, ok };
-    if (ok) frame.value = valueOrError ?? null;
+    if (ok) frame.value = await encodeValue(valueOrError);
     else frame.error = String(valueOrError);
     send(frame);
+  }
+
+  /** Whether one stdout line is worth a phone's wire. The desktop's own
+   *  large fetches ride the same `agent://line/{id}` channel the phone
+   *  subscribes to: their rpc_chunk frames are tens of MB the handset
+   *  neither asked for nor can afford, and the phone's own large replies
+   *  travel as WS `res` frames now (`remote_transcript_window`) — so chunk
+   *  frames never need the wire. Everything else (events, single-frame
+   *  responses the phone correlates) passes. */
+  function forwardableLine(payload) {
+    const text = payload?.text;
+    if (typeof text !== "string") return true;
+    let obj;
+    try { obj = JSON.parse(text); } catch { return true; }
+    return !(obj && typeof obj === "object" && obj.type === "rpc_chunk");
   }
 
   function addSub(phoneId, name) {
@@ -68,6 +105,7 @@
     const entry = { count: 1, unlisten: null };
     active.set(name, entry);
     listenTauri(name, (ev) => {
+      if (name.startsWith("agent://line/") && !forwardableLine(ev.payload)) return;
       send({ t: "evt", name, payload: ev.payload ?? null });
     }).then((un) => {
       if (active.get(name) === entry) entry.unlisten = un;
@@ -155,6 +193,15 @@
       if (name === "open_project_at" && jsHandlers) {
         const opened = await jsHandlers.openProjectAt(args?.path ?? args);
         respond(id, true, opened ?? null);
+        return;
+      }
+      // The journal replay is the phone's disconnect-gap catch-up: the raw
+      // form carries every chunked stdout frame of a busy tab (hundreds of
+      // KB) the handset never reassembles, so the desktop projects it
+      // (`remote_replay_events`) before it touches the wire.
+      if (name === "replay_events" && jsHandlers) {
+        const replay = await jsHandlers.remoteReplay(args || {});
+        respond(id, true, replay);
         return;
       }
 

@@ -527,6 +527,11 @@
        live.js's `_syncRemoteTabs` reads window.OMP_REMOTE_TABS, so it must
        load before live.js. -->
   <script src="app/remote-tabs.js"></script>
+  <!-- Phone windowed transcript: absolute-cursor slicing of a
+       get_messages reply (transcript-window.js). Dependency-free IIFE;
+       live.js's window branch reads window.OMP_TRANSCRIPT_WINDOW, so it
+       must load before live.js. -->
+  <script src="app/transcript-window.js"></script>
   <script src="live.js"></script>
 
   <!-- App root — wired to OMP_BRIDGE, no demo effects -->

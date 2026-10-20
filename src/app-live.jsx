@@ -98,6 +98,8 @@ function App() {
   // #19: messages trimmed from the transcript head (live.js _trimMessages),
   // surfaced by the minimap's "−N earlier" badge.
   const [trimmedCount,  setTrimmedCount]  = React.useState(0);
+  const [windowed,     setWindowed]      = React.useState(false);
+  const [windowCursor, setWindowCursor]  = React.useState(null);
   const [thinkingLevel, setThinkingLevel] = React.useState(null);
   const [ctx,           setCtx]           = React.useState(data.ctx);
   const [kanban,        setKanban]        = React.useState([]);
@@ -162,7 +164,7 @@ function App() {
     window.__TAURI__?.window?.getCurrentWindow?.()?.show?.()?.catch?.(() => {});
   }, []);
   useBridgeSnapshot(bridge, {
-    setMessages, setStreaming, setCtx, setKanban, setPlanMeta, setTrimmedCount,
+    setMessages, setStreaming, setCtx, setKanban, setPlanMeta, setTrimmedCount, setWindowed, setWindowCursor,
     setModels, setActivity, setSparkline,
     setModelState, setThinkingLevel,
     setSessions, setActiveSessionId, setProfiles, setStartupProfileId, setRecentProjects,
@@ -795,6 +797,11 @@ React.useEffect(() => {
     }
   };
 
+  // Phone windowed transcript: page one older window up. live.js routes the
+  // fetch to the desktop executor's slice on a handset; a desktop tab is
+  // never windowed, so the chat view's row (and this) stays inert there.
+  const handleLoadOlder = React.useCallback(() => { bridge?.loadOlderMessages(); }, [bridge]);
+
   // List one folder in the sheet's browser (null = the device's roots).
   // A failure keeps the last listing on screen and reports the message.
   const loadRemoteDirs = React.useCallback(async (path) => {
@@ -1150,6 +1157,9 @@ React.useEffect(() => {
                     followOutput={t.followOutput}
                     submitKey={t.submitKey}
                     onOpenKanban={handleOpenKanban}
+                    windowed={windowed}
+                    windowCursor={windowCursor}
+                    onLoadOlder={handleLoadOlder}
                   />
                   <TerminalPanels sessions={sessions} activeId={planKey} terminal={terminal} />
                   <Composer

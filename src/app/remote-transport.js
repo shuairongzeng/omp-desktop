@@ -168,6 +168,18 @@
       }
       everConnected = true;
     };
+    /** The desktop gzips reply values over 32 KB into `{gz: base64}` to
+     *  keep the handset's uplink honest; inflate them back here so callers
+     *  see plain values. Anything else passes through untouched. */
+    async function decodeValue(value) {
+      if (!value || typeof value !== "object" || typeof value.gz !== "string") return value;
+      const bin = atob(value.gz);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+      return JSON.parse(await new Response(stream).text());
+    }
+
     sock.onmessage = (ev) => {
       let frame;
       try { frame = JSON.parse(ev.data); } catch { return; }
@@ -176,7 +188,7 @@
         if (!p) return;
         pending.delete(frame.id);
         clearTimeout(p.timer);
-        if (frame.ok) p.resolve(frame.value);
+        if (frame.ok) { decodeValue(frame.value).then((v) => p.resolve(v), () => p.resolve(frame.value)); }
         else p.reject(new Error(frame.error || "remote command failed"));
       } else if (frame.t === "evt") {
         const set = listeners.get(frame.name);
