@@ -34,6 +34,7 @@
     "app_update_check", "copied_file_paths", "set_close_guard",
     "take_pending_open_projects",
     "remote_get_state", "remote_configure", "remote_regenerate_token", "remote_send",
+    "remote_set_name",
   ]);
 
   // name → { count, unlisten }; phoneId → Map(name → count)

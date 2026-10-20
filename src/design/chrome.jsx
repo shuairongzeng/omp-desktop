@@ -83,6 +83,10 @@ function WindowChrome({
           <span className="mobile-topbar-project">{project.name}</span>
           {sub && <span className="mobile-topbar-sub mono">{sub}</span>}
         </div>
+        {/* Phone-remote only (design/remote-device-chip.jsx): names the
+            desktop being controlled; tap opens the device hub to switch.
+            Null everywhere else, so the desktop bar is untouched. */}
+        {window.RemoteDeviceChip ? <window.RemoteDeviceChip /> : null}
         <span className={`dot ${connected === null ? "warn" : connected ? "live" : "error"}`}
           title={connected === null ? "connecting" : connected ? "connected" : "disconnected"} />
         {/* The desktop's Ctrl+H clock lives in the hidden tab bar; the

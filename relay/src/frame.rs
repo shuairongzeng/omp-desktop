@@ -25,6 +25,11 @@ pub struct Frame {
     pub pair_id: Option<String>,
     /// `revoke` phone hash, when present.
     pub phone_hash: Option<String>,
+    /// `device_info` display name (required there; `cmd`/`evt` carry their
+    /// own `name` in the verbatim payload, never extracted here).
+    pub name: Option<String>,
+    /// `device_info` os tag, when present.
+    pub os: Option<String>,
 }
 
 /// Envelope rules (`docs/architecture/remote-control.md`):
@@ -36,6 +41,7 @@ pub struct Frame {
 /// - `pair_begin`/`list_phones` carry no fields.
 /// - `pair_grant`/`pair_deny` require string `pair_id`.
 /// - `revoke` requires string `phone_hash`.
+/// - `device_info` requires string `name`; string `os` is optional.
 pub fn parse(text: &str) -> Inbound {
     let v: Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -55,6 +61,8 @@ pub fn parse(text: &str) -> Inbound {
             id,
             pair_id,
             phone_hash,
+            name: None,
+            os: None,
         })
     };
 
@@ -81,6 +89,19 @@ pub fn parse(text: &str) -> Inbound {
         },
         "revoke" => match str_field("phone_hash") {
             Some(h) => frame(t, None, Some(h)),
+            None => Inbound::Invalid,
+        },
+        // The desktop's display identity: `name` is required (an empty one
+        // is the caller's business), `os` optional.
+        "device_info" => match str_field("name") {
+            Some(n) => Inbound::Valid(Frame {
+                t: t.to_string(),
+                id,
+                pair_id: None,
+                phone_hash: None,
+                name: Some(n),
+                os: str_field("os"),
+            }),
             None => Inbound::Invalid,
         },
         _ => Inbound::UnknownType,
@@ -147,6 +168,12 @@ pub mod emit {
         json(serde_json::json!({"t":"peer","desktop":online}))
     }
 
+    /// `device` frame → phones: the room desktop's display identity
+    /// (persisted from its `device_info`; sent on join and on change).
+    pub fn device(name: &str, os: &str) -> String {
+        json(serde_json::json!({"t":"device","name":name,"os":os}))
+    }
+
     /// `peer` frame → desktop: per-phone presence (subscription refcount).
     pub fn peer_phone(conn_id: &str, name: &str, online: bool) -> String {
         json(serde_json::json!({"t":"peer","phone":conn_id,"name":name,"online":online}))
@@ -181,6 +208,8 @@ mod tests {
             r#"{"t":"pair_deny","pair_id":"ab"}"#,
             r#"{"t":"revoke","phone_hash":"h"}"#,
             r#"{"t":"list_phones"}"#,
+            r#"{"t":"device_info","name":"My PC"}"#,
+            r#"{"t":"device_info","name":"My PC","os":"windows"}"#,
         ];
         for c in cases {
             assert!(matches!(parse(c), Inbound::Valid(_)), "{c} must parse");
@@ -205,6 +234,26 @@ mod tests {
             panic!();
         };
         assert_eq!(f.phone_hash.as_deref(), Some("h1"));
+
+        let Inbound::Valid(f) = parse(r#"{"t":"device_info","name":"My PC","os":"windows"}"#)
+        else {
+            panic!();
+        };
+        assert_eq!(f.name.as_deref(), Some("My PC"));
+        assert_eq!(f.os.as_deref(), Some("windows"));
+
+        // `os` is optional.
+        let Inbound::Valid(f) = parse(r#"{"t":"device_info","name":"My PC"}"#) else {
+            panic!();
+        };
+        assert_eq!(f.name.as_deref(), Some("My PC"));
+        assert_eq!(f.os, None);
+
+        // A `cmd`'s `name` is payload, never extracted into the envelope.
+        let Inbound::Valid(f) = parse(r#"{"t":"cmd","id":1,"name":"get_state"}"#) else {
+            panic!();
+        };
+        assert_eq!(f.name, None);
     }
 
     #[test]
@@ -228,6 +277,8 @@ mod tests {
             r#"{"t":"revoke"}"#,
             r#"{"t":"sub"}"#,
             r#"{"t":"unsub","name":null}"#,
+            r#"{"t":"device_info"}"#,
+            r#"{"t":"device_info","name":5}"#,
         ];
         for c in cases {
             assert!(
@@ -299,6 +350,11 @@ mod tests {
         assert_eq!(v["phone"], "c1");
         assert_eq!(v["name"], "Pixel");
         assert_eq!(v["online"], false);
+
+        let v: Value = serde_json::from_str(&emit::device("My PC", "windows")).unwrap();
+        assert_eq!(v["t"], "device");
+        assert_eq!(v["name"], "My PC");
+        assert_eq!(v["os"], "windows");
 
         let v: Value = serde_json::from_str(&emit::revoked("deadbeef")).unwrap();
         assert_eq!(v["t"], "revoked");

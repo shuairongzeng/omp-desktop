@@ -83,10 +83,11 @@ impl RemoteManager {
     }
 
     pub fn load_settings(&self) -> RemoteSettings {
-        match &self.settings_path {
-            Some(p) => crate::json_store::read_or_default(p),
-            None => RemoteSettings::default(),
-        }
+        self.settings_path
+            .as_ref()
+            .map_or_else(RemoteSettings::default, |p| {
+                crate::json_store::read_or_default(p)
+            })
     }
 
     fn save_settings(&self, settings: &RemoteSettings) -> Result<(), String> {
@@ -99,7 +100,10 @@ impl RemoteManager {
     }
 
     pub(crate) fn set_status(&self, app: &AppHandle, status: &str) {
-        *self.status.lock().unwrap_or_else(|e| e.into_inner()) = status.to_string();
+        *self
+            .status
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = status.to_string();
         let _ = app.emit(EVT_STATUS, self.view());
     }
 
@@ -112,18 +116,39 @@ impl RemoteManager {
             status: self
                 .status
                 .lock()
-                .unwrap_or_else(|e| e.into_inner())
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone(),
             pinned_cert: !settings.pinned_cert_pem.trim().is_empty(),
+            device_name: settings.device_name,
+        }
+    }
+
+    /// Push a fresh `device_info` frame when the connector is live, so a
+    /// rename reaches the relay (and the room's phones) without a
+    /// reconnect. Offline: a no-op — the next connect announces it anyway.
+    fn push_device_info(&self, settings: &RemoteSettings) {
+        let frame = conn::device_info_frame(settings);
+        let guard = self
+            .outbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, tx)) = &*guard {
+            let _ = tx.send(frame);
         }
     }
 
     pub(crate) fn set_outbox(&self, generation: u64, tx: mpsc::UnboundedSender<Value>) {
-        *self.outbox.lock().unwrap_or_else(|e| e.into_inner()) = Some((generation, tx));
+        *self
+            .outbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((generation, tx));
     }
 
     pub(crate) fn clear_outbox(&self, generation: u64) {
-        let mut guard = self.outbox.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self
+            .outbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if guard.as_ref().is_some_and(|(g, _)| *g == generation) {
             *guard = None;
         }
@@ -133,7 +158,10 @@ impl RemoteManager {
     fn start(self: &Arc<Self>, app: AppHandle, settings: RemoteSettings) {
         self.stop_connector();
         let (stop_tx, stop_rx) = oneshot::channel();
-        *self.stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(stop_tx);
+        *self
+            .stop
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(stop_tx);
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let mgr = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
@@ -142,7 +170,15 @@ impl RemoteManager {
     }
 
     fn stop_connector(&self) {
-        if let Some(stop) = self.stop.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        // Take the handle under the guard, then signal after it drops — a
+        // guard temp in the `if let` scrutinee would hold the lock across
+        // the send.
+        let stop = self
+            .stop
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(stop) = stop {
             let _ = stop.send(());
         }
     }
@@ -197,6 +233,20 @@ pub fn remote_regenerate_token(
     Ok(token)
 }
 
+/// Rename this desktop in the phones' device picker. Persisted, and pushed
+/// straight to the relay when the connector is live (no reconnect).
+#[tauri::command]
+pub fn remote_set_name(
+    name: String,
+    mgr: State<'_, Arc<RemoteManager>>,
+) -> Result<RemoteStateView, String> {
+    let mut settings = mgr.load_settings();
+    settings.device_name = name.trim().chars().take(80).collect();
+    mgr.save_settings(&settings)?;
+    mgr.push_device_info(&settings);
+    Ok(mgr.view())
+}
+
 /// Send one frame to the relay (see `SENDABLE`). The webview's remote agent
 /// builds these; the allowlist keeps the IPC surface honest.
 #[tauri::command]
@@ -205,7 +255,10 @@ pub fn remote_send(frame: Value, mgr: State<'_, Arc<RemoteManager>>) -> Result<(
     if !SENDABLE.contains(&t) {
         return Err(format!("frame type {t:?} is not sendable"));
     }
-    let guard = mgr.outbox.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = mgr
+        .outbox
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     match &*guard {
         Some((_, tx)) => tx
             .send(frame)
@@ -218,7 +271,7 @@ pub fn remote_send(frame: Value, mgr: State<'_, Arc<RemoteManager>>) -> Result<(
 /// cert, pin the cert the server actually presented, and reconnect. Returns
 /// the cert's SHA-256 fingerprint for the UI to show. The one unverified
 /// hop is the whole point of TOFU — the UI surfaces the fingerprint so the
-/// user can eyeball it against the server (openssl s_client) if they care.
+/// user can eyeball it against the server (`openssl s_client`) if they care.
 #[tauri::command]
 pub async fn remote_trust_server_cert(
     app: AppHandle,

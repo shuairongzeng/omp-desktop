@@ -267,6 +267,14 @@ async fn pump(app: SharedApp, socket: WebSocket, conn: Conn, host: String) {
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping.tick().await; // first tick fires immediately; skip it
 
+    // A joining phone missed the desktop's join/leave broadcasts: greet it
+    // with the room's current identity + presence (its picker row and the
+    // offline badge both key off these). After `install_outbox`, so the
+    // frames land on this pump's socket, not the registration placeholder.
+    if conn.role == Role::Phone {
+        greet_phone(&app, &conn.device, &tx).await;
+    }
+
     let mut last_seen = Instant::now();
     loop {
         tokio::select! {
@@ -465,6 +473,20 @@ async fn handle_frame(app: &SharedApp, conn: &Conn, tx: &Outbox, text: &str, hos
             let list = app.phone_list(&conn.device).await;
             tx.send(Outbound::Text(frame::emit::phones(&list)));
         }
+        // The desktop's display identity: persisted (so a phone joining
+        // later is greeted with it) and pushed to the room's phones now.
+        (Role::Desktop, "device_info") => {
+            let Some(name) = f.name.as_deref() else {
+                return;
+            };
+            let info = crate::config::DeviceInfo {
+                name: crate::config::truncate_display(name),
+                os: crate::config::truncate_display(f.os.as_deref().unwrap_or("")),
+            };
+            let text = frame::emit::device(&info.name, &info.os);
+            app.persist_device_info(&conn.device, info).await;
+            broadcast_to_phones(app, &conn.device, &text).await;
+        }
         _ => {} // unknown/other-role combinations: dropped
     }
 }
@@ -482,6 +504,22 @@ fn pair_url(host: &str, token: &str) -> String {
 async fn desktop_sender(app: &SharedApp, device: &str) -> Option<Outbox> {
     let rooms = app.rooms.lock().await;
     rooms.map.get(device).and_then(|r| r.desktop_tx.clone())
+}
+
+/// Initial frames for a freshly joined phone: the desktop's stored display
+/// info (when it ever reported one) and its live presence right now.
+async fn greet_phone(app: &SharedApp, device: &str, tx: &Outbox) {
+    if let Some(info) = app.device_info(device).await {
+        tx.send(Outbound::Text(frame::emit::device(&info.name, &info.os)));
+    }
+    let online = {
+        let rooms = app.rooms.lock().await;
+        rooms
+            .map
+            .get(device)
+            .is_some_and(|r| r.desktop_tx.is_some())
+    };
+    tx.send(Outbound::Text(frame::emit::peer_desktop(online)));
 }
 
 async fn broadcast_to_phones(app: &SharedApp, device: &str, text: &str) {

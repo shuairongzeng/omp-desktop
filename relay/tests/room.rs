@@ -425,8 +425,8 @@ async fn evt_broadcasts_to_all_phones() {
     )
     .await;
     for p in [&mut p1, &mut p2] {
-        let evt = next_json(p).await;
-        assert_eq!(evt["t"], "evt");
+        // The join-time greet (presence) frames interleave; pick the evt out.
+        let evt = eventually_json(p, "evt").await;
         assert_eq!(evt["name"], "agent://line/s1");
         assert_eq!(evt["payload"]["chunk"], "x");
         assert!(evt.get("from").is_none(), "desktop frames are never tagged");
@@ -465,16 +465,21 @@ async fn offline_fast_fail_and_desktop_replacement() {
     let cmd = next_json(&mut desktop2).await;
     assert_eq!(cmd["id"], 7);
 
-    // Now drop the new desktop: cmd gets the offline fast-fail.
+    // Now drop the new desktop: cmd gets the offline fast-fail. The greet
+    // and replacement presence frames interleave — wait out the offline one.
     drop(desktop2);
-    let _ = next_json(&mut phone).await; // desktop:false
+    loop {
+        let v = next_json(&mut phone).await;
+        if v["t"] == "peer" && v["desktop"] == Value::Bool(false) {
+            break;
+        }
+    }
     send(
         &mut phone,
         serde_json::json!({"t":"cmd","id":8,"name":"send_command"}),
     )
     .await;
-    let res = next_json(&mut phone).await;
-    assert_eq!(res["t"], "res");
+    let res = eventually_json(&mut phone, "res").await;
     assert_eq!(res["id"], 8);
     assert_eq!(res["ok"], false);
     assert_eq!(res["error"], "desktop offline");
@@ -557,8 +562,7 @@ async fn oversize_frame_gets_dropped_notice_not_disconnect() {
         .send(Message::Text(serde_json::to_string(&frame).unwrap().into()))
         .await
         .unwrap();
-    let dropped = next_json(&mut phone).await;
-    assert_eq!(dropped["t"], "dropped");
+    let dropped = eventually_json(&mut phone, "dropped").await;
     assert_eq!(dropped["reason"], "oversize");
     assert_eq!(dropped["id"], 99);
 
@@ -570,6 +574,70 @@ async fn oversize_frame_gets_dropped_notice_not_disconnect() {
     .await;
     let cmd = next_json(&mut desktop).await;
     assert_eq!(cmd["id"], 100);
+}
+
+#[tokio::test]
+async fn phone_join_is_greeted_with_presence_and_device_info() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+
+    // The desktop announces itself; the relay stores it for future greets.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"device_info","name":"My PC","os":"windows"}),
+    )
+    .await;
+
+    let tok = pair_phone(&relay, &mut desktop, "PickerUA").await;
+    let mut phone = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok}")),
+        Some("PickerUA"),
+    )
+    .await;
+
+    // The join greet carries both the stored identity and live presence.
+    let device = eventually_json(&mut phone, "device").await;
+    assert_eq!(device["name"], "My PC");
+    assert_eq!(device["os"], "windows");
+    let peer = eventually_json(&mut phone, "peer").await;
+    assert_eq!(peer["desktop"], true);
+
+    // A device_info change reaches connected phones.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"device_info","name":"Renamed","os":"windows"}),
+    )
+    .await;
+    let device = eventually_json(&mut phone, "device").await;
+    assert_eq!(device["name"], "Renamed");
+
+    // And it is persisted for later greets.
+    let st: Value =
+        serde_json::from_str(&std::fs::read_to_string(&relay.state_file).unwrap()).unwrap();
+    assert_eq!(st["devices"][DEVICE]["info"]["name"], "Renamed");
+    assert_eq!(st["devices"][DEVICE]["info"]["os"], "windows");
+}
+
+#[tokio::test]
+async fn phone_join_without_desktop_is_greeted_offline() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+    let tok = pair_phone(&relay, &mut desktop, "LateUA").await;
+    drop(desktop);
+
+    let mut phone = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok}")),
+        Some("LateUA"),
+    )
+    .await;
+    // Either the greet itself or the dropped desktop's cleanup broadcast
+    // says offline; the phone must see peer desktop:false either way.
+    loop {
+        let v = next_json(&mut phone).await;
+        if v["t"] == "peer" && v["desktop"] == Value::Bool(false) {
+            break;
+        }
+    }
 }
 
 #[tokio::test]

@@ -5,31 +5,37 @@
  * every component run unchanged. Loaded before live.js; under the real
  * desktop webview it detects `__TAURI__` and does nothing.
  *
+ * The phone may be paired with several desktops (remote-devices.js holds
+ * the list); this shim drives the ONE room of the selected device, and
+ * defers "which desktop?" to the device picker (remote-hub.js).
+ *
  * Boot states:
  *  - `/p#<pair-token>`: pairing landing — exchanges the one-time token
- *    for a stored phone token (the desktop shows an approve dialog).
- *  - stored token: connect and expose the API.
- *  - neither: an overlay asks to pair; invokes reject with `not paired`.
+ *    for a stored phone token (the desktop shows an approve dialog),
+ *    appending to the paired-device list.
+ *  - a selected device: connect its room and expose the API.
+ *  - paired but none selected: the device picker (hub) takes over.
+ *  - nothing paired: an overlay asks to pair; invokes reject with
+ *    `not paired`.
  */
 (function () {
   "use strict";
   if (window.__TAURI__) return; // real desktop webview
 
-  const AUTH_KEY = "omp-remote:auth";
   const log = (...a) => console.log("[remote]", ...a);
 
   let ws = null;
   let wsOpen = false;
   let everConnected = false;
   let seq = 0;
+  let connDevice = null; // the room the live socket belongs to
   const pending = new Map(); // id → { resolve, reject, timer }
   const listeners = new Map(); // event name → Set<cb>
   let overlay = null;
 
-  const readAuth = () => {
-    try { return JSON.parse(localStorage.getItem(AUTH_KEY) || "null"); } catch { return null; }
-  };
-  const writeAuth = (a) => localStorage.setItem(AUTH_KEY, JSON.stringify(a));
+  const DEVICES = () => window.OMP_REMOTE_DEVICES;
+  const storeNow = () => DEVICES().load(localStorage);
+  const currentEntry = () => DEVICES().selectedEntry(storeNow());
 
   const wsUrl = (query) =>
     `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?${query}`;
@@ -43,7 +49,12 @@
       let frame;
       try { frame = JSON.parse(ev.data); } catch { return; }
       if (frame.t === "paired") {
-        writeAuth({ device: frame.device, token: frame.token });
+        // Append to the paired-device list (a re-pair of a known desktop
+        // just swaps its token) and enter that desktop.
+        let store = storeNow();
+        store = DEVICES().upsert(store, frame.device, frame.token);
+        store = DEVICES().touch(store, frame.device, Date.now());
+        DEVICES().save(localStorage, store);
         showOverlay("配对成功", "正在进入…");
         location.replace("/");
       } else if (frame.t === "pair_denied") {
@@ -56,13 +67,13 @@
   }
 
   // ── overlay ─────────────────────────────────────────────────────────
-  function showOverlay(title, sub, withCodeEntry) {
+  function showOverlay(title, sub, withCodeEntry, action) {
     if (!overlay) {
       overlay = document.createElement("div");
       overlay.id = "remote-overlay";
-      overlay.innerHTML = `<div class="ro-card"><div class="ro-title"></div><div class="ro-sub"></div><div class="ro-code" style="display:none"><input class="ro-input" placeholder="ABCD-1234" maxlength="9" autocapitalize="characters" /><button class="ro-btn">配对</button></div>`;
+      overlay.innerHTML = `<div class="ro-card"><div class="ro-title"></div><div class="ro-sub"></div><div class="ro-code" style="display:none"><input class="ro-input" placeholder="ABCD-1234" maxlength="9" autocapitalize="characters" /><button class="ro-btn">配对</button></div><button class="ro-action" style="display:none"></button></div>`;
       const style = document.createElement("style");
-      style.textContent = `#remote-overlay{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0a0e14;color:#e6e6e6;font-family:system-ui;padding:24px;text-align:center}#remote-overlay .ro-title{font-size:18px;font-weight:600;margin-bottom:8px}#remote-overlay .ro-sub{font-size:14px;opacity:.65;line-height:1.6;margin-bottom:14px}#remote-overlay .ro-code{display:flex;gap:8px;justify-content:center}#remote-overlay .ro-input{padding:8px 12px;font-size:16px;letter-spacing:2px;text-transform:uppercase;background:#151a22;border:1px solid #2a3340;border-radius:6px;color:#e6e6e6;width:140px;text-align:center}#remote-overlay .ro-btn{padding:8px 16px;font-size:14px;background:#3b82f6;border:none;border-radius:6px;color:#fff}`;
+      style.textContent = `#remote-overlay{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0a0e14;color:#e6e6e6;font-family:system-ui;padding:24px;text-align:center}#remote-overlay .ro-title{font-size:18px;font-weight:600;margin-bottom:8px}#remote-overlay .ro-sub{font-size:14px;opacity:.65;line-height:1.6;margin-bottom:14px}#remote-overlay .ro-code{display:flex;gap:8px;justify-content:center}#remote-overlay .ro-input{padding:8px 12px;font-size:16px;letter-spacing:2px;text-transform:uppercase;background:#151a22;border:1px solid #2a3340;border-radius:6px;color:#e6e6e6;width:140px;text-align:center}#remote-overlay .ro-btn{padding:8px 16px;font-size:14px;background:#3b82f6;border:none;border-radius:6px;color:#fff}#remote-overlay .ro-action{display:block;margin:14px auto 0;padding:8px 18px;font-size:14px;background:#1c2430;border:1px solid #2a3340;border-radius:6px;color:#c6cdd8}`;
       document.head.appendChild(style);
       (document.body || document.documentElement).appendChild(overlay);
       // Manual code entry: redeeming a code is opening /p#<code> (the
@@ -76,6 +87,17 @@
     overlay.querySelector(".ro-title").textContent = title;
     overlay.querySelector(".ro-sub").textContent = sub || "";
     overlay.querySelector(".ro-code").style.display = withCodeEntry ? "flex" : "none";
+    // Optional one-button escape hatch (the offline overlay's "switch
+    // device"). Property assignment, never a markup handler (CSP).
+    const act = overlay.querySelector(".ro-action");
+    if (action) {
+      act.textContent = action.label;
+      act.style.display = "block";
+      act.onclick = action.onClick;
+    } else {
+      act.style.display = "none";
+      act.onclick = null;
+    }
   }
   function hideOverlay() { if (overlay) overlay.style.display = "none"; }
 
@@ -105,14 +127,22 @@
   let retryMs = 1000;
   let reconnectTimer = 0;
   function connect() {
-    const auth = readAuth();
-    if (!auth || !auth.device || !auth.token) {
+    const store = storeNow();
+    if (store.devices.length === 0) {
       showOverlay("未配对", "在桌面端 Settings → Remote 生成配对二维码，用手机相机扫码打开；或在此输入屏幕上显示的配对码。", true);
       return;
     }
+    const sel = DEVICES().selectedEntry(store);
+    if (!sel) {
+      // Paired with at least one desktop but none chosen (fresh list, or
+      // the last one was forgotten): the device picker owns the screen.
+      window.OMP_REMOTE_HUB?.open?.();
+      return;
+    }
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) return; // already connecting/open
-    const sock = new WebSocket(wsUrl(`role=phone&device=${encodeURIComponent(auth.device)}&token=${encodeURIComponent(auth.token)}`));
+    const sock = new WebSocket(wsUrl(`role=phone&device=${encodeURIComponent(sel.device)}&token=${encodeURIComponent(sel.token)}`));
     ws = sock;
+    connDevice = sel.device;
     sock.onopen = () => {
       wsOpen = true;
       retryMs = 1000;
@@ -151,8 +181,15 @@
       } else if (frame.t === "evt") {
         const set = listeners.get(frame.name);
         if (set) for (const cb of set) cb({ event: frame.name, payload: frame.payload });
+      } else if (frame.t === "device") {
+        // The room desktop's display identity (greet/update): keep the
+        // paired list's name fresh — the hub and the topbar chip show it.
+        window.OMP_REMOTE_HUB?.noteDevice?.(connDevice, frame);
       } else if (frame.t === "peer" && frame.desktop === false) {
-        showOverlay("桌面端离线", "电脑上的 OMP Desktop 不在线（睡眠或已退出）。恢复后此页会自动重连。");
+        showOverlay("桌面端离线", "电脑上的 OMP Desktop 不在线（睡眠或已退出）。恢复后此页会自动重连。", false, {
+          label: "切换设备",
+          onClick: () => { hideOverlay(); window.OMP_REMOTE_HUB?.open?.(); },
+        });
       } else if (frame.t === "peer" && frame.desktop === true) {
         hideOverlay();
         // Events were missed while the desktop was gone; pull the gap.
@@ -222,15 +259,17 @@
     "open_project", "pick_background_image", "terminal_pick_shell",
     "browser_pick_path", "open_url_external", "app_update_install",
     "app_update_check", "copied_file_paths", "remote_get_state",
-    "remote_configure", "remote_regenerate_token", "remote_send",
+    "remote_configure", "remote_regenerate_token", "remote_set_name",
+    "remote_send",
   ]);
 
   function invoke(name, args) {
     if (name in NOOP) return Promise.resolve(NOOP[name]());
     if (UNSUPPORTED.has(name)) return Promise.reject(new Error(`${name} is unsupported on remote`));
-    // Unpaired: no frame can ever reach the desktop, so fail at once
-    // instead of hanging the caller to the 30s timeout.
-    if (!readAuth()) return Promise.reject(new Error("not paired"));
+    // Nothing selected (unpaired, or the picker is still up): no frame
+    // can ever reach a desktop, so fail at once instead of hanging the
+    // caller to the 30s timeout.
+    if (!currentEntry()) return Promise.reject(new Error("not paired"));
     return new Promise((resolve, reject) => {
       const id = ++seq;
       const timer = setTimeout(() => {

@@ -57,6 +57,15 @@ pub struct PhoneEntry {
     pub paired_at: i64,
 }
 
+/// The desktop's self-reported identity (`device_info` frame on connect):
+/// what the phone's device picker shows instead of a 64-hex room id.
+#[derive(Serialize, Deserialize, Default, Debug, Clone, PartialEq, Eq)]
+pub struct DeviceInfo {
+    pub name: String,
+    #[serde(default)]
+    pub os: String,
+}
+
 /// `relay-state.json`: phones ever paired, per device. The device token
 /// hashes live in the config file; state only tracks phones.
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -70,6 +79,10 @@ pub struct DeviceState {
     /// sha256-hex of phone token → name/paired_at.
     #[serde(default)]
     pub phones: HashMap<String, PhoneEntry>,
+    /// The desktop's latest self-reported name/os (its `device_info`
+    /// frame); what a joining phone's picker row shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info: Option<DeviceInfo>,
 }
 
 impl PersistedState {
@@ -215,9 +228,14 @@ pub fn cache_control_for(path: &Path) -> &'static str {
     }
 }
 
+/// Display strings (phone names, device names) are truncated to 80 chars.
+pub fn truncate_display(raw: &str) -> String {
+    raw.chars().take(80).collect()
+}
+
 /// Phone display name: User-Agent truncated to 80 chars.
 pub fn phone_name(ua: &str) -> String {
-    ua.chars().take(80).collect()
+    truncate_display(ua)
 }
 
 #[cfg(test)]
@@ -412,6 +430,22 @@ mod tests {
         let loaded = PersistedState::load(&p).unwrap();
         assert_eq!(loaded.devices["dev1"].phones["hash1"].name, "Pixel");
         assert_eq!(loaded.devices["dev1"].phones["hash1"].paired_at, 123);
+        assert_eq!(loaded.devices["dev1"].info, None);
+
+        // The desktop's self-reported info round-trips too.
+        s.devices.get_mut("dev1").unwrap().info = Some(DeviceInfo {
+            name: "My PC".into(),
+            os: "windows".into(),
+        });
+        s.save(&p).unwrap();
+        let loaded = PersistedState::load(&p).unwrap();
+        assert_eq!(
+            loaded.devices["dev1"].info,
+            Some(DeviceInfo {
+                name: "My PC".into(),
+                os: "windows".into()
+            })
+        );
 
         // Unreadable
         std::fs::write(&p, "not json").unwrap();

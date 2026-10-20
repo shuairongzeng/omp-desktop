@@ -16,24 +16,46 @@ pub struct RemoteSettings {
     /// Self-hosted relays on bare IPs run self-signed certs that no system
     /// root accepts; pinning trusts exactly this cert, nothing else.
     pub pinned_cert_pem: String,
+    /// Friendly name for this desktop in the phone's device picker. Empty
+    /// = fall back to the machine's hostname (`display_name`).
+    pub device_name: String,
 }
 
 impl RemoteSettings {
     /// DER bytes of the pinned cert, if any.
     pub fn pinned_cert_der(&self) -> Option<Vec<u8>> {
+        use base64::Engine;
         let pem = self.pinned_cert_pem.trim();
         if pem.is_empty() {
             return None;
         }
         let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
-        use base64::Engine;
         base64::engine::general_purpose::STANDARD.decode(b64).ok()
     }
 }
 
 impl RemoteSettings {
-    pub fn ready(&self) -> bool {
+    pub const fn ready(&self) -> bool {
         !self.server.is_empty() && !self.device_id.is_empty() && !self.device_token.is_empty()
+    }
+
+    /// The name reported to the relay's `device_info` (the phone's device
+    /// picker shows it): the user's choice, else the machine's hostname,
+    /// else a generic fallback. Truncated to 80 chars like the relay does.
+    pub fn display_name(&self) -> String {
+        let chosen = self.device_name.trim();
+        let name = if chosen.is_empty() {
+            hostname().unwrap_or_else(|| "omp-desktop".to_string())
+        } else {
+            chosen.to_string()
+        };
+        name.chars().take(80).collect()
+    }
+
+    /// The os tag sent with the name (`std::env::consts::OS`: one of
+    /// `windows` / `macos` / `linux` / …; the phone maps it to a label).
+    pub const fn os_name() -> &'static str {
+        std::env::consts::OS
     }
 
     pub fn ensure_identity(&mut self) {
@@ -48,21 +70,28 @@ impl RemoteSettings {
     /// The desktop's room URL on the relay. Both id and token are hex, so
     /// they need no percent-encoding in the query string.
     pub fn ws_url(&self) -> String {
-        let base = self.server.trim().trim_end_matches('/');
-        let base = if let Some(rest) = base.strip_prefix("https://") {
-            format!("wss://{rest}")
-        } else if let Some(rest) = base.strip_prefix("http://") {
-            format!("ws://{rest}")
-        } else if base.starts_with("wss://") || base.starts_with("ws://") {
-            base.to_string()
-        } else {
-            format!("wss://{base}")
-        };
+        let base = ws_scheme(self.server.trim().trim_end_matches('/'));
         format!(
             "{base}/ws?role=desktop&device={}&token={}",
             self.device_id, self.device_token
         )
     }
+}
+
+/// The server setting as a WebSocket origin: `https:`/`http:` rescheme to
+/// `wss:`/`ws:`, an existing `ws(s)://` passes through, a bare host
+/// defaults to `wss://`.
+fn ws_scheme(base: &str) -> String {
+    if let Some(rest) = base.strip_prefix("https://") {
+        return format!("wss://{rest}");
+    }
+    if let Some(rest) = base.strip_prefix("http://") {
+        return format!("ws://{rest}");
+    }
+    if base.starts_with("wss://") || base.starts_with("ws://") {
+        return base.to_string();
+    }
+    format!("wss://{base}")
 }
 
 /// What the frontend sees (never the token).
@@ -77,6 +106,19 @@ pub struct RemoteStateView {
     /// the server's cert changed (a pinned root rejects the new leaf as
     /// unknown-issuer again, so re-pinning is the fix there too).
     pub pinned_cert: bool,
+    /// The user's chosen picker name (empty = hostname fallback applies).
+    pub device_name: String,
+}
+
+/// The machine's hostname from the environment (Windows sets
+/// `COMPUTERNAME`, unix shells set `HOSTNAME`) — a display fallback only,
+/// so a missing or blank var just falls through to the generic name.
+fn hostname() -> Option<String> {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// 256 bits of OS randomness as hex (device id, device token).
@@ -94,10 +136,12 @@ mod tests {
 
     #[test]
     fn ws_url_normalizes_schemes() {
-        let mut s = RemoteSettings::default();
-        s.device_id = "aa".into();
-        s.device_token = "bb".into();
-        s.server = "https://relay.example.com/".into();
+        let mut s = RemoteSettings {
+            device_id: "aa".into(),
+            device_token: "bb".into(),
+            server: "https://relay.example.com/".into(),
+            ..Default::default()
+        };
         assert_eq!(
             s.ws_url(),
             "wss://relay.example.com/ws?role=desktop&device=aa&token=bb"
@@ -128,12 +172,43 @@ mod tests {
 
     #[test]
     fn settings_roundtrip_via_json() {
-        let mut s = RemoteSettings::default();
-        s.enabled = true;
-        s.server = "https://relay.example.com".into();
+        let mut s = RemoteSettings {
+            enabled: true,
+            server: "https://relay.example.com".into(),
+            ..Default::default()
+        };
         s.ensure_identity();
         let bytes = serde_json::to_vec(&s).unwrap();
         let back: RemoteSettings = serde_json::from_slice(&bytes).unwrap();
         assert!(back.enabled && back.ready());
+
+        // An old remote.json without `device_name` still loads (serde default).
+        let legacy = br#"{"enabled":true,"server":"https://x","device_id":"aa","device_token":"bb","pinned_cert_pem":""}"#;
+        let back: RemoteSettings = serde_json::from_slice(legacy).unwrap();
+        assert_eq!(back.device_name, "");
+        assert!(back.ready());
+    }
+
+    #[test]
+    fn display_name_prefers_choice_then_truncates() {
+        let mut s = RemoteSettings {
+            device_name: "  My PC  ".into(),
+            ..Default::default()
+        };
+        assert_eq!(s.display_name(), "My PC");
+        s.device_name = "x".repeat(200);
+        assert_eq!(s.display_name().chars().count(), 80);
+        // Empty choice: the env hostname or the generic fallback — always
+        // non-empty and within the relay's cap.
+        s.device_name = String::new();
+        let fallback = s.display_name();
+        assert_ne!(fallback.trim(), "");
+        assert!(fallback.chars().count() <= 80);
+    }
+
+    #[test]
+    fn os_name_is_the_std_tag() {
+        assert_eq!(RemoteSettings::os_name(), std::env::consts::OS);
+        assert_ne!(RemoteSettings::os_name(), "");
     }
 }
