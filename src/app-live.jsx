@@ -449,6 +449,9 @@ React.useEffect(() => {
     "open-usage":    () => setStatsOpen(true),
     "open-git":      () => setGitOpen({ path: null }),
     "open-bridge":   () => openBridge(),
+    // The phone topbar's clock (chrome.jsx): the full history modal with
+    // no project filter — the desktop's Ctrl+H.
+    "open-history":  () => openHistory(null),
   };
   React.useEffect(() => {
     const onMobile = e => {
@@ -729,9 +732,16 @@ React.useEffect(() => {
     // setActiveSessionId is driven by snap.activeSessionId from onUpdate
   };
 
-  // Open project → new session → new tab with its own omp process
+  // Open project → new session → new tab with its own omp process. On the
+  // phone the native dialog is unreachable (the shim refuses
+  // `open_project`), so the folder sheet takes its place.
   const handleNewProject = async () => {
     if (!bridge) return;
+    if (window.OMP_MOBILE?.isRemote?.()) {
+      setFolderError(null);
+      setFolderSheet(true);
+      return;
+    }
     const path = await bridge.pickFolder();
     if (!path) return;
     try {
@@ -744,6 +754,31 @@ React.useEffect(() => {
       // rolled back the ghost tab registration, so there's nothing left to
       // undo here; just keep the rejection from going unhandled.
       console.error("[app] failed to open project:", err);
+    }
+  };
+
+  // ── phone folder sheet (remote control) ────────────────────────────────
+  // The sheet's rows are the desktop's own recent folders plus a typed
+  // path; submitting goes through `open_project_at`, whose desktop handler
+  // opens the folder exactly as the desktop's own picker would.
+  const [folderSheet, setFolderSheet] = React.useState(false);
+  const [folderPath, setFolderPath] = React.useState("");
+  const [folderBusy, setFolderBusy] = React.useState(false);
+  const [folderError, setFolderError] = React.useState(null);
+
+  const openRemoteProject = async (path) => {
+    const p = (path || "").trim();
+    if (!p || folderBusy) return;
+    setFolderBusy(true);
+    setFolderError(null);
+    try {
+      const id = await bridge.openProjectAt(p);
+      if (id) setFolderSheet(false), setFolderPath("");
+      else setFolderError("the desktop could not open that folder");
+    } catch (err) {
+      setFolderError(String(err?.message ?? err));
+    } finally {
+      setFolderBusy(false);
     }
   };
 
@@ -1315,6 +1350,36 @@ React.useEffect(() => {
       )}
 
       <RemotePairDialog />
+
+      {/* Phone folder sheet (remote control): recent folders + a typed
+          path, submitted as `open_project_at` — see openRemoteProject.
+          Mounted only on a touch device, like the composer's sheet. */}
+      {window.OMP_MOBILE?.isTouch?.() && folderSheet && (() => {
+        const MobileSheet = window.MobileSheet;
+        if (!MobileSheet) return null;
+        const rows = recentRows(recentProjects, sessions, activeProfileId);
+        return (
+          <MobileSheet title="open folder" onClose={() => setFolderSheet(false)}>
+            {rows.map(r => (
+              <button key={r.path} className="cmp-sheet-row" disabled={folderBusy}
+                onClick={() => openRemoteProject(r.path)}>
+                <span className="cmp-sheet-ic"><Icon name="folder" size={14} /></span>
+                <span className="cmp-sheet-tx">{_AL_basename(r.path)}<span className="s">{r.path}</span></span>
+              </button>
+            ))}
+            <div className="cmp-sheet-sep" />
+            <div className="mob-folder-input">
+              <input type="text" value={folderPath} spellCheck={false}
+                placeholder="/absolute/path/on/the/desktop"
+                onChange={e => setFolderPath(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") openRemoteProject(folderPath); }} />
+              <button className="btn primary" disabled={folderBusy || !folderPath.trim()}
+                onClick={() => openRemoteProject(folderPath)}>open</button>
+            </div>
+            {folderError && <div className="cmp-sheet-notice" role="alert">{folderError}</div>}
+          </MobileSheet>
+        );
+      })()}
 
     </_AL_MdLinkCtx.Provider>
   );

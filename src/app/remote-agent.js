@@ -146,6 +146,16 @@
         respond(id, true, null);
         return;
       }
+      // Opening a folder on the phone: the native dialog (`open_project`)
+      // is UNSUPPORTED there, so the phone sends the path it picked from
+      // its own sheet and the desktop opens it exactly as its own
+      // "open folder…" would. The answer carries the new tab's id: the
+      // phone's sheet closes on it and reports on its absence.
+      if (name === "open_project_at" && jsHandlers) {
+        const opened = await jsHandlers.openProjectAt(args?.path ?? args);
+        respond(id, true, opened ?? null);
+        return;
+      }
 
       const value = await invoke(name, args || {});
       respond(id, true, value === undefined ? null : value);

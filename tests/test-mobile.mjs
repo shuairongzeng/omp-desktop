@@ -54,9 +54,21 @@ test("placeholder: touch strings, desktop null", () => {
   assert.equal(desk.placeholder("streaming"), null);
 });
 
+test("isRemote: true only when the phone shim set its boot flag", () => {
+  const win = windowStub();
+  new Function("window", src)(win);
+  assert.equal(win.OMP_MOBILE.isRemote(), false);
+  win.__OMP_REMOTE__ = true;
+  assert.equal(win.OMP_MOBILE.isRemote(), true);
+  // No flag at all (desktop, or a bare stub): false.
+  const bare = {};
+  new Function("window", src)(bare);
+  assert.equal(bare.OMP_MOBILE.isRemote(), false);
+});
+
 test("the exported object is frozen and complete", () => {
   const m = load(FINE);
-  assert.deepEqual(Object.keys(m).sort(), ["isTouch", "placeholder", "submitOnEnter"]);
+  assert.deepEqual(Object.keys(m).sort(), ["isRemote", "isTouch", "placeholder", "submitOnEnter"]);
   assert.ok(Object.isFrozen(m));
   assert.throws(() => { m.extra = 1; }, TypeError);
 });

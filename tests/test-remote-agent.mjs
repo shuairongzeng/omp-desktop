@@ -344,6 +344,24 @@ await check("close_all_tabs routes to the handler instead of Rust", async () => 
   assert.deepEqual(E.invokeCalls.map(c => c.name), ["remote_send"]);
 });
 
+await check("open_project_at routes the phone's folder pick to the desktop handler, never the native dialog", async () => {
+  const opened = [];
+  const E = load({ openProjectAt: async (path) => { opened.push(path); return "id-1"; } });
+  E.setInvoke(() => { throw new Error("must not run"); });
+  E.phone({ t: "cmd", id: 45, name: "open_project_at", args: { path: "/repo/x" } });
+  await drain();
+  assert.deepEqual(opened, ["/repo/x"]);
+  assert.deepEqual(E.invokeCalls.map(c => c.name), ["remote_send"]);
+  assert.deepEqual(lastRes(E), { t: "res", id: 45, ok: true, value: "id-1" });
+
+  // a handler failure answers false with the message, not a silent drop
+  const E2 = load({ openProjectAt: async () => { throw new Error("spawn refused"); } });
+  E2.setInvoke(() => { throw new Error("must not run"); });
+  E2.phone({ t: "cmd", id: 46, name: "open_project_at", args: { path: "/nope" } });
+  await drain();
+  assert.deepEqual(lastRes(E2), { t: "res", id: 46, ok: false, error: "spawn refused" });
+});
+
 await check("a pair_request control frame dispatches remote-pair-request on the window", async () => {
   const E = load();
   E.control({ t: "pair_request", token: "tok", device: "Pixel" });

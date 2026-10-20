@@ -85,6 +85,14 @@ function WindowChrome({
         </div>
         <span className={`dot ${connected === null ? "warn" : connected ? "live" : "error"}`}
           title={connected === null ? "connecting" : connected ? "connected" : "disconnected"} />
+        {/* The desktop's Ctrl+H clock lives in the hidden tab bar; the
+            phone's entry to the same full history modal (all projects,
+            searchable) is here. Same `omp:mobile` dispatch the drawer's
+            app menu uses, so app-live's one listener owns the mapping. */}
+        <button className="mobile-topbar-menu" aria-label="conversation history"
+          onClick={() => window.dispatchEvent(new CustomEvent("omp:mobile", { detail: { action: "open-history" } }))}>
+          <Icon name="clock" size={16} color="var(--fg-2)" />
+        </button>
       </div>
       {drawer && <div className="mobile-drawer-scrim" onClick={() => setDrawer(false)} />}
 

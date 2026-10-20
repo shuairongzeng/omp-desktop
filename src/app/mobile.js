@@ -54,6 +54,10 @@
     if (!isTouch()) return null;
     return kind === "streaming" ? "working… tap ⏹ to stop" : "message…";
   }
+  /** The remote-control handset runs this UI (the `__TAURI__` shim set the
+   *  flag at boot). Branches that must not reach for desktop-only
+   *  affordances — the native folder dialog above all — read this. */
+  const isRemote = () => typeof window !== "undefined" && window.__OMP_REMOTE__ === true;
 
-  window.OMP_MOBILE = Object.freeze({ isTouch, submitOnEnter, placeholder });
+  window.OMP_MOBILE = Object.freeze({ isTouch, submitOnEnter, placeholder, isRemote });
 })();

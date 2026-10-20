@@ -4661,6 +4661,15 @@
           await window.OMP_BRIDGE.closeSession(id);
         }
       },
+      // The phone's folder sheet picked a path: open it exactly as the
+      // desktop's own "open folder…" does (`openSession`), never through
+      // the native dialog the shim refuses.
+      async openProjectAt(path) {
+        if (typeof path !== "string" || !path.trim()) {
+          throw new Error("open_project_at: empty path");
+        }
+        return _openReported(path.trim(), { profile: _activeProfileId() });
+      },
     },
 
     /** Return the full keybinding payload for the active tab's profile.
@@ -4916,6 +4925,13 @@
      *  null when cancelled or the pick is unusable (logged). */
     async pickFolder() {
       return _invokeSafe("open_project", undefined, null);
+    },
+
+    /** Open a folder the phone picked from its own sheet (the native
+     *  dialog is unsupported there): the desktop's executor opens it as
+     *  its own "open folder…" would. Null on failure (the sheet reports). */
+    async openProjectAt(path) {
+      return _invokeSafe("open_project_at", { path }, null);
     },
 
     /** List project-relative file/dir paths matching `query`, for the
