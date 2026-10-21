@@ -67,6 +67,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Settings no longer blacks out the whole window when leaving the Remote section**: the pairing component's unmount cleanup referenced two state variables (`copied`, `copyTimer`) whose declarations were lost in a parallel-edit accident — leaving Remote threw a `ReferenceError`, and with no error boundary React unmounted the entire tree. Both declarations are restored; every section tab now switches cleanly (verified on desktop and phone by clicking through all 12 sections)
+
 - **Two phones in one room no longer receive each other's command replies**: the relay stamped every phone frame with its connection id but broadcast every response, so colliding per-phone request ids resolved against the wrong phone's pending call — responses now carry the origin id and are unicast to it (broadcast only as the legacy fallback)
 
 - **A desktop app restart no longer silently freezes a phone's stream**: the phone's event subscriptions lived in the desktop's webview and died with it; the phone reconnects its subscriptions on the desktop's return before re-syncing

@@ -210,6 +210,8 @@ function _SRR_Pair({ row, query }) {
   // Click-to-copy feedback for the pairing modal: "url" | "code" for 1.5s.
   // The revoke's armed row ("吊销?" for a second click): profile-menu.jsx's
   // inline-confirm pattern, timing out 3s after arming.
+  const [copied, setCopied] = React.useState(null);
+  const copyTimer = React.useRef(null);
   const [armedRevoke, setArmedRevoke] = React.useState(null);
   const revokeTimer = React.useRef(null);
   const armRevoke = (hash) => {
