@@ -18,7 +18,7 @@
    ═════════════════════════════════════════════════════════════════════ */
 
 const {
-  Icon, ChatView, Composer, CommandBridge, WindowChrome, TabBar, SubagentPane, ProjectSidebar, EmptyWorkspace,
+  Icon, ChatView, Composer, CommandBridge, WindowChrome, TabBar, TabMenu, SubagentPane, ProjectSidebar, EmptyWorkspace,
   StatusBar, AmbientRail, ConversationTree, PlanKanban, HistoryModal, GitBrowser, FilePreview, ApprovalRulesPanel, UsageStatsPanel, PromptHistoryModal, UpdateModal, useTweaks, QuotePopover,
   SettingsPage, ConfirmCloseDialog, RemotePairDialog,
   useWidgets, WidgetCard, WidgetErrorCard, WidgetApprovalCard, WidgetBoundary,
@@ -30,7 +30,7 @@ const {
 } = window;
 const { routeSubmit: _routeSubmit } = window.OMP_SLASH;
 const { mergeIntoMessage: _mergeBrowserChips, browserCommand: _browserCommand, MIN_WIDTH: _AL_BROWSER_MIN } = window.OMP_BROWSER;
-const { recentRows, groupKey, moveGroup, moveMember, moveTab, shiftGroup, basename: _AL_basename } = window.OMP_PROJECT_NAV;
+const { recentRows, groupKey, moveGroup, moveMember, moveTab, shiftGroup, closeSet, basename: _AL_basename } = window.OMP_PROJECT_NAV;
 const {
   entryOf, updateEntry, pruneEntries, seedEntries,
   PLAN_IDLE, togglePlan, enterPlan, approvePlan, annotatePlan, markPlanSent,
@@ -101,6 +101,9 @@ function App() {
   const [trimmedCount,  setTrimmedCount]  = React.useState(0);
   const [windowed,     setWindowed]      = React.useState(false);
   const [windowCursor, setWindowCursor]  = React.useState(null);
+  // A tab's right-click menu (design/tab-menu.jsx): { tabId, x, y, counts }
+  // while open; the bar's onContextMenu fills it, an action drains it.
+  const [tabMenu, setTabMenu] = React.useState(null);
   const [thinkingLevel, setThinkingLevel] = React.useState(null);
   const [ctx,           setCtx]           = React.useState(data.ctx);
   const [kanban,        setKanban]        = React.useState([]);
@@ -955,6 +958,19 @@ React.useEffect(() => {
         : moveMember(sessions, id, targetId, !after);
     if (order) bridge?.reorderTabs(order);
   };
+  // A tab's right-click menu: counts come from the registry order; the
+  // sets themselves are computed by closeSet at action time.
+  const openTabMenu = (id, x, y) => {
+    const i = sessions.findIndex(t => t.id === id);
+    if (i < 0) return;
+    setTabMenu({ tabId: id, x, y, counts: {
+      others: sessions.length - 1, left: i, right: sessions.length - 1 - i } });
+  };
+  const handleTabMenuAction = (action, id) => {
+    if (action === "close") { handleCloseTab(id); return; }
+    const ids = closeSet(sessions, id, action);
+    if (ids.length) bridge?.closeSessions(ids);
+  };
   // Keyboard move: the active tab's project, one place along the tab bar.
   const shiftActiveProject = delta => {
     if (!activeProject.id) return;
@@ -1145,6 +1161,7 @@ React.useEffect(() => {
             onClose={handleCloseTab}
             onRename={handleRenameTab}
             onReorder={handleReorder}
+            onMenu={openTabMenu}
             sidebarOpen={showSidebar}
             onToggleSidebar={toggleSidebar}
             onHistory={() => openHistory(activeProject?.path)}
@@ -1466,6 +1483,10 @@ React.useEffect(() => {
 
       {closeConfirm && (
         <ConfirmCloseDialog confirm={closeConfirm} onAnswer={handleCloseAnswer} />
+      )}
+      {tabMenu && (
+        <TabMenu menu={tabMenu} onAction={handleTabMenuAction} onClose={() => setTabMenu(null)} />
+      )}
       )}
 
       <RemotePairDialog />

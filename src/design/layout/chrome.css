@@ -360,6 +360,38 @@
   color: var(--fg-4);
   font-size: var(--d-text-xs);
 }
+/* ── Tab-bar density stages (app/tab-bar.js) ────────────────────────────
+   The flat bar (#40) shows one tab per conversation, so a long session
+   list runs out of width. Four stages trade detail for visibility: 0
+   full (folder + title + profile chip), 1 compact (title capped, chip
+   gone), 2 icon-only (dot + folder, name in the tooltip), 3 = stage 2
+   plus horizontal scroll with edge fades on the wrapper. */
+.tabs-wrap { position: relative; flex: 1; min-width: 0; }
+.tabs[data-stage="1"] .tab { min-width: 96px; }
+.tabs[data-stage="1"] .tab-name { max-width: 110px; }
+.tabs[data-stage="1"] .tab-profile { display: none; }
+.tabs[data-stage="2"] .tab, .tabs[data-stage="3"] .tab { min-width: 44px; padding: 0 8px; gap: 6px; }
+.tabs[data-stage="2"] .tab-name, .tabs[data-stage="3"] .tab-name,
+.tabs[data-stage="2"] .tab-profile, .tabs[data-stage="3"] .tab-profile { display: none; }
+.tabs[data-stage="3"] { overflow-x: auto; }
+.tabs-wrap[data-fade="1"]::before, .tabs-wrap[data-fade="1"]::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: 28px;
+  pointer-events: none; z-index: 2;
+}
+.tabs-wrap[data-fade="1"]::before { left: 0; background: linear-gradient(90deg, var(--bg-window), transparent); }
+.tabs-wrap[data-fade="1"]::after { right: 0; background: linear-gradient(270deg, var(--bg-window), transparent); }
+/* A tab's right-click menu (design/tab-menu.jsx): the shared popover
+   surface with a count on the bulk rows. */
+.tab-menu { width: 196px; }
+.tab-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; padding: 6px 8px;
+  appearance: none; border: 0; background: transparent; border-radius: var(--r-1);
+  font-size: var(--d-text-sm); color: var(--fg-2); text-align: left; cursor: pointer;
+}
+.tab-menu-item:hover:not([disabled]) { background: var(--bg-hover); color: var(--fg); }
+.tab-menu-item[disabled] { opacity: 0.45; cursor: default; }
+.tab-menu-count { color: var(--fg-4); font-size: var(--d-text-xs); }
 /* Phone top bar + session strip (see the ≤760px block at the end): markup
    is always rendered by chrome.jsx, hidden on desktop by these bases. */
 .mobile-topbar, .mobile-session-strip { display: none; }
@@ -437,7 +469,7 @@
 
   /* Desktop chrome and tab bar are gone on a phone: the topbar and the
      session strip above replace them. */
-  .chrome, .tabs { display: none; }
+  .chrome, .tabs-wrap { display: none; }
 
   /* Status bar, cut to three cells: connection dot · todo · approvals.
      The st-panel buttons (git, tree, browser, stats, terminal, settings)

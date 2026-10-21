@@ -161,6 +161,10 @@
        window.OMP_PROJECT_NAV at top level and live.js calls it, so it must
        load before all of them. -->
   <script src="app/project-nav.js"></script>
+  <!-- Tab-bar density stages: how much room each tab gets decides what
+       it may show (full / compact / icon-only / scroll). Dependency-free
+       IIFE; design/chrome.jsx reads window.OMP_TAB_BAR at effect time. -->
+  <script src="app/tab-bar.js"></script>
 
   <!-- File preview (issue #39): which file and lines a read card or a chat
        link points at, project confinement, highlighted lines. IIFE that
@@ -438,6 +442,11 @@
        destructure window.TabRunDot / window.TabLabel at top level, so
        this must load before both. -->
   <script type="text/babel" src="design/ui/tab-bits.jsx"></script>
+  <!-- A tab's right-click menu (Close / Close other tabs / Close tabs to
+       the left / right): app-live.jsx renders window.TabMenu at the root;
+       chrome.jsx only reports the right-click, so this need only precede
+       app-live.jsx — it sits with the other chrome pieces. -->
+  <script type="text/babel" src="design/tab-menu.jsx"></script>
   <script type="text/babel" src="design/chrome.jsx"></script>
   <!-- Project sidebar (#27); reads window.TabRunDot / window.TabLabel
        (design/ui/tab-bits.jsx) and window.OMP_PROJECT_NAV at top level. -->

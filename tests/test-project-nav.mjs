@@ -448,4 +448,41 @@ check("restoreReport over an empty restore yields nothing", () => {
   assert.deepEqual(N.restoreReport([]), { restored: [], notes: [] });
 });
 
+// ── closeSet (tab context menu bulk closes) ───────────────────────────────
+
+check("closeSet 'others' is every tab but the anchor, in registry order", () => {
+  const tabs = [tab("a", "/a"), tab("b", "/b"), tab("c", "/c"), tab("d", "/d")];
+  assert.deepEqual(N.closeSet(tabs, "b", "others"), ["a", "c", "d"]);
+});
+
+check("closeSet 'left' and 'right' split the registry at the anchor", () => {
+  const tabs = [tab("a", "/a"), tab("b", "/b"), tab("c", "/c"), tab("d", "/d")];
+  assert.deepEqual(N.closeSet(tabs, "c", "left"), ["a", "b"]);
+  assert.deepEqual(N.closeSet(tabs, "c", "right"), ["d"]);
+});
+
+check("closeSet at either end is empty on the open side", () => {
+  const tabs = [tab("a", "/a"), tab("b", "/b"), tab("c", "/c"), tab("d", "/d")];
+  assert.deepEqual(N.closeSet(tabs, "a", "left"), []);
+  assert.deepEqual(N.closeSet(tabs, "d", "right"), []);
+});
+
+check("closeSet 'others' of a single-tab registry closes nothing", () => {
+  assert.deepEqual(N.closeSet([tab("a", "/a")], "a", "others"), []);
+});
+
+check("closeSet with an unknown anchor or mode closes nothing", () => {
+  const tabs = [tab("a", "/a"), tab("b", "/b"), tab("c", "/c"), tab("d", "/d")];
+  assert.deepEqual(N.closeSet(tabs, "zz", "others"), []);
+  assert.deepEqual(N.closeSet(tabs, "b", "all"), []);
+  assert.deepEqual(N.closeSet([], "a", "others"), []);
+});
+
+check("closeSet never includes the anchor", () => {
+  const tabs = [tab("a", "/a"), tab("b", "/b"), tab("c", "/c"), tab("d", "/d")];
+  for (const mode of ["others", "left", "right"]) {
+    assert.ok(!N.closeSet(tabs, "c", mode).includes("c"));
+  }
+});
+
 console.log(`project-nav: ${passed} checks passed`);

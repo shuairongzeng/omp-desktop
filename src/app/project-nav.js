@@ -143,6 +143,19 @@
     return rest.every((x, i) => x === ids[i]) ? null : rest;
   }
 
+  /** Ids to close when a tab context menu asks for a bulk close around
+   *  `anchorId`: "others" = every tab but the anchor, "left" = every tab
+   *  before it in registry order, "right" = every tab after it. Unknown
+   *  anchor or unknown mode: []. The anchor itself never appears. */
+  function closeSet(tabs, anchorId, mode) {
+    const at = tabs.findIndex(t => t.id === anchorId);
+    if (at < 0) return [];
+    if (mode === "others") return tabs.filter((_, i) => i !== at).map(t => t.id);
+    if (mode === "left") return tabs.slice(0, at).map(t => t.id);
+    if (mode === "right") return tabs.slice(at + 1).map(t => t.id);
+    return [];
+  }
+
   /** Tab ids with project `key` swapped one place left (`delta` -1) or right
    *  (+1) in the tab bar, for the keyboard move (#40); `null` at either end. */
   function shiftGroup(tabs, key, delta) {
@@ -331,6 +344,7 @@
     moveGroup,
     moveMember,
     moveTab,
+    closeSet,
     shiftGroup,
     isReorderOf,
     tabLabel,

@@ -5236,6 +5236,23 @@
       return true;
     },
 
+    /** Close several tabs at once (the tab menu's bulk actions), after one
+     *  confirmation when any of them is busy and Settings → Session asks.
+     *  Resolves to how many were closed. */
+    async closeSessions(ids) {
+      const list = [...new Set(ids)].filter(id => sessionRegistry.has(id));
+      if (list.length === 0) return 0;
+      const confirm = PREFS.bulkCloseConfirm(sessionPrefs, _sessionsView(), list);
+      if (confirm && !(await _askClose(confirm))) return 0;
+      let closed = 0;
+      for (const id of list) {
+        if (!sessionRegistry.has(id)) continue; // closed meanwhile
+        await window.OMP_BRIDGE.closeSession(id);
+        closed += 1;
+      }
+      return closed;
+    },
+
     /** Answer the busy-close confirmation on screen (snapshot
      *  `closeConfirm`): `true` closes / quits, `false` keeps everything. */
     resolveCloseConfirm(ok) {

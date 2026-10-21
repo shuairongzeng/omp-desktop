@@ -259,6 +259,7 @@ function TabBar({
   profiles = [], appVersion, updateVersion, onUpdate, onCheckUpdate,
   settings, onSelectSettings, onCloseSettings,
   terminalDirty,
+  onMenu,
 }) {
   // Tabs can run under different profiles, so a tab whose profile is not the
   // built-in one is labelled with it — otherwise two tabs on the same folder
@@ -289,8 +290,28 @@ function TabBar({
     if (id === "__settings__") onSelectSettings?.();
     else if (id) onSelect?.(id);
   };
+  // Density stages (app/tab-bar.js): how much room each tab gets decides
+  // what it may show — full, compact, icon-only, then scroll with edge
+  // fades. Recomputed on resize and whenever the tab count changes.
+  const [stage, setStage] = React.useState(0);
+  React.useEffect(() => {
+    const el = barRef.current;
+    if (!el) return undefined;
+    const measure = () => setStage(window.OMP_TAB_BAR.stage(el.clientWidth, projects.length));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [projects.length]);
+  // A vertical wheel over the bar scrolls it sideways (trackpads already
+  // send deltaX; a mouse wheel would otherwise do nothing).
+  const onWheel = e => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    barRef.current?.scrollBy({ left: e.deltaY });
+  };
   return (
-    <div ref={barRef} className="tabs" role="tablist" aria-label="projects" onPointerDown={reorder.onPointerDown}
+    <div className="tabs-wrap">
+    <div ref={barRef} data-stage={stage} onWheel={onWheel} className="tabs" role="tablist" aria-label="projects" onPointerDown={reorder.onPointerDown}
       onKeyDown={e => tablistKeyNav(e, selectById)}>
       <button className={`tab-add ${sidebarOpen ? "on" : ""}`}
         title={`project sidebar (${hintFor("desktop.sidebar.toggle", "Ctrl+B")})`}
@@ -319,6 +340,7 @@ function TabBar({
             style={sameProject ? { "--tab-seam": p.color } : undefined}
             {...tabClickProps(() => onSelect(p.id), () => onClose?.(p.id))}
             // The first click of the pair already selected the tab.
+            onContextMenu={e => { e.preventDefault(); onMenu?.(p.id, e.clientX, e.clientY); }}
             onDoubleClick={e => { if (onRename && !e.target.closest(".tab-close")) setRenaming(p.id); }}>
             <span className="tab-bar-mark" style={{ background: active ? p.color : "transparent" }} />
             {!sameProject && <Icon name="folder" size={11} color={active ? p.color : "var(--fg-4)"} />}
@@ -376,6 +398,7 @@ function TabBar({
           {appVersion ? `v${appVersion}` : "—"}
         </button>
       </div>
+    </div>
     </div>
   );
 }

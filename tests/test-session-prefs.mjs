@@ -97,6 +97,27 @@ check("tabCloseConfirm: idle tab, unknown tab or setting off close at once", () 
   assert.equal(P.tabCloseConfirm(OFF, sessions, "a"), null);
 });
 
+// ── bulk close (tab menu) ───────────────────────────────────────────────
+check("bulkCloseConfirm: a busy member of the set asks, naming only busy ones", () => {
+  const c = P.bulkCloseConfirm(ON, [tab("a", "running", "alpha"), tab("b", "idle"), tab("c", "retrying", "gamma")], ["a", "b", "c"]);
+  assert.equal(c.kind, "bulk");
+  assert.deepEqual(c.ids, ["a", "b", "c"]);
+  assert.deepEqual(c.tabs.map(t => t.name), ["alpha", "gamma"]);
+  assert.match(c.confirmLabel, /close 3 tabs/);
+  assert.match(c.title, /Close 3 tabs/);
+});
+check("bulkCloseConfirm: singular wording for a one-tab set", () => {
+  const c = P.bulkCloseConfirm(ON, [tab("a", "running", "alpha"), tab("b", "idle")], ["a"]);
+  assert.match(c.title, /Close 1 tab\?/);
+  assert.match(c.confirmLabel, /close 1 tab/);
+});
+check("bulkCloseConfirm: no busy member, setting off or empty set close at once", () => {
+  const sessions = [tab("a", "running"), tab("b", "idle")];
+  assert.equal(P.bulkCloseConfirm(ON, sessions, ["b"]), null);
+  assert.equal(P.bulkCloseConfirm(OFF, sessions, ["a", "b"]), null);
+  assert.equal(P.bulkCloseConfirm(ON, sessions, []), null);
+});
+
 // ── quit ─────────────────────────────────────────────────────────────────
 check("quitConfirm: lists every busy tab, singular and plural wording", () => {
   const one = P.quitConfirm(ON, [tab("a", "running"), tab("b", "idle")]);

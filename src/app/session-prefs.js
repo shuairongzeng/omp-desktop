@@ -72,6 +72,26 @@
     };
   }
 
+  /** The confirmation a bulk close (tab menu's "close other/left/right")
+   *  needs when any of `ids` is busy, or null to close at once. */
+  function bulkCloseConfirm(prefs, sessions, ids) {
+    if (!prefs?.confirmBusyClose) return null;
+    const set = new Set(ids);
+    const tabs = busyTabs(sessions).filter(t => set.has(t.id));
+    if (tabs.length === 0) return null;
+    const one = tabs.length === 1;
+    return {
+      kind: "bulk",
+      ids,
+      title: ids.length === 1 ? "Close 1 tab?" : `Close ${ids.length} tabs?`,
+      body: one
+        ? "One of these tabs' agent is still at work. Closing the tabs stops it."
+        : `${tabs.length} of these tabs' agents are still at work. Closing the tabs stops them.`,
+      tabs,
+      confirmLabel: `close ${ids.length} tabs`,
+    };
+  }
+
   /** The confirmation quitting needs, or null to quit at once. */
   function quitConfirm(prefs, sessions) {
     if (!prefs?.confirmBusyClose) return null;
@@ -90,6 +110,6 @@
   }
 
   window.OMP_SESSION_PREFS = Object.freeze({
-    KEYS, fromTweaks, changedKeys, busyTabs, closeGuardArmed, tabCloseConfirm, quitConfirm,
+    KEYS, fromTweaks, changedKeys, busyTabs, closeGuardArmed, tabCloseConfirm, bulkCloseConfirm, quitConfirm,
   });
 })();
