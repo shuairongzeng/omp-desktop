@@ -366,7 +366,11 @@
    full (folder + title + profile chip), 1 compact (title capped, chip
    gone), 2 icon-only (dot + folder, name in the tooltip), 3 = stage 2
    plus horizontal scroll with edge fades on the wrapper. */
-.tabs-wrap { position: relative; flex: 1; min-width: 0; }
+/* The wrapper is a flex item of the window's COLUMN: it must not grow
+   vertically (the old `flex: 1` stretched it over the workspace), and
+   needs no flex-basis — the column's stretch already makes it full
+   width for the stage-3 fades. */
+.tabs-wrap { position: relative; flex: none; }
 .tabs[data-stage="1"] .tab { min-width: 96px; }
 .tabs[data-stage="1"] .tab-name { max-width: 110px; }
 .tabs[data-stage="1"] .tab-profile { display: none; }
