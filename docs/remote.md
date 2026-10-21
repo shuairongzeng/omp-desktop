@@ -33,7 +33,7 @@ scp target/release/omp-relay your-server:/usr/local/bin/
 
 在仓库里 `npm run build:frontend` 生成 `dist/`，把 `dist/` 拷到 `/etc/omp-relay/public/`（必须是预编译产物——relay 的严格 CSP 不放行 `src/` 需要的浏览器内 Babel）。
 
-systemd 单元与 Caddy/nginx 的 TLS + WebSocket 反代配置见 `relay/README.md`。**TLS 必须**（配对码走 URL，令牌走 header，明文 HTTP 等于裸奔）。
+systemd 单元与 Caddy/nginx 的 TLS + WebSocket 反代配置见 `relay/README.md`。**TLS 必须**（配对码走 URL，令牌走 WS 握手的 query string——浏览器 WebSocket 无法自定义 header，只能如此；令牌不会落进 relay 自身日志，但反代层默认会把完整 URL 记进 access log，建议关掉或改 log_format 去 query，明文 HTTP 等于裸奔）。
 
 ## 桌面端设置
 

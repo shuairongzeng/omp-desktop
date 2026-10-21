@@ -216,6 +216,70 @@ check("the key bindings row is found by any shortcut action's name or id", () =>
   }
 });
 
+check("the corpus merges the section title, group name and src file name", () => {
+  // Section title: "appearance" hits every visible row of that section.
+  const app = S.search("appearance", vals());
+  assert.deepEqual(app.groups.flatMap(g => g.rows.map(r => r.id)),
+    ["theme", "accent", "density", "fontSize", "monoChat", "chatWidth", "textBrightness", "custom:bgImage", "glassEffect"]);
+  // Group name: "updates" is not on any row's own text.
+  assert.ok(S.search("updates", vals()).groups.flatMap(g => g.rows).some(r => r.id === "updateCheck"));
+  // The src file name, verbatim and without ".json".
+  assert.deepEqual(S.search("terminal.json", vals()).groups.flatMap(g => g.rows.map(r => r.id)), ["custom:shell"]);
+  assert.deepEqual(S.search("keybindings", vals()).groups.flatMap(g => g.rows.map(r => r.id)), ["custom:shortcuts"]);
+});
+
+check("the known misses now hit: theme names, CJK terms, chord keywords", () => {
+  assert.deepEqual(S.search("midnight", vals()).groups.flatMap(g => g.rows.map(r => r.id)), ["theme"], "theme name");
+  for (const [term, id, why] of [
+    ["字体", "fontSize", "CJK font"], ["通知", "notifyDone", "CJK notification"], ["外观", "theme", "CJK appearance"],
+    ["主题", "theme", "CJK theme"], ["终端", "custom:shell", "CJK terminal"], ["浏览器", "custom:chromium", "CJK browser"],
+    ["手机", "custom:remoteMain", "CJK phone"], ["远程", "custom:remoteMain", "CJK remote"], ["快捷键", "custom:shortcuts", "CJK shortcut"],
+    ["审批", "custom:approvalMode", "CJK approval"], ["历史", "promptHistoryLimit", "CJK history"], ["更新", "updateCheck", "CJK update"],
+  ]) assert.ok(S.search(term, vals()).groups.flatMap(g => g.rows).some(r => r.id === id), `${why} (${term})`);
+  // 通知 lands on both notify rows.
+  assert.deepEqual(S.search("通知", vals()).groups.flatMap(g => g.rows.map(r => r.id)), ["notifyDone", "notifyAsk"]);
+  // "ctrl+enter" as a submitKey option label, "mode" as a theme keyword.
+  assert.deepEqual(S.search("ctrl+enter", vals()).groups.flatMap(g => g.rows.map(r => r.id)), ["submitKey"]);
+  assert.ok(S.search("mode", vals()).groups.flatMap(g => g.rows).some(r => r.id === "theme"));
+  // Option labels are corpus: "yolo" names a choice of the approval mode.
+  assert.ok(S.search("yolo", vals()).groups.flatMap(g => g.rows).some(r => r.id === "custom:approvalMode"));
+});
+
+check("the shortcut action names no longer create false positives", () => {
+  // "port" is a substring of an action label ("Export session to HTML")
+  // but not a word of one: no hit at all now.
+  assert.equal(S.search("port", vals()).total, 0);
+  // A multi-token query where every token is an action word still finds
+  // the Shortcuts row, after any real match of the same group.
+  const close = S.search("close tab", vals());
+  assert.ok(close.groups.flatMap(g => g.rows.map(r => r.id)).includes("custom:shortcuts"), "all action words still match");
+  // A multi-token query where one token is not an action word does not
+  // pull the Shortcuts row in through moreKw.
+  assert.ok(!S.search("sidebar banana", vals()).groups.flatMap(g => g.rows).some(r => r.id === "custom:shortcuts"));
+  // moreKw matches are ordered after real matches of the same group.
+  const toggle = S.search("Toggle project sidebar", vals());
+  const toggleGroup = toggle.groups.find(g => g.rows.some(r => r.id === "custom:shortcuts"));
+  assert.equal(toggleGroup.rows[toggleGroup.rows.length - 1].id, "custom:shortcuts", "the moreKw-only row comes last");
+});
+
+check("notification toggles are TWEAK_DEFAULTS-backed Session rows", () => {
+  assert.equal(D.notifyDone, true);
+  assert.equal(D.notifyAsk, true);
+  for (const key of ["notifyDone", "notifyAsk"]) {
+    const r = row(key);
+    assert.equal(r.type, "toggle", key);
+    assert.equal(r.label, key === "notifyDone" ? "Notify when a reply completes" : "Notify when approval is needed");
+    assert.ok(/background/.test(r.desc), `${key} desc says background-only`);
+  }
+  // They sit in the Session section, so its reset and badge count them.
+  assert.ok(S.SECTIONS.find(s => s.id === "session").groups.flatMap(g => g.rows).some(r => r.id === "notifyDone"));
+  assert.equal(S.search("notify", vals()).total, 2);
+});
+
+check("the reopen-tabs desc states when the saved list is forgotten", () => {
+  assert.ok(row("restoreTabs").desc.includes("Turning this off forgets the saved tab list at your next tab change."));
+});
+
 // ---- design/settings/controls.jsx: the mark follows the tokenised AND --
 // SettingsMark is compiled as index.html's Babel does (test-goal.mjs's
 // pattern) with a React.createElement stand-in, so the tree is inspected

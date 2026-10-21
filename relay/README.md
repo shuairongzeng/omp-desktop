@@ -46,7 +46,11 @@ Log level via `RUST_LOG` (default `info`). Tokens are never logged.
 ## TLS (required)
 
 The relay itself speaks plain HTTP/WebSocket and must sit behind a TLS
-terminator — pairing codes ride in URLs and tokens in query strings.
+terminator. Pairing codes ride in URLs and tokens in the WS handshake's
+query string — browsers cannot set custom headers on a WebSocket, so the
+query string is the only credential channel. The relay never logs tokens,
+but a reverse proxy WILL write the full request URL (query included) to
+its access log unless configured not to; see the nginx directives below.
 
 **Caddy** (`Caddyfile`):
 
@@ -63,6 +67,14 @@ server {
     listen 443 ssl;
     server_name relay.example.com;
     # ssl_certificate … / ssl_certificate_key …
+
+    # Tokens ride the WS query string: either silence the access log
+    # entirely (simplest)…
+    access_log off;
+    # …or keep it with a format that drops $args (the query string):
+    # log_format noquery '$remote_addr [$time_local] "$request_method $uri" '
+    #                    '$status $body_bytes_sent';
+    # access_log /var/log/nginx/omp-relay.log noquery;
 
     location / {
         proxy_pass http://127.0.0.1:8787;
@@ -96,6 +108,6 @@ WantedBy=multi-user.target
 ## Test
 
 ```bash
-cargo test            # unit + integration (rooms, pairing, revoke, oversize)
+cargo test            # unit + integration (rooms, pairing, revoke, oversize, res unicast, hello, phone names)
 curl -s http://127.0.0.1:8787/healthz   # ok
 ```

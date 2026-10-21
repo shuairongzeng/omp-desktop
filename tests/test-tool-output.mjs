@@ -18,7 +18,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ctx = vm.createContext({ console });
 ctx.window = ctx;
 vm.runInContext(readFileSync(join(root, "src", "adapter.js"), "utf8"), ctx, { filename: "adapter.js" });
-const { buildToolStartCard, finalizeToolCard } = ctx;
+const { buildToolStartCard, finalizeToolCard, updateToolCard } = ctx;
 
 let passed = 0;
 function check(label, fn) {
@@ -72,11 +72,33 @@ check("an empty result keeps the streamed lines", () => {
   assert.equal(shown(c), "streamed");
 });
 
-check("the card shows the last 20 lines; the copy text keeps them all", () => {
+check("the card keeps every line (totalLines attached); the copy text is identical", () => {
   const lines = Array.from({ length: 35 }, (_, i) => `line ${i + 1}`);
   const c = finish(lines.join("\n") + "\n\n\nWall time: 0.04 seconds", { wallTimeMs: 40 });
   assert.equal(c.outputText, lines.join("\n"));
-  assert.equal(shown(c), [...lines.slice(-17), "", "", "Wall time: 0.04 seconds"].join("\n"));
+  // Full output: all 35 lines plus the two blank separator lines and the
+  // notice; totalLines counts the raw string's split (trailing "" not
+  // present — the text does not end with a newline).
+  assert.equal(shown(c), [...lines, "", "", "Wall time: 0.04 seconds"].join("\n"));
+  assert.equal(c.output.length, 38);
+  assert.ok(c.output.every(l => l.totalLines === 38), "totalLines on every line");
+});
+
+check("a trailing newline's empty last line counts in totalLines like split does", () => {
+  const c = finish("a\nb\n");
+  assert.equal(shown(c), "a\nb\n");
+  assert.ok(c.output.every(l => l.totalLines === 3));
+});
+
+check("streaming keeps the full split once a window slice is needed", () => {
+  // updateToolCard with a >32KB accumulated blob: still line objects with
+  // the true totalLines, from the windowed tail.
+  const huge = Array.from({ length: 6000 }, (_, i) => `line-${i}`).join("\n");
+  const card2 = { kind: "tool", tool: "bash", status: "running", output: [] };
+  const up = updateToolCard(card2, { partialResult: { details: {}, content: [{ type: "text", text: huge }] } });
+  assert.ok(up.output.length > 0);
+  assert.equal(up.output[0].totalLines, 6000);
+  assert.equal(up.output[up.output.length - 1].line, "line-5999");
 });
 
 check("non-text result blocks are ignored", () => {

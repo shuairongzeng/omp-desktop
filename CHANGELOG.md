@@ -8,6 +8,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Notifications when a tab needs you** (Settings → Session): a turn finishing or a tool approval arriving fires an OS notification while the window is hidden or the tab is in the background (tauri-plugin-notification, `app/notify.js` — `notifyDone`/`notifyAsk` toggles, both on by default), and the window title now carries a "(N 待审批)" count across all tabs, not just the active one
+
+- **Cross-session prompt history**: prompts are now archived to `prompt-history.json` (newest first, deduplicated, 200 cap) — the prompt history modal (Ctrl+↑) gains a "this tab / all sessions" toggle, so a prompt polished in one project is recallable in any other, across restarts
+
+- **History modal: delete, rename, and search the content** — saved conversations can be deleted (moved to a `.trash` folder next to the session file, recoverable), renamed inline (click the title), and the search box now matches the conversation *text*, not just the title, with the matching snippet shown
+
+- **Failed turns can be resent**: a failed reply card has a "resend" button that replays that turn's prompt
+
+- **Terminal touch keypad** (phone): Esc / sticky-Ctrl (so Ctrl+C works — interrupt a runaway command) / arrows / Tab / paste, plus the panel no longer auto-focuses on touch (the keyboard covered the output you opened it for), touch-sized drag handle and close button, and a double-tap toggles half-screen height
+
+- **Image lightbox pinch zoom** on touchscreens, with double-tap toggling fit ↔ 2.5×
+
+- **Ctrl+L focuses the composer** from anywhere (the main interaction had no keyboard path back)
+
+- **Settings search actually finds things**: section titles, group names, `src` file names, option labels and theme names are indexed (searching "midnight", "ctrl+enter", "terminal.json" works now), twelve high-frequency Chinese keywords are mapped (字体/通知/终端/手机/快捷键/审批/历史…), and the Shortcuts row no longer false-matches generic words like "port"
+
+- **Settings → footer: "open settings folder"** opens the app's config directory (where terminal.json, approval-mode.json etc. live)
+
+- **qrcode.js loads lazily** — 57 KB off every startup; it is injected the first time the pairing QR opens
+
 - **Pair by link, not just by scan** — the pairing modal's QR code, the
   pairing URL line under it and the pairing code are all click-to-copy:
   send the link (`https://<relay>/p#<token>`) to the phone, it pairs on
@@ -16,66 +36,130 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   browser.
 
 - **Remote control from your phone** (Settings → Remote, `docs/remote.md`): the app connects outbound-only to a small self-hosted relay (`relay/`, a single Rust binary that also serves the phone UI); pair by scanning a QR code and approving on the desktop. The phone runs the same UI — tabs, streaming chat, tool approvals, terminal, git browser — through a WebSocket shim that stands in for `__TAURI__`, with the desktop's own webview as the executor (`docs/architecture/remote-control.md`). `start_session` is now idempotent on a live session so a remote client attaching to the desktop's tabs can never restart its agents; narrow screens get an overlay-drawer sidebar and full-width panels (`mobile.css`). Self-signed relay certs are supported by TOFU pinning (Settings → Remote → 信任证书, with the SHA-256 fingerprint shown); the connector surfaces the real disconnect reason in its status instead of hanging silently, and pins the `ring` rustls provider explicitly (the process also compiles aws-lc-rs via reqwest, and rustls refuses to choose between two providers)
+
 - **Chat width setting** (Settings → Appearance → Text): `standard` keeps the 80ch reading column, `wide` (new default) raises it to 120ch and lets user bubbles grow to 1200px, `full` removes the caps so messages follow a stretched window (verified live at 1440px: 539px → 809px → 1185px)
+
 - **Phone-first message flow (mobile v1)**: on a touchscreen the pending tool-approval prompt renders as a bottom sheet (`window.MobileSheet`, `dismissOnScrim=false`, title "approval required") with vertical 48px buttons — solid-accent Approve, rose-outline Deny, remember-rules as text links; copy buttons are always visible with 40px hit areas (the hover reveal is now `(hover: hover)`-scoped so iOS never sticky-hovers them); card bodies lose their nested scroll caps (the collapse system's 3-line preview owns density, the chat scroll is the only scroller); bash output wraps anywhere, code blocks read at 12px with a right-edge scroll mask; diffs shrink the line-number gutter to 36px and drop the mouse-only scrub rail; a pending ask turns the "Jump to latest" button into a solid-amber "⚠ approval needed" alert. Desktop sees only the amber-tinted jump-button state; every other rule is `@media (max-width: 760px)`/`(hover: …)`-gated (regression: `tests/test-mobile-chat.mjs`)
+
 - **Phone: full conversation history and folder opening** (Settings → Remote handsets): the phone top bar gains the desktop's Ctrl+H clock — the searchable, all-projects history modal (92vh, 44px rows at phone width) — and "open folder…" opens a bottom sheet of the desktop's recent folders plus a typed path instead of dead-ending on the native dialog the handset cannot show; the pick travels as `open_project_at` and the desktop opens it exactly as its own picker would
+
 - **Phone: the folder sheet browses the desktop's disk** (Settings → Remote handsets): "open folder…" now opens with a directory browser — the device's roots (drives on Windows), tap a folder to descend, back to the parent, and "open this folder" commits; the listing is one bounded read per step from the new read-only `remote_list_dirs` command (subdirectories only, hidden entries filtered, 500-row cap, cross-platform via pure std). The recent-folders rows and the typed path stay as escapes
+
 - **Phone: the tab list follows the desktop live** (Settings → Remote handsets): a folder opened from the phone now appears and becomes the active conversation at once — the sheet syncs the desktop's tab table and activates the returned tab id before it closes — and every later desktop-side open or close reaches the phone through a new `omp://tabs-changed` announcement (the phone's registry was a one-shot attach snapshot before, so a new project stayed invisible until a manual refresh). The merge is the new pure `OMP_REMOTE_TABS.mergeSnapshot` (`tests/test-remote-tabs.mjs`)
+
 - **Windowed transcripts over narrow pipes** (phone remote control + desktop): a transcript fetch used to push the whole session file — hundreds of MB for long conversations — through omp and over the wire, stalling every operation behind it (the phone's symptom: seconds of dead air per tab switch over a 3 Mbit/s uplink). `get_messages` now reads ONE window straight from the tab's session file in Rust (`remote_transcript_window`: byte-offset scan with a parse-free row scanner, tail seek for the newest page, 4000-char block caps, 300 KB wire budget) and the chat view grows a "load older messages…" row that pages up with the reading position anchored; streaming output is untouched. The relay's nginx now gzips the phone UI's static assets (3.5 MB → ~700 KB). `tests/test-transcript-window.mjs` (cursor math), 7 Rust unit tests, one `test-remote-agent.mjs` routing check
+
 - **Phone: projected replays and gzipped reply values** (Settings → Remote handsets): the journal replay of a busy tab (hundreds of KB of chunked stdout envelopes the handset never reassembles) and every large reply value now stay off the raw wire — `remote_replay_events` projects the ring (drops `rpc_chunk`, caps at the newest 400, marks `dropped` for the windowed refetch to recover) and reply values over 32 KB ride gzipped (`{gz}`, inflated in the phone shim). The window fetch also resolves the session file desktop-side (`js:get_messages_window`), so a handset whose registry copy lags its own attach still gets content, with one idempotent refetch as the attach's backstop. Wire per 178 MB-session switch: ~178 MB → ~0.3 MB; measured on a paired handset: attach ~1 s, tab switch 0.4 s
+
 - **Phone: control several desktops from one handset** (Settings → Remote): the phone can pair with every desktop behind the same relay and a device picker lists them with live online status — each pairing is one entry in the new `omp-remote:devices` registry (the old single-pairing storage migrates in place), presence rides ordinary per-room phone auth through one socket per listed device while the picker is open (no new relay surface, no account concept; every desktop still approves its own pairings), and choosing a device performs a deliberate one-time reload because the whole app state belongs to the previous desktop. Switch from the topbar device chip or the offline overlay's new "切换设备" action. Desktops now announce a readable identity (`device_info` on connect and rename — Settings → Remote gains a device-name field, hostname fallback — persisted by the relay and forwarded as `device` frames), and the relay greets a joining phone with its room's current desktop presence, which also fixes a phone attached to an already-online desktop seeing no `peer` frame until something changed
 
-### Fixed
-
-- Settings → Remote now names an untrusted relay certificate instead of looping silently: the connector classifies the rustls handshake failure (`certificate not trusted (self-signed?)` in the status line) and the trust prompt triggers off that reason — with wording that distinguishes a first trust from a re-trust after the server's cert changed. A self-signed relay with no pin stored used to sit in `reconnecting (error: …)` with no way in
-- The startup tab restore filed one "Could not reopen undefined: undefined" note per restored tab: the outcome report iterated the array of spawn *Promises* instead of `Promise.all`'s resolved values, so every success read as a failure with no label, and the restored-id list stayed empty (which also defeated the #34 layout adoption on a clean restore). The report now walks the resolved results through `OMP_PROJECT_NAV.restoreReport`
-- **Git browser no longer blacks out the whole window**: the accessibility pass dropped the `_GH_WORKTREE` constant in `git/history.jsx`, so `GitHistory` threw a `ReferenceError` on first render and — with no error boundary — React unmounted the entire tree (verified live: modal opens, history graph and inline diff render)
-- **Streaming replies no longer flicker**: the streaming bubble's React key (`_id`) was re-stamped on every delta once `notify()` became rAF-coalesced — the stamp was deferred past the first `message_update`, whose spread-replacement dropped the unstamped id, so the row remounted every frame and its `fade-up` entrance animation never finished (the ghosted, flashing text). The bubble is now stamped at creation, and both replacement sites carry the replaced entry's id as a backstop (verified live: 0 remounts, single stable id, opacity trace flat at 1)
-- The image lightbox's private `useModalLayer` copy clobbered the shared module and left the whole app inert from startup; the lightbox now uses the shared one (verified: root is interactive at boot, bridge open/close toggles inert correctly)
-- Custom accent colors now derive a readable `--accent-fg` (near-black/near-white by luminance), so the primary button and HEAD chip stay legible with any swatch in any theme; midnight's primary button idle/hover pairing fixed
-- `test-a11y` and `test-dead-process` are now actually in the `npm test` chain
-- Phone remote control: a network blip no longer reloads the phone's whole page (the cause of the phone feeling laggy and never showing streaming replies) — the shim reconnects in place with capped backoff, replays event subscriptions, and resyncs the transcript via `get_messages`; waking the phone reconnects immediately instead of waiting out the backoff
-- Phone remote control: a tool approval / ask dialog raised before the phone attached (or while it was disconnected) now shows up on the phone — the desktop serves its unanswered asks (`js:get_pending_asks`) and the phone merges them on attach and resync, so a blocked session is always unblockable from the phone
-- Phone layout v1 (the `docs/design/mobile-draft.html` plan): two-row composer (full-width input, round send key, a ＋ bottom sheet for image/commands/thinking/plan/goal/terminal/usage/git), bare Enter inserts a newline on touchscreens instead of sending, no keyboard-popping autofocus after send, a 44px top bar and a session strip replace the desktop chrome and the horizontal tab bar, the status bar drops to connection/todo/approval-mode, the drawer gets 48px rows and a settings/profile foot, copy buttons are always visible on touch, approvals stack 48px buttons (and pending tool approvals pop as a bottom sheet), card inner scroll regions flatten so page momentum is never eaten, the jump-to-latest pill turns amber while an approval waits unseen, drag-reorder no longer fights touch scrolling, and the thinking menu no longer opens off-screen
-- Settings on a phone: a back button now closes the page (there was no way out without a keyboard — the footer's "Ctrl+W close tab" was a hint, not a button), the section strip scrolls with every section's full label instead of overlapping them, wide-control rows (segmented groups, sliders, selects, accent swatches) stack label-over-control so text renders full-width instead of wrapping every other word, the theme grid drops to two columns (the third card was clipped at 390px), the search field hides its Ctrl+F chip and types at 16px (no iOS focus zoom), and the footer's keyboard-hint chips are gone
-
-### Changed
-
-- Copy unification: buttons, tooltips, empty states and inline errors are lowercase without trailing periods, matching the app's majority convention
-- Dead weight removed: the unused per-theme `--syntax-*` ladder (42 definitions), sakura's unused `--magenta-fg`/`--lilac-fg`, phosphor's `.glow-text`, and the never-wired `.ass-text` rules
-- Accessibility pass: Shift+Tab is backward focus traversal again (the thinking-level cycle now only fires with the composer focused), the git browser's file tree/history and the conversation tree are fully keyboard-operable, the chat transcript is a `role=log` live region that announces settled replies/failures, the history modal and command bridge are proper modal dialogs (combobox/listbox semantics, inert background), tab lists got arrow-key navigation, minimap cells are real buttons, and tab-close buttons have accessible names
-- Contrast: fg-4 lifted to ≈4.6:1 in all 7 themes (placeholders pass with it), solarized's inverted fg ramp straightened, status-hue text on light themes uses new darkened `--*-fg` variants, and the primary button no longer becomes unreadable on hover
-- Performance pass: streaming no longer re-parses/re-highlights the whole bubble per token (highlight once on settle), `notify()` coalesces to one snapshot per animation frame, memoized chat bubbles/rail cards/StatusBar stay memoized (stable callbacks and props), xterm.js (478 KB) loads on first terminal open instead of at startup, and the reader thread scans with memchr + a 64 KiB buffer with a zero-copy fast path
-- Startup pass: the window is created hidden and revealed on the first painted UI frame (Rust's `on_page_load` is the fallback if the frontend never mounts, and a forwarded "Open with" during startup shows it too), so the script load no longer paints a white flash; previously open tabs restore with parallel spawns instead of one at a time (the saved active tab is the single activation, falling back to the first tab that spawned); the ~2 MiB `get_available_models` reply is fetched lazily on the model picker's first open instead of at every startup and tab switch (the picker's refresh button still forces a refetch, and the commands view shows the `get_state` model name until the list lands); dev builds no longer auto-open devtools at startup (F12 / Ctrl+Shift+I opens them manually)
-
-### Fixed
-
-- The frosted-glass tweak no longer styles the whole window root as a glass card (`.glass` class collision — the root was also becoming the containing block for every fixed overlay); rail cards blur only while the tweak is on
-- Diff cards no longer flash the full diff then replay it line-by-line (chunked reveal, no playback beyond 60 lines, composited cursor)
-- Terminal refit/repaint no longer fires on unrelated tabs' state changes; drag-reorder no longer layout-thrashes per pointermove; the lightbox wheel handler is non-passive (no console interventions)
-- bash output tails no longer re-split the whole accumulated output per update (O(L²) → tail window)
-- Deep-interaction pass: a prompt refused by a busy omp now becomes a visible note instead of a ghost bubble (and busy sends route through the queue); a dead omp process settles the tab's run state, streaming bubble and tool cards instead of claiming "running" forever; a mid-session death now reports its real exit reason instead of a "clean exit"
-- Focus traps closed: the terminal and composer no longer grab focus while the Settings page, plan kanban or git browser covers them (typed text could invisibly run/send); IME composition (CJK input) is respected by the composer's popup keys, rename fields and Settings search
-- The plan kanban and prompt-history/confirm-close/git-browser overlays joined the shared Escape stack, and the command bridge renders above same-z overlays
-- The widget rail sleeps while Settings covers it, the browser panel stops decoding screencast frames it can't show, Esc in the browser panel no longer aborts the running turn, and the goal auto-continue switch stays in sync between the strip and Settings
-- The chat collapse horizon no longer folds the text you're reading when its message is removed, and the unread count survives a removed horizon
-- Round-2 regression pass: the rail's ✕/sparkline/minimap-highlight props are wired again, the browser panel keeps its flex width, tab rename accepts spaces, widget dismissal re-arms on fingerprint change, and the activity radar's time axis matches its labels
-- Escape now closes the topmost overlay (shared stack), the history modal's Enter no longer swallows its buttons, and hidden Settings stops acting on keys — a turn end can no longer send an invisible composer draft
-- Paste/drop path insertion no longer clobbers keystrokes typed mid-IPC or leaks into another tab; eval cards auto-scroll the growing cell and reset on settle; search result rows lose their UA button chrome
-- `start_session` no longer freezes the window (moved off the IPC thread), a widget finishing at its deadline is no longer misreported as timed out, a malformed `widget-approvals.json` surfaces as a rail error card, and an unreadable `profiles.json` retries once before degrading
-
-### Added
-
 - A trash button floats at the prompt box's top right while the draft has text, clearing it in one click (attachments are untouched — they keep their own per-chip remove).
+
 - Selecting text in the chat floats an "Add to prompt" pill beside the selection; clicking it appends the quoted text to the draft, sparing the copy-move-paste round trip. Selections in typing surfaces (the composer, an ask's answer box, an inline rename) never raise it, and it retracts on scroll, Escape, a collapsed selection or a click elsewhere.
+
 - Four new themes — nordic, solarized, sakura (light) and midnight (OLED black) — join aurora, phosphor and daylight, each coming in with its own default accent. Settings → Appearance also gains a text-brightness slider (nudges the foreground ladder toward or away from the contrast pole), a background image picker (the chosen image is copied into the app's config folder, so moving the original never breaks the setting, with dim and blur sliders to keep text readable), and a frosted-glass switch with opacity and blur sliders for the floating surfaces — the project sidebar, bridge-style dialogs and the Settings page itself. Frosted glass stays off under the phosphor theme, where scanlines over blur would be visual mud. The picker and the drop handler both accept `jfif` and `svg` alongside the usual formats.
+
 - Chat messages now carry a role glyph. The agent's replies keep their left rail, with the generic sparkle replaced by a purpose-drawn speech-bubble-and-spark mark (accent-coloured, rose when the request failed); your messages get a bust mark in a new right rail, drawn in the neutral text colour. Both are new `assistant`/`user` icons in the OMP Icon Pack, following the pack's single accent-dot convention.
+
 - Files and folders can be dropped onto the prompt box, and files copied in the file manager paste into it with Ctrl+V: their paths are inserted as text, and the agent reads them with its own tools. Dropped images are still attached as images; pasting an image *file* inserts its path, while pasting a screenshot (no file behind it) still attaches the image.
+
 - The project sidebar lists a project's saved conversations: expand a project (a single-conversation project with saved history has a chevron now too) to see up to three, newest first with each conversation's age. Clicking one resumes it in place, and an "all N conversations…" row opens the history panel already filtered to that project. Conversations already open in a tab are not listed again. The history panel itself now opens filtered to the active tab's project; the "All Projects" chip still shows everything.
 
 ### Fixed
 
+- **Two phones in one room no longer receive each other's command replies**: the relay stamped every phone frame with its connection id but broadcast every response, so colliding per-phone request ids resolved against the wrong phone's pending call — responses now carry the origin id and are unicast to it (broadcast only as the legacy fallback)
+
+- **A desktop app restart no longer silently freezes a phone's stream**: the phone's event subscriptions lived in the desktop's webview and died with it; the phone reconnects its subscriptions on the desktop's return before re-syncing
+
+- **Two desktops sharing one device id no longer fight over the room forever**: the replaced connector now stops with "another desktop is online with this device id" instead of reconnecting into an endless replace loop
+
+- **The phone can steer a running agent again**: streaming hid the send path entirely (the stop button replaced it), so a mid-turn correction had to wait for the turn to end — the send button now stays (it routes to steer), with stop beside it
+
+- **The git browser's phone layout no longer collapses the diff pane to zero width**: the three desktop columns (min 220/280px) left 0px for the diff on a 390px screen — the panes are now a tabbed single view with 40px touch targets and a two-tap confirm on discard
+
+- **A prompt sent on a dead tab is no longer silently swallowed** (the bubble looked sent, the process was gone): the refusal becomes a visible note with the text and a copy button, the composer explains the agent exited, and a "restart agent" strip respawns the tab with --resume
+
+- **Huge code blocks no longer freeze the UI**: syntax highlighting now caps at 64 KB / 2000 lines (32 KB for auto-detect) — a 50 KB unlabeled fence blocked the main thread for ~12 s at the moment the answer landed
+
+- **Phone: a failed first connect retries** (capped backoff + a retry-now button) instead of parking on a dead "check the relay" overlay that only a page reload escaped
+
+- **Phone streaming over narrow uplinks is coalesced**: message_update frames carry the full accumulated text, so the desktop now sends only the newest one per 100 ms per session — 10–30× less uplink traffic mid-turn, and the relay's bounded outbox no longer overflows and kills the connection
+
+- **Inline plan cards survive tab switches and replace their stale selves**: the get_messages merge dropped the injected plan block, and a second todo_write left an outdated plan beside the new one
+
+- **The remote protocol now has a version handshake**: relay and desktop exchange `hello` frames with capability lists, and a gzipped reply the phone cannot decode rejects loudly instead of rendering a blank transcript
+
+- **bash tool cards keep the whole output** (they held only the last 20 lines — a test suite's first failure was unreachable); collapsed shows the tail with a "last 20 of N" note, expanded shows everything
+
+- **Profile list degradation is visible**: when profiles.json is unreadable at startup, the profile menu says so (and that the file is still on disk) instead of showing a mysteriously empty list
+
+- **Updater failures speak plainly** ("Couldn't reach the update server — check your network") with the raw error on hover, and a notify-only build's "open release page" failure surfaces in the modal instead of vanishing into the console
+
+- **Markdown checklists render as checklists** (no more bullet + raw disabled checkbox), wide tables get the same right-edge scroll hint as code blocks, your own messages have a copy button, and a relay-dropped oversized reply rejects the call immediately instead of hanging it for 30 s
+
+- Settings → Remote now names an untrusted relay certificate instead of looping silently: the connector classifies the rustls handshake failure (`certificate not trusted (self-signed?)` in the status line) and the trust prompt triggers off that reason — with wording that distinguishes a first trust from a re-trust after the server's cert changed. A self-signed relay with no pin stored used to sit in `reconnecting (error: …)` with no way in
+
+- The startup tab restore filed one "Could not reopen undefined: undefined" note per restored tab: the outcome report iterated the array of spawn *Promises* instead of `Promise.all`'s resolved values, so every success read as a failure with no label, and the restored-id list stayed empty (which also defeated the #34 layout adoption on a clean restore). The report now walks the resolved results through `OMP_PROJECT_NAV.restoreReport`
+
+- **Git browser no longer blacks out the whole window**: the accessibility pass dropped the `_GH_WORKTREE` constant in `git/history.jsx`, so `GitHistory` threw a `ReferenceError` on first render and — with no error boundary — React unmounted the entire tree (verified live: modal opens, history graph and inline diff render)
+
+- **Streaming replies no longer flicker**: the streaming bubble's React key (`_id`) was re-stamped on every delta once `notify()` became rAF-coalesced — the stamp was deferred past the first `message_update`, whose spread-replacement dropped the unstamped id, so the row remounted every frame and its `fade-up` entrance animation never finished (the ghosted, flashing text). The bubble is now stamped at creation, and both replacement sites carry the replaced entry's id as a backstop (verified live: 0 remounts, single stable id, opacity trace flat at 1)
+
+- The image lightbox's private `useModalLayer` copy clobbered the shared module and left the whole app inert from startup; the lightbox now uses the shared one (verified: root is interactive at boot, bridge open/close toggles inert correctly)
+
+- Custom accent colors now derive a readable `--accent-fg` (near-black/near-white by luminance), so the primary button and HEAD chip stay legible with any swatch in any theme; midnight's primary button idle/hover pairing fixed
+
+- `test-a11y` and `test-dead-process` are now actually in the `npm test` chain
+
+- Phone remote control: a network blip no longer reloads the phone's whole page (the cause of the phone feeling laggy and never showing streaming replies) — the shim reconnects in place with capped backoff, replays event subscriptions, and resyncs the transcript via `get_messages`; waking the phone reconnects immediately instead of waiting out the backoff
+
+- Phone remote control: a tool approval / ask dialog raised before the phone attached (or while it was disconnected) now shows up on the phone — the desktop serves its unanswered asks (`js:get_pending_asks`) and the phone merges them on attach and resync, so a blocked session is always unblockable from the phone
+
+- Phone layout v1 (the `docs/design/mobile-draft.html` plan): two-row composer (full-width input, round send key, a ＋ bottom sheet for image/commands/thinking/plan/goal/terminal/usage/git), bare Enter inserts a newline on touchscreens instead of sending, no keyboard-popping autofocus after send, a 44px top bar and a session strip replace the desktop chrome and the horizontal tab bar, the status bar drops to connection/todo/approval-mode, the drawer gets 48px rows and a settings/profile foot, copy buttons are always visible on touch, approvals stack 48px buttons (and pending tool approvals pop as a bottom sheet), card inner scroll regions flatten so page momentum is never eaten, the jump-to-latest pill turns amber while an approval waits unseen, drag-reorder no longer fights touch scrolling, and the thinking menu no longer opens off-screen
+
+- Settings on a phone: a back button now closes the page (there was no way out without a keyboard — the footer's "Ctrl+W close tab" was a hint, not a button), the section strip scrolls with every section's full label instead of overlapping them, wide-control rows (segmented groups, sliders, selects, accent swatches) stack label-over-control so text renders full-width instead of wrapping every other word, the theme grid drops to two columns (the third card was clipped at 390px), the search field hides its Ctrl+F chip and types at 16px (no iOS focus zoom), and the footer's keyboard-hint chips are gone
+
+- The frosted-glass tweak no longer styles the whole window root as a glass card (`.glass` class collision — the root was also becoming the containing block for every fixed overlay); rail cards blur only while the tweak is on
+
+- Diff cards no longer flash the full diff then replay it line-by-line (chunked reveal, no playback beyond 60 lines, composited cursor)
+
+- Terminal refit/repaint no longer fires on unrelated tabs' state changes; drag-reorder no longer layout-thrashes per pointermove; the lightbox wheel handler is non-passive (no console interventions)
+
+- bash output tails no longer re-split the whole accumulated output per update (O(L²) → tail window)
+
+- Deep-interaction pass: a prompt refused by a busy omp now becomes a visible note instead of a ghost bubble (and busy sends route through the queue); a dead omp process settles the tab's run state, streaming bubble and tool cards instead of claiming "running" forever; a mid-session death now reports its real exit reason instead of a "clean exit"
+
+- Focus traps closed: the terminal and composer no longer grab focus while the Settings page, plan kanban or git browser covers them (typed text could invisibly run/send); IME composition (CJK input) is respected by the composer's popup keys, rename fields and Settings search
+
+- The plan kanban and prompt-history/confirm-close/git-browser overlays joined the shared Escape stack, and the command bridge renders above same-z overlays
+
+- The widget rail sleeps while Settings covers it, the browser panel stops decoding screencast frames it can't show, Esc in the browser panel no longer aborts the running turn, and the goal auto-continue switch stays in sync between the strip and Settings
+
+- The chat collapse horizon no longer folds the text you're reading when its message is removed, and the unread count survives a removed horizon
+
+- Round-2 regression pass: the rail's ✕/sparkline/minimap-highlight props are wired again, the browser panel keeps its flex width, tab rename accepts spaces, widget dismissal re-arms on fingerprint change, and the activity radar's time axis matches its labels
+
+- Escape now closes the topmost overlay (shared stack), the history modal's Enter no longer swallows its buttons, and hidden Settings stops acting on keys — a turn end can no longer send an invisible composer draft
+
+- Paste/drop path insertion no longer clobbers keystrokes typed mid-IPC or leaks into another tab; eval cards auto-scroll the growing cell and reset on settle; search result rows lose their UA button chrome
+
+- `start_session` no longer freezes the window (moved off the IPC thread), a widget finishing at its deadline is no longer misreported as timed out, a malformed `widget-approvals.json` surfaces as a rail error card, and an unreadable `profiles.json` retries once before degrading
+
 - A UI-review pass over the whole app landed 91 fixes. Dead controls removed: the inline plan's "open kanban" button works, the placeholder dictate button is disabled until it exists, and the command bridge's footer hints (↑↓/↵) now drive real keyboard navigation. Data-loss traps closed: Escape with the slash menu open dismisses the menu instead of clearing the draft, and the browser annotation popover keeps its text across re-picks (and gained Save/Cancel). Honesty: the status bar's connection dot reflects the real bridge state, t/s dims to "last …" while idle, the history panel distinguishes "couldn't load" from "no sessions", and Settings search no longer claims a hidden conditional row doesn't exist (and is tokenised AND now). Visibility: buttons show a real disabled state, the dark themes' `--fg-4` meets a 3:1 floor on elevated surfaces, failed tool cards render rose, waiting-for-you tabs pulse, wide markdown tables scroll, and a running bash/eval card follows its own output. Reachability: the tab bar scrolls horizontally when it overflows, tabs are keyboard-focusable, a hidden rail can be brought back from the status bar, the approvals/usage/plan panels close with Escape, and the terminal's height handle is a real separator with keys, a pixel readout and a double-click reset. Plus the long tail: minimap compact cells wired and its legend generated from the kinds actually present, rail cards gain dismiss/relative-time/show-less, the window title follows the active tab, compact rows are keyboard-expandable, tool durations read like "1.2s" instead of raw milliseconds, timestamps drop seconds, and "Jump to latest" counts what's new.
+
+### Changed
+
+- Copy unification: buttons, tooltips, empty states and inline errors are lowercase without trailing periods, matching the app's majority convention
+
+- Dead weight removed: the unused per-theme `--syntax-*` ladder (42 definitions), sakura's unused `--magenta-fg`/`--lilac-fg`, phosphor's `.glow-text`, and the never-wired `.ass-text` rules
+
+- Accessibility pass: Shift+Tab is backward focus traversal again (the thinking-level cycle now only fires with the composer focused), the git browser's file tree/history and the conversation tree are fully keyboard-operable, the chat transcript is a `role=log` live region that announces settled replies/failures, the history modal and command bridge are proper modal dialogs (combobox/listbox semantics, inert background), tab lists got arrow-key navigation, minimap cells are real buttons, and tab-close buttons have accessible names
+
+- Contrast: fg-4 lifted to ≈4.6:1 in all 7 themes (placeholders pass with it), solarized's inverted fg ramp straightened, status-hue text on light themes uses new darkened `--*-fg` variants, and the primary button no longer becomes unreadable on hover
+
+- Performance pass: streaming no longer re-parses/re-highlights the whole bubble per token (highlight once on settle), `notify()` coalesces to one snapshot per animation frame, memoized chat bubbles/rail cards/StatusBar stay memoized (stable callbacks and props), xterm.js (478 KB) loads on first terminal open instead of at startup, and the reader thread scans with memchr + a 64 KiB buffer with a zero-copy fast path
+
+- Startup pass: the window is created hidden and revealed on the first painted UI frame (Rust's `on_page_load` is the fallback if the frontend never mounts, and a forwarded "Open with" during startup shows it too), so the script load no longer paints a white flash; previously open tabs restore with parallel spawns instead of one at a time (the saved active tab is the single activation, falling back to the first tab that spawned); the ~2 MiB `get_available_models` reply is fetched lazily on the model picker's first open instead of at every startup and tab switch (the picker's refresh button still forces a refetch, and the commands view shows the `get_state` model name until the list lands); dev builds no longer auto-open devtools at startup (F12 / Ctrl+Shift+I opens them manually)
 
 ## [0.11.0] - 2026-10-17
 

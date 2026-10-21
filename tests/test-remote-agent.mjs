@@ -66,16 +66,31 @@ function makeEnv() {
   win.addEventListener = () => {};
   win.dispatchEvent = (ev) => { windowEvents.push({ type: ev.type, detail: ev.detail }); };
 
+  // setTimeout records {fn, delay} instead of firing: the coalescing
+  // window (100 ms) is asserted by its armed delay, and its expiry is
+  // run by hand — no real timers, ever.
+  const timers = new Map();
+  let timerSeq = 0;
+  const fakeSetTimeout = (fn, delay) => {
+    const id = ++timerSeq;
+    timers.set(id, { fn, delay: delay ?? 0 });
+    return id;
+  };
+  const fakeClearTimeout = (id) => { timers.delete(id); };
+  const timerInfo = () => [...timers.entries()].map(([id, t]) => ({ id, delay: t.delay }));
+  const runTimer = (id) => { const t = timers.get(id); if (!t) return false; timers.delete(id); t.fn(); return true; };
+  const runTimersAll = () => { for (const [id, t] of [...timers.entries()]) { timers.delete(id); t.fn(); } };
+  const timerCount = () => timers.size;
   const quiet = { log() {}, warn() {}, error() {} };
   const fireEvt = (name, ev) => {
     for (const cb of tauriListeners.get(name) || []) cb(ev);
   };
 
   // eslint-disable-next-line no-new-function
-  new Function("window", "console", "CustomEvent", src)(win, quiet, CustomEvent);
-
+  new Function("window", "console", "CustomEvent", "setTimeout", "clearTimeout", src)(
+    win, quiet, CustomEvent, fakeSetTimeout, fakeClearTimeout);
   return {
-    win, sent, invokeCalls, unlistens,
+    win, sent, invokeCalls, unlistens, timerInfo, runTimer, runTimersAll, timerCount,
     // the connector delivering a frame to a remote:// channel
     phone: (f) => fireEvt("remote://phone", { payload: f }),
     control: (f) => fireEvt("remote://control", { payload: f }),
@@ -163,7 +178,7 @@ await check("sub refcounts a Tauri listener per name across phones; last unsub t
   await drain();
   assert.ok(E.subscribed().includes("tab_update"));
   assert.deepEqual(E.unlistens, []);
-  assert.deepEqual(lastRes(E), { t: "res", id: 3, ok: true, value: null });
+  assert.deepEqual(lastRes(E), { t: "res", id: 3, ok: true, value: null, from: "p1" });
 
   // the last phone goes: the Tauri listener is unlistened
   E.phone({ t: "cmd", id: 4, from: "p2", name: "unsub", args: { name: "tab_update" } });
@@ -203,8 +218,7 @@ await check("a stale unsub from a phone that left does NOT unlisten while anothe
   E.phone({ t: "cmd", id: 3, from: "p1", name: "unsub", args: { name: "tab_update" } });
   await drain();
   assert.deepEqual(E.unlistens, []);
-  assert.ok(E.subscribed().includes("tab_update")); // p2 still holds it
-  assert.deepEqual(lastRes(E), { t: "res", id: 3, ok: true, value: null });
+  assert.deepEqual(lastRes(E), { t: "res", id: 3, ok: true, value: null, from: "p1" });
 
   // a ghost unsub from a phone that never subscribed is equally inert
   E.phone({ t: "cmd", id: 4, from: "p3", name: "unsub", args: { name: "tab_update" } });
@@ -426,11 +440,14 @@ await check("a pair_request control frame dispatches remote-pair-request on the 
 
 await check("other control frames dispatch remote-control; status frames dispatch remote-status", async () => {
   const E = load();
+  // A phone joining now rides a hello broadcast, not a window event
   E.control({ t: "peer", phone: "p1", online: true });
-  assert.equal(E.windowEvents.at(-1).type, "remote-control");
+  assert.deepEqual(E.windowEvents, []);
+  E.control({ t: "peer", phone: "p1", online: false }); // the drop: no event either
+  assert.deepEqual(E.windowEvents, []);
+  E.control({ t: "other", x: 1 });
   E.status({ state: "online", url: "wss://relay" });
   assert.equal(E.windowEvents.at(-1).type, "remote-status");
-  assert.deepEqual(E.windowEvents.at(-1).detail, { state: "online", url: "wss://relay" });
   E.status(null);
   assert.equal(E.windowEvents.at(-1).type, "remote-status");
   assert.equal(E.windowEvents.at(-1).detail, null);
@@ -449,6 +466,217 @@ await check("non-cmd phone frames are ignored; a nameless cmd answers without cr
   await drain();
   assert.deepEqual(E.invokeCalls.map(c => c.name), [undefined, "remote_send"]);
   assert.deepEqual(lastRes(E), { t: "res", id: 51, ok: true, value: null });
+});
+
+// ── protocol v2: res `from` unicast, hello broadcast, update coalescing ──
+
+await check("respond backfills the triggering cmd's `from` into every res frame", async () => {
+  const E = load();
+  E.setInvoke(() => "v1");
+  E.phone({ t: "cmd", id: 81, from: "conn-7", name: "get_state", args: {} });
+  await drain();
+  assert.deepEqual(lastRes(E), { t: "res", id: 81, ok: true, value: "v1", from: "conn-7" });
+
+  // error replies carry it too
+  E.setInvoke(() => { throw new Error("nope"); });
+  E.phone({ t: "cmd", id: 82, from: "conn-7", name: "boom", args: {} });
+  await drain();
+  assert.deepEqual(lastRes(E), { t: "res", id: 82, ok: false, error: "nope", from: "conn-7" });
+
+  // js: routing and the unsupported wall alike
+  const E2 = load({ thing: async () => ({ a: 1 }) });
+  E2.phone({ t: "cmd", id: 83, from: "c2", name: "js:thing", args: {} });
+  await drain();
+  assert.deepEqual(lastRes(E2), { t: "res", id: 83, ok: true, value: { a: 1 }, from: "c2" });
+  E2.phone({ t: "cmd", id: 84, from: "c2", name: "open_project", args: {} });
+  await drain();
+  assert.deepEqual(lastRes(E2), { t: "res", id: 84, ok: false, error: "open_project is unsupported on remote", from: "c2" });
+
+  // sub/unsub replies and a frame with NO from (legacy/relay broadcast)
+  const E3 = load();
+  E3.phone({ t: "cmd", id: 85, from: "c3", name: "sub", args: { name: "tab_update" } });
+  await drain();
+  assert.deepEqual(lastRes(E3), { t: "res", id: 85, ok: true, value: null, from: "c3" });
+  E3.setInvoke(() => null);
+  E3.phone({ t: "cmd", id: 86, name: "get_state", args: {} });
+  await drain();
+  assert.deepEqual(lastRes(E3), { t: "res", id: 86, ok: true, value: null }); // no from key at all
+});
+
+await check("the desktop broadcasts hello on connector-online and on every phone join (not on phone leave)", async () => {
+  const E = load();
+  assert.deepEqual(E.sent, []);
+
+  // the connector reports its WS connection live → one hello
+  E.status({ enabled: true, status: "online" });
+  assert.deepEqual(E.sent, [{ t: "hello", v: 1, caps: ["gz", "transcript-window", "ask-sync"] }]);
+  // a duplicate online report does not re-broadcast
+  E.status({ enabled: true, status: "online" });
+  assert.equal(E.sent.length, 1);
+
+  // a new phone joins the room → one more hello
+  E.control({ t: "peer", phone: "p1", online: true });
+  assert.equal(E.sent.length, 2);
+  assert.deepEqual(E.sent.at(-1), { t: "hello", v: 1, caps: ["gz", "transcript-window", "ask-sync"] });
+  // a phone leaving never broadcasts
+  E.control({ t: "peer", phone: "p1", online: false });
+  assert.equal(E.sent.length, 2);
+
+  // offline then online again (a desktop restart) re-announces once
+  E.status({ enabled: true, status: "reconnecting (closed)" });
+  E.status({ enabled: true, status: "online" });
+  assert.equal(E.sent.length, 3);
+  // and going fully off disarms it for the next enable cycle
+  E.status({ enabled: false, status: "off" });
+  E.status({ enabled: true, status: "online" });
+  assert.equal(E.sent.length, 4);
+});
+
+await check("a peer with a phone id but no online field is left to the generic dispatch (no hello)", async () => {
+  const E = load();
+  E.control({ t: "peer", phone: "p1" });
+  assert.deepEqual(E.sent, []);
+  assert.equal(E.windowEvents.at(-1).type, "remote-control");
+});
+
+// Streaming-update coalescing: per session, 100 ms trailing edge.
+const upd = (n) => ({ seq: n, text: JSON.stringify({ type: "message_update", message: { text: "t" + n } }) });
+
+await check("message_update lines coalesce per session: the timer sends only the newest, 100 ms out", async () => {
+  const E = load();
+  E.phone({ t: "cmd", id: 1, from: "p1", name: "sub", args: { name: "agent://line/s-1" } });
+  E.phone({ t: "cmd", id: 2, from: "p1", name: "sub", args: { name: "agent://line/s-2" } });
+  await drain();
+  E.sent.length = 0; // drop the two sub acks
+
+  // three updates for s-1, one for s-2: two timers arm, both 100 ms
+  E.forEvt("agent://line/s-1", { payload: upd(1) });
+  E.forEvt("agent://line/s-1", { payload: upd(2) });
+  E.forEvt("agent://line/s-1", { payload: upd(3) });
+  E.forEvt("agent://line/s-2", { payload: upd(1) });
+  assert.deepEqual(E.sent, []); // nothing rides yet
+  const timers = E.timerInfo();
+  assert.equal(timers.length, 2, "one timer per session");
+  assert.ok(timers.every((t) => t.delay === 100), "every timer is the 100 ms window");
+
+  // let both timers fire: each session sends exactly ONE frame — its newest
+  for (const t of timers) E.runTimer(t.id);
+  assert.deepEqual(E.sent, [
+    { t: "evt", name: "agent://line/s-1", payload: upd(3) },
+    { t: "evt", name: "agent://line/s-2", payload: upd(1) },
+  ]);
+  assert.equal(E.timerCount(), 0);
+});
+
+await check("an update AFTER the window closes opens a fresh window (no spanning flush)", async () => {
+  const E = load();
+  E.phone({ t: "cmd", id: 1, from: "p1", name: "sub", args: { name: "agent://line/s-1" } });
+  await drain();
+  E.sent.length = 0;
+
+  E.forEvt("agent://line/s-1", { payload: upd(1) });
+  E.runTimer(E.timerInfo()[0].id);
+  assert.deepEqual(E.sent, [{ t: "evt", name: "agent://line/s-1", payload: upd(1) }]);
+
+  // the next update starts a NEW window (the previous one already sent)
+  E.forEvt("agent://line/s-1", { payload: upd(2) });
+  assert.equal(E.timerCount(), 1);
+  E.runTimer(E.timerInfo()[0].id);
+  assert.deepEqual(E.sent.at(-1), { t: "evt", name: "agent://line/s-1", payload: upd(2) });
+});
+
+await check("message_end/agent_end/turn_end and non-update frames flush the pending update first, then ride immediately", async () => {
+  for (const terminal of ["message_end", "agent_end", "turn_end"]) {
+    const E = load();
+    E.phone({ t: "cmd", id: 1, from: "p1", name: "sub", args: { name: "agent://line/s-1" } });
+    await drain();
+    E.sent.length = 0;
+
+    E.forEvt("agent://line/s-1", { payload: upd(1) });
+    E.forEvt("agent://line/s-1", { payload: upd(2) }); // superseded
+    const terminalPayload = { seq: 3, text: JSON.stringify({ type: terminal, message: { role: "assistant" } }) };
+    E.forEvt("agent://line/s-1", { payload: terminalPayload });
+    // order: the newest pending update, THEN the terminal frame — and no timer left
+    assert.deepEqual(E.sent, [
+      { t: "evt", name: "agent://line/s-1", payload: upd(2) },
+      { t: "evt", name: "agent://line/s-1", payload: terminalPayload },
+    ]);
+    assert.equal(E.timerCount(), 0, `${terminal} disarmed the timer`);
+  }
+
+  // any NON-update frame (a tool_execution_start, a non-JSON line) rides
+  // the same way: flush, then itself
+  const E = load();
+  E.phone({ t: "cmd", id: 1, from: "p1", name: "sub", args: { name: "agent://line/s-1" } });
+  await drain();
+  E.sent.length = 0;
+  E.forEvt("agent://line/s-1", { payload: upd(1) });
+  const nonUpdate = { seq: 9, text: JSON.stringify({ type: "tool_execution_start", tool: "bash" }) };
+  E.forEvt("agent://line/s-1", { payload: nonUpdate });
+  assert.deepEqual(E.sent, [
+    { t: "evt", name: "agent://line/s-1", payload: upd(1) },
+    { t: "evt", name: "agent://line/s-1", payload: nonUpdate },
+  ]);
+
+  // a raw non-JSON line is forwarded verbatim too (nothing parses it here)
+  E.forEvt("agent://line/s-1", { payload: { seq: 10, text: "not json" } });
+  assert.deepEqual(E.sent.at(-1), { t: "evt", name: "agent://line/s-1", payload: { seq: 10, text: "not json" } });
+});
+
+await check("coalescing never crosses sessions; unsubscribing a session clears its timer and pending update", async () => {
+  const E = load();
+  E.phone({ t: "cmd", id: 1, from: "p1", name: "sub", args: { name: "agent://line/s-1" } });
+  E.phone({ t: "cmd", id: 2, from: "p1", name: "sub", args: { name: "agent://line/s-2" } });
+  await drain();
+  E.sent.length = 0;
+
+  // an update on s-1 flushes NOTHING pending on s-2 — and vice versa
+  E.forEvt("agent://line/s-1", { payload: upd(1) });
+  const endFrame = { seq: 5, text: JSON.stringify({ type: "message_end", message: {} }) };
+  E.forEvt("agent://line/s-2", { payload: endFrame });
+  assert.deepEqual(E.sent, [
+    { t: "evt", name: "agent://line/s-2", payload: endFrame },
+  ]); // s-2's terminal rode alone: s-1's pending update is still pending
+  assert.equal(E.timerCount(), 1); // s-1's timer still armed
+
+  // the phone drops s-1: its timer and pending frame are dropped with it
+  E.phone({ t: "cmd", id: 3, from: "p1", name: "unsub", args: { name: "agent://line/s-1" } });
+  await drain();
+  assert.equal(E.timerCount(), 0);
+  E.runTimersAll(); // nothing fires
+  // the unsub's own res ack is the last frame; the pending update never sent
+  assert.deepEqual(E.sent.at(-2), { t: "evt", name: "agent://line/s-2", payload: endFrame });
+  assert.deepEqual(E.sent.at(-1), { t: "res", id: 3, ok: true, value: null, from: "p1" });
+  assert.equal(E.sent.length, 2);
+});
+
+await check("a phone dropping offline flushes nothing stale: its sessions' pending updates die with the listener", async () => {
+  const E = load();
+  E.phone({ t: "cmd", id: 1, from: "p1", name: "sub", args: { name: "agent://line/s-1" } });
+  await drain();
+  E.sent.length = 0;
+  E.forEvt("agent://line/s-1", { payload: upd(1) });
+  assert.equal(E.timerCount(), 1);
+
+  E.control({ t: "peer", phone: "p1", online: false });
+  await drain();
+  assert.equal(E.timerCount(), 0);
+  E.runTimersAll();
+  assert.deepEqual(E.sent, []); // the pending update never reached the wire
+});
+
+await check("non-agent://line events are never coalesced (evt rides immediately)", async () => {
+  const E = load();
+  E.phone({ t: "cmd", id: 1, from: "p1", name: "sub", args: { name: "tab_update" } });
+  await drain();
+  E.sent.length = 0;
+  E.forEvt("tab_update", { payload: { id: "t1", state: "running" } });
+  E.forEvt("tab_update", { payload: { id: "t1", state: "done" } });
+  assert.deepEqual(E.sent, [
+    { t: "evt", name: "tab_update", payload: { id: "t1", state: "running" } },
+    { t: "evt", name: "tab_update", payload: { id: "t1", state: "done" } },
+  ]);
+  assert.equal(E.timerCount(), 0);
 });
 
 // ── summary ────────────────────────────────────────────────────────────────

@@ -129,6 +129,7 @@
   let turnStartTime   = null;
   let activityLog     = [];           // [{ts, toolName}], pruned to 60s
   let lastSeq         = 0;   // highest journal seq processed for the active session — see _dispatchEnvelope
+  let sawFrames      = false; // any agent://line frame reached this activation — drives the clean-exit note (see the exit listener)
   let lastTurnOk      = true; // last assistant message_end was not error/aborted — a failed first exchange must not spend the one-shot
   let _replayBuffer   = null; // null = live dispatch; [] = buffering during a replay (see _switchToSession)
   // Journal seq the active tab's extension snapshot reflects (`extension_ui_state`
@@ -172,6 +173,10 @@
   // and backfilled from the transcript whenever get_messages arrives (tab
   // switch, resume from history) — see the get_messages handler below.
   const promptHistories = new Map(); // session id → string[]
+  // Cross-session archive (prompt_history.rs), fetched once at startup and
+  // refreshed from each record's response. The prompt history modal shows
+  // it under "all sessions".
+  let _globalPrompts = [];
   let promptHistoryLimit = window.OMP_PROMPT_HISTORY.DEFAULT_LIMIT;
   // Static prefix INTENT_FRAMING (app/constants.js) wraps plan-mode intents
   // in — recovers the as-typed prompt from a framed transcript entry so
@@ -208,6 +213,9 @@
   // for the ids stored on each tab.
   const { DEFAULT_PROFILE_ID } = window; // app/constants.js
   let profiles = [{ id: DEFAULT_PROFILE_ID, name: DEFAULT_PROFILE_ID }];
+  // Set from `list_profiles`: non-null when this run started degraded
+  // (profiles.json unreadable twice — see profiles.rs `ProfileStore::degraded`).
+  let profilesDegraded = null;
   // The ticked default: which profile a launch (and a tab opened with no tab
   // to inherit from) starts in. App-wide and persisted, unlike a tab's own
   // profile - `_resetSessionVars` must never touch it.
@@ -259,6 +267,10 @@
   let _layoutKey     = null;
   let _layoutPending = null;
   let _layoutWriting = false;
+  // Consecutive `open_tabs_save` failures (reset by any success). ≥3
+  // pushes a one-shot system note — see _flushLayout.
+  let _layoutFailCount = 0;
+  let _layoutNoted    = false;
   // Last `session-<ms>` id handed out: two tabs started within one
   // millisecond (a restore spawns back to back) must still differ.
   let _lastSessionMs = 0;
@@ -389,6 +401,9 @@
       queueSending:    state.queueSending,
       goal:            state.goal,
       extWidgets:      state.extWidgets,
+      // Dead-tab signal for the composer's restart chip (S3's
+      // `restartSession` respawns with --resume).
+      exitReason:      state.exitReason,
       // Tab list — derived from session registry, not per-session state.
       // runState: active tab reads live state; background tabs read their
       // cached snapshot (never activated yet = "idle" defaults).
@@ -396,8 +411,15 @@
       activeSessionId,
       // Active tab's prompt history only — never persisted, see promptHistories above.
       promptHistory:   promptHistories.get(activeSessionId) ?? [],
+      // The cross-session archive (prompt_history.rs) for the modal's
+      // "all sessions" section.
+      globalPromptHistory: _globalPrompts,
       profiles,
       startupProfileId,
+      // Non-null when this run fell back to the built-in profile because
+      // profiles.json was unreadable — the profile menu shows it as a
+      // warning row (the user's profiles look gone otherwise).
+      profilesDegraded,
       approvalModes,
       noTabProfileId:  _noTabProfile(),
       recentProjects,
@@ -745,14 +767,23 @@
       }
     }
     const target = idx === -1 ? null : msgs[idx];
+    // The failed turn's own prompt, for the resend button
+    // (chat/assistant-bubble.jsx): the last user text at or before the
+    // failure's bubble. Empty when there is none — the button stays hidden.
+    const promptText = (() => {
+      for (let i = (idx === -1 ? msgs.length : idx) - 1; i >= 0; i--) {
+        if (msgs[i].kind === "user" && msgs[i].text) return msgs[i].text;
+      }
+      return "";
+    })();
     if (target && (byTs || target.pendingFailure || target.failure)) {
       const { pendingFailure, ...rest } = target;
       const next = [...msgs];
-      next[idx] = { ...rest, streaming: false, failure: make(target.failure ?? pendingFailure ?? null) };
+      next[idx] = { ...rest, streaming: false, promptText, failure: make(target.failure ?? pendingFailure ?? null) };
       state.messages = next;
       if (streamingBubble && streamingBubble.ts === target.ts) streamingBubble = null;
     } else {
-      state.messages = [...msgs, _assistantBubble({ ts, failure: make(null) })];
+      state.messages = [...msgs, _assistantBubble({ ts, promptText, failure: make(null) })];
     }
   }
 
@@ -780,7 +811,11 @@
    *  @param {string=} profileId the tab's profile, if any */
   function _exitNote(reason, profileId) {
     if (!/no models available/i.test(reason)) {
-      return `**Agent process exited:** ${reason}`;
+      // Fenced: the reason is a raw backend string, and a backtick run or
+      // an asterisk pair in it would otherwise break the note's own
+      // markdown rendering (OMP_MARKDOWN.fenceCode picks a fence longer
+      // than any run inside it).
+      return `**Agent process exited:** ${window.OMP_MARKDOWN.fenceCode(reason, "text")}`;
     }
     const flag = profileId && profileId !== DEFAULT_PROFILE_ID ? ` --profile ${profileId}` : "";
     return [
@@ -836,6 +871,21 @@
     window.OMP_DATA.planMeta  = state.planMeta;
     window.OMP_DATA.ctx       = state.ctx;
     window.OMP_DATA.activity  = state.activity;
+    // Dead-agent composer hint (the clean-exit note's fallback): a tab
+    // whose omp process is gone keeps showing the idle placeholder, so
+    // while exitReason is set the hints say the agent is gone instead of
+    // inviting a prompt no one will answer. Restored on the next publish
+    // without a reason (a respawn/switch nulls exitReason via
+    // _resetSessionVars / a fresh state).
+    if (state.exitReason) {
+      window.OMP_DATA.microcopy = {
+        ...DEFAULT_DATA.microcopy,
+        paletteTip:   "agent process exited — the conversation is saved; restart it to continue",
+        streamingTip: "agent process exited — the conversation is saved; restart it to continue",
+      };
+    } else if (window.OMP_DATA.microcopy !== DEFAULT_DATA.microcopy) {
+      window.OMP_DATA.microcopy = DEFAULT_DATA.microcopy;
+    }
 
     _persistLayout();
   }
@@ -916,7 +966,33 @@
     while (_layoutPending) {
       const layout = _layoutPending;
       _layoutPending = null;
-      await _invokeSafe("open_tabs_save", { layout });
+      // Not `_invokeSafe`: a swallowed error cannot be counted. The
+      // in-app note (below) is the only non-modal channel this module
+      // owns — there is no status-bar toast system to route through.
+      let ok = true;
+      try {
+        await window.__TAURI__.core.invoke("open_tabs_save", { layout });
+      } catch (e) {
+        ok = false;
+        console.error("[live] open_tabs_save failed:", e);
+      }
+      _layoutFailCount = ok ? 0 : _layoutFailCount + 1;
+      // One note per "broken streak": a disk that keeps failing would
+      // otherwise file a note per changed layout. Re-arms only after a
+      // success proves the store is writable again. Filed into the
+      // active tab (a note carries no ts, so the transcript merge keeps
+      // it in place).
+      if (!ok && _layoutFailCount >= 3 && !_layoutNoted && activeSessionId) {
+        _layoutNoted = true;
+        _pushAssistantNote(
+          "**Open tabs could not be saved.** The last 3 writes of `open-tabs.json` failed —" +
+          " the tab layout may revert at the next start. Check the disk and the app's config" +
+          " folder permissions.",
+        );
+        notify();
+      } else if (ok && _layoutNoted) {
+        _layoutNoted = false;
+      }
     }
     _layoutWriting = false;
   }
@@ -1002,6 +1078,9 @@
     turnStartTime   = null;
     activityLog     = [];
     lastSeq         = 0;
+    // A new activation starts with no proof of a talking process; the exit
+    // listener re-arms as soon as any line lands (handleLine).
+    sawFrames      = false;
     extSnapshotSeq  = 0;
     userAbortInFlight = false;
   }
@@ -1051,6 +1130,10 @@
       turnStartTime,
       activityLog:   [...activityLog],
       lastSeq,
+      // Clean-exit note gate (exit listener): a tab whose process never
+      // produced a frame in this activation reports a spawn/startup
+      // failure, not a working agent that quietly ended.
+      sawFrames,
       // An abort whose pause frame and response are still in the tab's
       // journal: the replay on the way back labels the pause and clears it.
       userAbortInFlight,
@@ -1094,6 +1177,7 @@
     turnStartTime   = snap.turnStartTime;
     activityLog     = snap.activityLog;
     lastSeq         = snap.lastSeq ?? 0;
+    sawFrames       = snap.sawFrames ?? false;
     userAbortInFlight = snap.userAbortInFlight ?? false;
     lastTurnOk      = snap.lastTurnOk ?? true;
     return true;
@@ -1184,6 +1268,21 @@
         // here keeps `session_status` from re-noting it on reactivation.
         _notedStartupErrors.add(id);
         _pushAssistantNote(_exitNote(reason, sessionRegistry.get(id)?.profile));
+      } else if (sawFrames) {
+        // A clean exit with no reason used to vanish: the run state flips
+        // to "failed" (exitReason lands via _endDeadProcessState's `??=`
+        // "process exited"), but nothing says the conversation itself is
+        // safe on disk or how to get the agent back. Notes are plain
+        // markdown (the note system has no button facility — the plan
+        // block's "open kanban" button is a rendered component, not a
+        // note), and no local /restart command exists, so the note states
+        // the fact and the composer's placeholder (microcopy in
+        // _runNotify) carries the hint while the tab is in this state; the
+        // actual respawn handle is OMP_BRIDGE.restartSession (wired by
+        // the app shell).
+        _pushAssistantNote(
+          "**Agent process exited.** The conversation is saved on disk — reopen this project to start a new agent for it.",
+        );
       }
       _endDeadProcessState();
       notify();
@@ -2244,6 +2343,11 @@
   // replayed events can't diverge in behaviour.
   function handleLine(envelope) {
     if (!envelope || typeof envelope.text !== "string") return;
+    // Any line at all means the process behind this tab is alive and
+    // talking — the clean-exit note (exit listener) only fires for a
+    // process the user actually saw working, not for one that died
+    // before its first frame.
+    sawFrames = true;
     if (_replayBuffer) {
       // A tab switch is mid-replay — queue instead of dispatching so a live
       // line can never race ahead of (or duplicate) the replay fetch below.
@@ -2391,6 +2495,10 @@
       if (typeof data.nextBefore === "number") {
         const completed = window.adaptAgentMessages(data.messages ?? []);
         state.messages = mergeTranscript(state.messages, completed, { trimmed: false });
+        // The merge replaced any live bubble that carried the inline plan
+        // block with its persisted copy (text/thinking only) — rebuild the
+        // block from the kanban before the notify.
+        _restoreInlinePlanAfterMerge();
         state.windowed = true;
         state.windowCursor = data.nextBefore;
         state.trimmed = data.hasOlder === true;
@@ -2445,6 +2553,12 @@
         streamingBubble = null;
       }
       state.messages = streamingBubble ? [...merged, streamingBubble] : merged;
+      // Same as the windowed branch above: the merge replaced the bubble
+      // that carried the inline plan block with its persisted copy
+      // (text/thinking only) — rebuild it from the kanban. Idempotent
+      // (a block already present is left alone), so a merge over an
+      // already-restored plan is a no-op.
+      _restoreInlinePlanAfterMerge();
       // Backfill prompt history from the persisted transcript — runs on
       // every arrival (plain tab switch, or a resumed/restored session),
       // not just once: mergeOlder is a no-op for prompts already known, so
@@ -3146,13 +3260,12 @@
     }
   }
 
-  function _injectInlinePlan(phases) {
-    const idx = [...state.messages].reverse().findIndex(m => m.kind === "assistant");
-    if (idx === -1) return;
-    const realIdx = state.messages.length - 1 - idx;
-    const msg     = state.messages[realIdx];
-    if (msg.blocks?.some(b => b.type === "plan")) return;
-    const planBlock = {
+  // Build the inline plan block from either shape the tab's plan data
+  // comes in: raw todo_write phases (live tool_execution_end) or kanban
+  // columns (post-merge rebuild — kanban survives a backgrounded tab via
+  // the session snapshot, while the live phases do not).
+  function _planBlockFromPhases(phases) {
+    return {
       type: "plan", title: "Plan",
       phases: phases.map(ph => ({
         id: ph.name, label: ph.name,
@@ -3162,8 +3275,54 @@
         })),
       })),
     };
+  }
+
+  function _planBlockFromKanban(kanban) {
+    return {
+      type: "plan", title: "Plan",
+      phases: kanban.map(col => ({
+        id: col.id, label: col.title,
+        tasks: col.tasks.map((t, i) => ({
+          id: `${col.id}-${i}`, text: t.text, status: t.status,
+        })),
+      })),
+    };
+  }
+
+  // Attach (or refresh) the inline plan block on the last assistant
+  // message. Replacement, not append: the block is the *current* plan
+  // state (the same source state.kanban feeds), so a new todo_write must
+  // overwrite the block an older round left on that message — the old
+  // skip-if-present guard kept a stale plan card on screen forever while
+  // the new phases never showed. Blocks elsewhere (an older message's
+  // historical plan) are left as history.
+  function _injectInlinePlan(phases) {
+    const idx = [...state.messages].reverse().findIndex(m => m.kind === "assistant");
+    if (idx === -1) return;
+    const realIdx = state.messages.length - 1 - idx;
+    const msg     = state.messages[realIdx];
+    const planBlock = _planBlockFromPhases(phases);
+    const blocks = [...(msg.blocks ?? []).filter(b => b.type !== "plan"), planBlock];
     const msgs    = [...state.messages];
-    msgs[realIdx] = { ...msg, blocks: [...(msg.blocks ?? []), planBlock] };
+    msgs[realIdx] = { ...msg, blocks };
+    state.messages = msgs;
+  }
+
+  // After a get_messages merge: the persisted copies the merge installs
+  // carry only text/thinking blocks (adaptAgentMessages drops everything
+  // else), so an inline plan block the live bubble had is gone. Rebuild it
+  // from the kanban the tab still holds (live phases, or a snapshot's on
+  // reactivation) onto the last assistant message — the same place
+  // `_injectInlinePlan` put it.
+  function _restoreInlinePlanAfterMerge() {
+    if (!Array.isArray(state.kanban) || state.kanban.length === 0) return;
+    const idx = [...state.messages].reverse().findIndex(m => m.kind === "assistant");
+    if (idx === -1) return;
+    const realIdx = state.messages.length - 1 - idx;
+    const msg     = state.messages[realIdx];
+    if (msg.blocks?.some(b => b.type === "plan")) return;
+    const msgs    = [...state.messages];
+    msgs[realIdx] = { ...msg, blocks: [...(msg.blocks ?? []), _planBlockFromKanban(state.kanban)] };
     state.messages = msgs;
   }
 
@@ -3314,17 +3473,24 @@
     // the lazily fetched get_available_models both reach ~2 MiB, well past
     // the v1 1 MiB frame cap) arrive as reassembled
     // rpc_chunk sequences instead of failing with a transport-limit error.
-    // Await the negotiate response so v2 is active before the large fetches are
-    // dispatched (stdin is processed in order, but this avoids any IPC-ordering
-    // race). A v1 server or a repeat negotiate simply rejects — harmless.
+    // omp processes stdin serially, so the negotiate line is handled (and
+    // v2 active) before the fetches that follow it — the await here is
+    // belt-and-braces against an IPC-ordering race, not a correctness
+    // requirement. A 2 s cap keeps a wedged negotiate (a v1 server that
+    // never answers, a slow pipe) from delaying the whole fetch batch
+    // behind it: get_state/get_messages then go out immediately after the
+    // cap, still behind negotiate on omp's stdin, so the order that makes
+    // reassembly work is preserved. A v1 server or a repeat negotiate
+    // simply rejects — harmless.
     // A tab switch that starts while negotiate is in flight owns the
     // process from then on: this batch still addresses the tab being left
     // (activeSessionId moves only after the switch's awaits), and its
     // subscription line would undo the switch's downgrade of that process.
     const gen = _switchGen;
-    _sendWithResponse({ type: "negotiate_protocol", protocolVersion: 2 })
-      .catch(() => {})
-      .finally(() => {
+    Promise.race([
+      _sendWithResponse({ type: "negotiate_protocol", protocolVersion: 2 }),
+      new Promise(resolve => setTimeout(resolve, 2000)),
+    ]).catch(() => {}).finally(() => {
         if (_switchGen !== gen) return;
         // omp's ask dialog is off by default and per process: a respawned
         // process falls back to one `select` per question until told again.
@@ -3371,7 +3537,18 @@
               (e) => console.error("[live] get_messages_window failed:", e));
       return;
     }
-    _invokeSend(cmd).catch(_logSendError);
+    _invokeSend(cmd).catch(e => {
+      _logSendError(e);
+      // A dead tab's `prompt` is the one send whose loss the transcript
+      // would otherwise swallow: `send_command` rejected (omp's process
+      // is gone — the tab stays registered), the command was sent with
+      // no id, and no RPC error response will ever reach
+      // `_handleResponse`'s refusal branch. File the same refusal note
+      // the RPC path files, so the optimistic user bubble `_sendPrompt`
+      // already pushed is replaced instead of dangling as an unanswered
+      // prompt. Every other command type keeps the log-only behaviour.
+      if (cmd.type === "prompt") _noteRefusedPrompt(e);
+    });
   }
 
   // The `send_command` hand-off to the active tab, shared by `_send` and
@@ -3461,6 +3638,7 @@
       // `startupId` is validated server-side against the same list, so it is
       // always one of these ids - no client-side reconciliation needed.
       if (res.startupId) startupProfileId = res.startupId;
+      profilesDegraded = res.degraded ?? null;
       notify();
     }
     _syncRecentsProfile();
@@ -3634,6 +3812,14 @@
       promptHistories.get(activeSessionId) ?? [], text, promptHistoryLimit,
       PROMPT_NORMALIZE,
     ));
+    // The cross-session archive (prompt_history.rs): same normalization the
+    // per-tab list just applied; "" means this send was skip-listed — record
+    // nothing. Fire-and-forget: a failed write must never break a send.
+    const normalized = window.OMP_PROMPT_HISTORY.normalize(text, PROMPT_NORMALIZE);
+    if (normalized) {
+      _invokeSafe("prompt_history_record", { text: normalized }, null)
+        .then(list => { if (Array.isArray(list)) { _globalPrompts = list; notify(); } });
+    }
   }
 
   // ── Steer / follow-up sends (app/message-queue.js) ────────────────────────
@@ -4029,6 +4215,17 @@
       _send({ type: "compact", id });
     },
     newSession()       { _send({ type: "new_session" }); },
+    /** Restart the active tab's dead omp process and continue its saved
+     *  conversation (`_respawnSession` with `--resume`, same tab id). The
+     *  escape hatch the clean-exit note points at; resolves to `{ok}` or
+     *  `{ok: false, error}` like `switchSessionProfile`. Also usable when
+     *  the process is alive — the respawn kills it first — but the note is
+     *  its intended reader. */
+    restartSession() {
+      if (!window.__TAURI__ || !activeSessionId) return { ok: false, error: "not connected" };
+      const entry = sessionRegistry.get(activeSessionId);
+      return _respawnSession(activeSessionId, { profile: entry?.profile, resume: entry?.sessionFile || null });
+    },
     exportHtml()       { _send({ type: "export_html" }); },
     /** Side-effectful (RPC to the active tab's omp process) and so not
      *  unit-tested directly. The ~2 MiB get_available_models reply is
@@ -5217,6 +5414,10 @@
     // The approval-mode view, alongside: the status bar and the restart
     // plan read it, and spawns never wait for it (Rust resolves the mode).
     void _refreshApprovalModes();
+    // The cross-session prompt archive, for the history modal's "all
+    // sessions" section — independent of the tab restore chain.
+    _invokeSafe("prompt_history_list", {}, null)
+      .then(list => { if (Array.isArray(list)) { _globalPrompts = list; notify(); } });
     _refreshProfiles()
       .catch(e => console.error("[live] startup profile load failed:", e))
       // Tab ids are never reused across a webview reload: anything Rust still

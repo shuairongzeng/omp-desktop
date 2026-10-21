@@ -52,6 +52,13 @@ pub struct SavedSession {
     pub project_name: String,
     pub path: String,
     pub message_count: usize,
+    /// Set only when `list_saved_sessions` ran with a search `query` that
+    /// matched this session's message text: the matching region, the query
+    /// hit plus ~40 chars of context on each side, standing in for
+    /// `preview` in the history modal's rows. `None` for the unqueried
+    /// list (and for a query that matched only title/project fields, where
+    /// `preview` still tells the story).
+    pub match_snippet: Option<String>,
     pub preview: Option<String>,
 }
 
@@ -89,7 +96,7 @@ fn extract_text_from_content(content: &serde_json::Value) -> Option<String> {
     if let Some(arr) = content.as_array() {
         for block in arr {
             if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                if let Some(text) = block.get("text").and_then(|s| s.as_str()) {
+                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                     let trimmed = text.trim();
                     if !trimmed.is_empty() {
                         return Some(trimmed.to_string());
@@ -119,6 +126,7 @@ fn apply_message_event(
     message_count: &mut usize,
     fallback_title: &mut String,
     last_preview: &mut Option<String>,
+    text_blob: Option<&mut String>,
 ) {
     let msg = val.get("message");
     let role = msg
@@ -144,6 +152,18 @@ fn apply_message_event(
         } else {
             text.clone()
         };
+    }
+    // Search corpus for `list_saved_sessions`'s `query` filter: user and
+    // assistant text only (toolResult output is raw file bytes, see the
+    // doc comment above), lowercased once here so the match itself is a
+    // plain substring, and capped at 100 KB — the corpus exists to find a
+    // hit, not to hold the conversation, and matches past the cap would
+    // only miss deep history, not corrupt it.
+    if let Some(blob) = text_blob {
+        if blob.len() < TEXT_BLOB_CAP_BYTES {
+            blob.push_str(&text.to_lowercase());
+            blob.push('\n');
+        }
     }
     // Keep latest text as preview snippet
     *last_preview = Some(if text.chars().count() > 120 {
@@ -173,8 +193,18 @@ fn update_last_activity(current: &mut Option<String>, candidate: &str) {
     }
 }
 
-/// Parse a single `.jsonl` session file and extract metadata.
-fn parse_session_file(path: &Path) -> Option<SavedSession> {
+/// Byte cap for the search corpus collected per file when a `query` is in
+/// flight (see [`apply_message_event`]). 100 KB keeps the per-scan cost of
+/// even a thousand sessions well under a frame while covering any
+/// conversation a user could reasonably expect to find by substring.
+const TEXT_BLOB_CAP_BYTES: usize = 100 * 1024;
+
+/// Parse a single `.jsonl` session file and extract metadata. When
+/// `text_blob` is `Some`, user/assistant message text is also accumulated
+/// (lowercased, capped) into it — `list_saved_sessions`'s `query` filter
+/// passes one in; every other caller passes `None` and the blob is never
+/// built.
+fn parse_session_file(path: &Path, mut text_blob: Option<&mut String>) -> Option<SavedSession> {
     let file = File::open(path).ok()?;
     let reader = BufReader::new(file);
 
@@ -186,6 +216,7 @@ fn parse_session_file(path: &Path) -> Option<SavedSession> {
     let mut cwd = String::new();
     let mut message_count = 0usize;
     let mut last_preview: Option<String> = None;
+    let mut blob = text_blob.as_deref_mut().map(|_| String::new());
 
     for line_res in reader.lines() {
         let Ok(line) = line_res else { continue };
@@ -234,6 +265,7 @@ fn parse_session_file(path: &Path) -> Option<SavedSession> {
                     &mut message_count,
                     &mut fallback_title,
                     &mut last_preview,
+                    blob.as_mut(),
                 );
                 if let Some(ts) = val.get("timestamp").and_then(|s| s.as_str()) {
                     update_last_activity(&mut updated_at, ts);
@@ -241,6 +273,14 @@ fn parse_session_file(path: &Path) -> Option<SavedSession> {
             }
             _ => {}
         }
+    }
+
+    // The caller's blob slot (when a query asked for one) gets whatever the
+    // cap allowed to accumulate. Written before the `None` return below so
+    // the borrow checker sees the `&mut` parameter used on every path; the
+    // caller discards it when `None` comes back.
+    if let Some((slot, collected)) = text_blob.zip(blob) {
+        *slot = collected;
     }
 
     if session_id.is_empty() && timestamp.is_empty() {
@@ -279,6 +319,7 @@ fn parse_session_file(path: &Path) -> Option<SavedSession> {
         project_name,
         path: path.to_string_lossy().into_owned(),
         message_count,
+        match_snippet: None,
         preview: last_preview,
     })
 }
@@ -287,6 +328,33 @@ fn parse_session_file(path: &Path) -> Option<SavedSession> {
 /// no trailing slash, case-insensitive.
 fn normalize_cwd(cwd: &str) -> String {
     cwd.replace('\\', "/").trim_end_matches('/').to_lowercase()
+}
+
+/// Snippet for a text-blob hit: `needle` plus ~40 chars of context on each
+/// side, cut on char boundaries (the blob is lowercased text; indices from
+/// a byte search are valid as-is). Newlines in the window become spaces so
+/// the one-line row stays one line. `None` when `needle` isn't in `blob` —
+/// a title/project hit must keep `preview` as the row's second line.
+fn match_snippet(blob: &str, needle: &str) -> Option<String> {
+    // ~40 chars of context each side, snapped to char boundaries (a byte
+    // index from `find` is always one; an arbitrary offset is not).
+    const CTX: usize = 40;
+    let start = blob.find(needle)?;
+    let end = start + needle.len();
+    let snap_start = blob
+        .char_indices()
+        .map(|(i, _)| i)
+        .filter(|&i| i <= start)
+        .nth_back(CTX)
+        .unwrap_or(0);
+    let snap_end = blob
+        .char_indices()
+        .map(|(i, _)| i)
+        .filter(|&i| i >= end)
+        .nth(CTX)
+        .unwrap_or(blob.len());
+    let text = blob[snap_start..snap_end].replace('\n', " ");
+    Some(text.trim().to_string())
 }
 
 /// Extract the durable uuid component from a saved-session filename stem.
@@ -312,13 +380,26 @@ pub fn canonical_id_from_stem(path: &Path) -> Option<&str> {
     looks_like_uuid.then_some(uuid)
 }
 
-/// Walk `root` for `.jsonl` session files, optionally filtered by `cwd_filter`.
+/// Walk `root` for `.jsonl` session files, optionally filtered by
+/// `cwd_filter` and/or `query`.
 /// Sessions are sorted newest-first by `updated_at` (falling back to `timestamp`).
+///
+/// `query` (non-empty after trim) is a case-insensitive substring matched
+/// against each session's title/project fields and its user/assistant
+/// message text (collected during the same parse pass, capped — see
+/// [`parse_session_file`]). Non-matching sessions are dropped; a text
+/// match also fills `match_snippet` with the hit plus ~40 chars of context
+/// on each side. `query = None`/empty keeps the pre-query behaviour byte
+/// for byte — the text blob is not even collected.
 ///
 /// Split out from `scan_saved_sessions` (which resolves `root` from the
 /// `AppHandle`) so the walk/filter/sort logic can be unit-tested against a
 /// tempdir without a Tauri app instance.
-fn scan_dir(root: &Path, cwd_filter: Option<&str>) -> Result<Vec<SavedSession>, String> {
+fn scan_dir(
+    root: &Path,
+    cwd_filter: Option<&str>,
+    query: Option<&str>,
+) -> Result<Vec<SavedSession>, String> {
     if !root.exists() {
         return Ok(Vec::new());
     }
@@ -327,6 +408,9 @@ fn scan_dir(root: &Path, cwd_filter: Option<&str>) -> Result<Vec<SavedSession>, 
         fs::read_dir(root).map_err(|e| format!("failed to read {}: {e}", root.display()))?;
 
     let norm_filter = cwd_filter.filter(|f| !f.is_empty()).map(normalize_cwd);
+    let needle = query
+        .filter(|q| !q.trim().is_empty())
+        .map(|q| q.trim().to_lowercase());
 
     let mut sessions = Vec::new();
 
@@ -334,6 +418,15 @@ fn scan_dir(root: &Path, cwd_filter: Option<&str>) -> Result<Vec<SavedSession>, 
         let Ok(entry) = entry_res else { continue };
         let folder_path = entry.path();
         if !folder_path.is_dir() {
+            continue;
+        }
+        // `delete_saved_session` parks trashed sessions here; they must
+        // not reappear in the history list.
+        if folder_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n == ".trash")
+        {
             continue;
         }
 
@@ -353,13 +446,29 @@ fn scan_dir(root: &Path, cwd_filter: Option<&str>) -> Result<Vec<SavedSession>, 
                 continue;
             }
 
-            let Some(session) = parse_session_file(&path) else {
+            let mut text_blob = needle.as_deref().map(|_| String::new());
+            let Some(mut session) = parse_session_file(&path, text_blob.as_mut()) else {
                 continue;
             };
             if let Some(norm_filter) = &norm_filter {
                 if &normalize_cwd(&session.cwd) != norm_filter {
                     continue;
                 }
+            }
+            if let Some(needle) = &needle {
+                let field_hit = session.title.to_lowercase().contains(needle)
+                    || session.project_name.to_lowercase().contains(needle)
+                    || session.cwd.to_lowercase().contains(needle);
+                // The blob is only collected when a needle exists; a match
+                // in it also fills the snippet the modal shows in place of
+                // `preview`. A field-only hit keeps `preview`.
+                let snippet = text_blob
+                    .as_deref()
+                    .and_then(|blob| match_snippet(blob, needle));
+                if !field_hit && snippet.is_none() {
+                    continue;
+                }
+                session.match_snippet = snippet;
             }
             sessions.push(session);
         }
@@ -376,7 +485,10 @@ fn scan_dir(root: &Path, cwd_filter: Option<&str>) -> Result<Vec<SavedSession>, 
 }
 
 /// Scan `profile`'s sessions directory for saved `.jsonl` session files.
-/// If `cwd_filter` is provided, only sessions whose `cwd` matches are returned.
+/// If `cwd_filter` is provided, only sessions whose `cwd` matches are
+/// returned. A non-empty `query` additionally filters by case-insensitive
+/// substring over title/project/cwd/message text and fills
+/// `match_snippet` on text hits (see [`scan_dir`]).
 ///
 /// # Errors
 /// Returns an error when the home directory can't be resolved or the
@@ -384,11 +496,12 @@ fn scan_dir(root: &Path, cwd_filter: Option<&str>) -> Result<Vec<SavedSession>, 
 pub fn scan_saved_sessions(
     app: &AppHandle,
     cwd_filter: Option<&str>,
+    query: Option<&str>,
     profile: Option<&str>,
 ) -> Result<Vec<SavedSession>, String> {
     let root = sessions_root_dir(app, profile)
         .ok_or_else(|| "could not resolve home directory".to_string())?;
-    scan_dir(&root, cwd_filter)
+    scan_dir(&root, cwd_filter, query)
 }
 
 /// Validate a `resume` value supplied over the Tauri IPC boundary against
@@ -449,6 +562,176 @@ pub fn validate_resume(app: &AppHandle, resume: &str, profile: Option<&str>) -> 
     let root = sessions_root_dir(app, profile)
         .ok_or_else(|| "could not resolve home directory".to_string())?;
     validate_resume_against_root(&root, resume)
+}
+
+// ── history governance: delete / rename ─────────────────────────────────────
+
+/// Canonicalise a session-file `path` coming over IPC and prove it is a
+/// `.jsonl` file inside `root` — the same confinement
+/// [`validate_resume_against_root`] imposes on resume values, reused by the
+/// delete/rename history commands so a crafted frontend value can never
+/// move or rewrite a file outside omp's sessions tree.
+fn canonical_session_path(root: &Path, path: &str) -> Result<PathBuf, String> {
+    if path.starts_with('-') {
+        return Err(format!("invalid session path: {path:?}"));
+    }
+    let canonical = Path::new(path)
+        .canonicalize()
+        .map_err(|e| format!("session path does not exist: {path:?} ({e})"))?;
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("sessions directory unavailable: {e}"))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(format!(
+            "session path {path:?} is outside the sessions directory"
+        ));
+    }
+    if canonical.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        return Err(format!(
+            "session path {path:?} is not a .jsonl session file"
+        ));
+    }
+    Ok(canonical)
+}
+
+/// Move a session file (validated to live under `root`) into
+/// `<its directory>/.trash/`, creating the directory when missing. A
+/// same-named file already in the trash gets a numeric suffix (`.1`,
+/// `.2`, … — the first free one) rather than an overwrite, so repeated
+/// delete/regenerate cycles never silently destroy earlier trash. Recovery
+/// is manual (drag the file back out). omp never reads `.trash/`: the
+/// sessions scan skips it by name (see `scan_dir`), so a trashed session
+/// vanishes from the history list the moment the file lands there.
+pub fn delete_saved_session(root: &Path, path: &str) -> Result<(), String> {
+    let canonical = canonical_session_path(root, path)?;
+    let parent = canonical
+        .parent()
+        .ok_or_else(|| format!("session path has no parent: {path:?}"))?;
+    let trash = parent.join(".trash");
+    fs::create_dir_all(&trash).map_err(|e| format!("failed to create {}: {e}", trash.display()))?;
+    let name = canonical
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("session path has no file name: {path:?}"))?;
+    let mut target = trash.join(name);
+    // Same-name conflict: `.1`, `.2`, … — first free suffix wins.
+    let stem = canonical
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name);
+    let mut n = 1;
+    while target.exists() {
+        target = trash.join(format!("{stem}.{n}.jsonl"));
+        n += 1;
+    }
+    fs::rename(&canonical, &target).map_err(|e| {
+        format!(
+            "failed to move {} into {}: {e}",
+            canonical.display(),
+            target.display()
+        )
+    })
+}
+
+/// Rewrite a session file's first line (the `title` event — see the
+/// `parse_session_file` doc comment; omp always keeps it physically first)
+/// with a new `title` field, leaving every other byte of the file
+/// untouched. Atomic write via [`crate::json_store::write_atomic`] (the
+/// snapshot/temp+rename pattern the JSON stores use).
+///
+/// `title` is cleaned first: trimmed, newlines and other control
+/// characters removed (the file is line-oriented JSONL — a raw newline
+/// inside the first line would corrupt it), capped at 120 chars.
+///
+/// Reads the whole file into memory even though only the first line
+/// changes: [`crate::json_store::write_atomic`] writes the destination by
+/// rename, so the unchanged tail has to be handed to it as bytes. A
+/// multi-GB session file is not a real shape (omp appends JSON events, and
+/// the largest real transcripts run in the tens of MB), and the command
+/// runs on a `spawn_blocking` thread.
+pub fn rename_saved_session(root: &Path, path: &str, title: &str) -> Result<(), String> {
+    let canonical = canonical_session_path(root, path)?;
+    let cleaned: String = title
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(120)
+        .collect();
+    if cleaned.is_empty() {
+        return Err("title must not be empty".to_string());
+    }
+    let bytes =
+        fs::read(&canonical).map_err(|e| format!("failed to read {}: {e}", canonical.display()))?;
+    let first_line_end = bytes
+        .iter()
+        .position(|&b| b == b'\n')
+        .unwrap_or(bytes.len());
+    let first = String::from_utf8_lossy(&bytes[..first_line_end]);
+    let rest = &bytes[first_line_end..];
+    let mut val: serde_json::Value = serde_json::from_str(first.trim())
+        .map_err(|e| format!("session first line is not valid JSON: {e}"))?;
+    // Only a `title` event's `title` field is replaced; the type and every
+    // other field (id, updatedAt, …) survive verbatim, and so does every
+    // byte after the first newline.
+    if val.get("type").and_then(|t| t.as_str()) != Some("title") {
+        return Err(format!(
+            "session first line is not a title event: {}",
+            canonical.display()
+        ));
+    }
+    let Some(title_slot) = val.get_mut("title").filter(|t| t.is_string()) else {
+        return Err(format!(
+            "session first line has no title field: {}",
+            canonical.display()
+        ));
+    };
+    *title_slot = serde_json::Value::String(cleaned);
+    let mut out = serde_json::to_string(&val)
+        .map_err(|e| format!("failed to re-serialize title event: {e}"))?
+        .into_bytes();
+    // `rest` starts with the newline that ended the first line when there
+    // was one; only a file whose single line ended without one needs it
+    // appended. Never doubled: every other byte after the first line is
+    // preserved verbatim.
+    if rest.first() != Some(&b'\n') {
+        out.push(b'\n');
+    }
+    out.extend_from_slice(rest);
+    crate::json_store::write_atomic(&canonical, &out)
+        .map_err(|e| format!("failed to write {}: {e}", canonical.display()))
+}
+
+/// [`delete_saved_session`] against `profile`'s sessions directory.
+///
+/// # Errors
+/// Returns an error when the home directory can't be resolved or the move
+/// fails (see [`delete_saved_session`]).
+pub fn delete_saved_session_for(
+    app: &AppHandle,
+    path: &str,
+    profile: Option<&str>,
+) -> Result<(), String> {
+    let root = sessions_root_dir(app, profile)
+        .ok_or_else(|| "could not resolve home directory".to_string())?;
+    delete_saved_session(&root, path)
+}
+
+/// [`rename_saved_session`] against `profile`'s sessions directory.
+///
+/// # Errors
+/// Returns an error when the home directory can't be resolved or the
+/// rewrite fails (see [`rename_saved_session`]).
+pub fn rename_saved_session_for(
+    app: &AppHandle,
+    path: &str,
+    title: &str,
+    profile: Option<&str>,
+) -> Result<(), String> {
+    let root = sessions_root_dir(app, profile)
+        .ok_or_else(|| "could not resolve home directory".to_string())?;
+    rename_saved_session(&root, path, title)
 }
 
 #[cfg(test)]

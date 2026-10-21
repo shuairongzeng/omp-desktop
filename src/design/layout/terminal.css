@@ -82,3 +82,88 @@
 /* The inset sits on xterm's own element: FitAddon subtracts that padding
    from the body's size, so the last row and column are never clipped. */
 .term-body .xterm { padding: 4px 6px; }
+
+/* ── Touch key row (terminal-panel.jsx's phone tier) ─────────────────
+   Rendered only by a coarse pointer (OMP_MOBILE.isTouch gates the JSX);
+   these rules just size and colour it, and the ≤760px layer below shows
+   it — a wide touch window keeps desktop rules alone. Base: display none
+   so a non-phone touch device (a tablet at 900px) sees no orphan row
+   either; the width tier owns its visibility. */
+.term-keyrow {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.term-keyrow .term-key {
+  flex: 1;
+  min-width: 40px;
+  height: 34px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--bg-surface);
+  color: var(--fg-2);
+  font-family: var(--font-mono);
+  font-size: var(--d-text-sm);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 120ms var(--ease-out), color 120ms;
+}
+.term-keyrow .term-key:hover { background: var(--bg-hover); }
+.term-keyrow .term-key:active { background: var(--bg-hover); color: var(--fg); }
+/* The sticky Ctrl: lit while armed, so the next key's rider is visible.
+   Same ink as the exited-restart badge — an "armed" state, not a value. */
+.term-keyrow .term-key-ctrl.on {
+  background: var(--accent-soft);
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+  color: var(--accent);
+}
+
+/* ── Phone tier (≤760px) — the terminal a thumb can drive ────────────
+   The 820px layer in layout/mobile.css already gave the panel room
+   (max-height 60%, min-height 30vh); this sizes the parts a finger
+   hits. Desktop never sees any of this. */
+@media (max-width: 760px) {
+  /* The handle: a 6px strip is a sub-finger target. It stays an edge
+     strip (the panel below it is the terminal itself), but 24px tall,
+     centred on the panel's top border (top -12), with a bar mark in a
+     ::before so the hover wash keeps covering the whole strip. The tip
+     label still reads the px value (terminal-panel.jsx). */
+  .term-handle { top: -12px; height: 24px; }
+  .term-handle::before {
+    content: "";
+    position: absolute; top: 50%; left: 50%;
+    width: 36px; height: 3px;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background: var(--line-bright);
+  }
+  .term-handle:hover, .term-handle.dragging, .term-handle:focus-visible {
+    background: color-mix(in oklab, var(--accent) 25%, transparent);
+  }
+  .term-handle.dragging::before, .term-handle:hover::before, .term-handle:focus-visible::before {
+    background: var(--accent);
+  }
+
+  /* The head: ≥40px tall, the close button ≥36px (a finger, not a
+     mouse). The row's own height var (--d-row) stays for the parts that
+     read; this is the panel's finger minimum. */
+  .term-head { height: 40px; padding: 0 6px; }
+  .term-head .term-head-shell, .term-head .term-head-cwd { font-size: var(--d-text-xs); }
+  .btn.icon.term-head-close { width: 36px; height: 36px; }
+
+  /* The touch key row shows (the JSX gated it to coarse pointers); the
+     caps share the head's line and the row scrolls horizontally rather
+     than wrapping, so a narrow phone keeps one predictable row. */
+  .term-keyrow {
+    display: flex;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .term-keyrow .term-key { flex: 0 0 auto; min-width: 52px; height: 36px; }
+  .term-keyrow .term-key-ctrl { flex: 0 0 auto; min-width: 60px; }
+}

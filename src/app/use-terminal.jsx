@@ -18,14 +18,18 @@
    View policy stays here: the shell starts the first time a tab's panel
    is shown with no shell yet, at the fitted size; Enter in an exited
    (or failed) shell starts a new one; auto-open, height and focus (a
-   panel hidden while it holds the focus hands it to the composer).
+   panel hidden while it holds the focus hands it to the composer; on a
+   touchscreen the panel never takes the focus on open — the software
+   keyboard would cover the output the panel was opened to watch, and
+   the composer's refocus guard bails the same way).
 
-   Returns `{ state, height, toggle, close, setHeight, mountFor,
-   copySelection }`. `height` is the panel height every
-   panel shares, the `terminalHeight` tweak (its default lives in
-   TWEAK_DEFAULTS). Every panel body is watched with a ResizeObserver:
-   sidebar, tree, subagent pane and window changes all end in a
-   (debounced) refit.
+   Touch key row (design/terminal-panel.jsx's phone tier): the caps call
+   `sendKey`, whose sequences go through `bridge.terminalWrite` — the
+   same channel xterm's own keys end in — and the sticky Ctrl
+   (`toggleCtrl`, per tab) rides the next key the terminal sends, a
+   letter typed into it or an arrow cap, then disarms. `paste` reads the
+   clipboard into the shell (the row's 粘贴 cap and the panel's
+   right-click), via terminal-xterm.js's exported `paste`.
    ═════════════════════════════════════════════════════════════════════ */
 
 const {
@@ -38,8 +42,8 @@ const {
 const { pruneEntries: _UT_pruneEntries } = window.OMP_SESSION_UI;
 const {
   SKIPPED_LINE: _UT_SKIPPED, exitLine: _UT_exitLine, failLine: _UT_failLine, theme: _UT_theme,
-  applyWindowsPty: _UT_applyWindowsPty, createXterm: _UT_createXterm, copySelection: _UT_copySelection,
-  paste: _UT_pasteTerm, scrollbackLines: _UT_scrollbackLines, ensureXterm: _UT_ensureXterm,
+  applyWindowsPty: _UT_applyWindowsPty, createXterm: _UT_createXterm, copySelection: _UT_copySelection, paste: _UT_paste,
+  scrollbackLines: _UT_scrollbackLines, ensureXterm: _UT_ensureXterm,
 } = window.OMP_TERMINAL_XTERM;
 const {
   EMPTY: _UT_STREAM, beginSync: _UT_beginSync, onEvent: _UT_onEvent, replayCursor: _UT_replayCursor,
@@ -233,7 +237,11 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
         respawn(sid);
         return true;
       },
-      onData: (data) => bridge.terminalWrite(sid, data),
+      // Every key xterm sends reaches Rust through this one callback, so
+      // the sticky Ctrl (a touch key row cap) hooks the same place: one
+      // path defines what "typed into this terminal" means. `rewriteKeyRef`
+      // exists (see below) by the time xterm can fire onData.
+      onData: (data) => bridge.terminalWrite(sid, rewriteKeyRef.current(sid, data)),
       // Only a live shell has a pty to resize; the size a shell starts at is
       // the one `spawn` sends (and corrects once the reply is in).
       onResize: ({ cols, rows }) => {
@@ -299,10 +307,52 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
     const term = recs.current.get(sid)?.term;
     return term ? _UT_copySelection(term) : false;
   }, []);
-  /** Right-click paste (terminal-panel.jsx): the clipboard into the shell. */
+  /** The clipboard into the shell: terminal-panel.jsx's right-click (no
+   *  selection) and the phone tier's 粘贴 cap. Goes through
+   *  terminal-xterm.js's `paste` (xterm normalises the line endings and
+   *  brackets the text when the running program turned bracketed paste
+   *  on; a read failure is logged, not thrown). */
   const paste = React.useCallback((sid) => {
     const term = recs.current.get(sid)?.term;
-    if (term) _UT_pasteTerm(term);
+    if (term) _UT_paste(term);
+  }, []);
+
+  // ── Phone tier: the touch key row (design/terminal-panel.jsx) ────────
+  // Sticky Ctrl per tab: set by the row's cap, shown lit in the panel
+  // head, riding the next key that terminal sends (the row's own caps or
+  // a letter typed into xterm), then disarming itself. A switch to
+  // another tab disarms its panel — a cap "armed" twice panels away
+  // would be a trap.
+  const [ctrlTabs, setCtrlTabs] = React.useState({});
+  const ctrlTabsRef = React.useRef(ctrlTabs);
+  ctrlTabsRef.current = ctrlTabs;
+  /** The sticky-ctrl transform of one key `data` (xterm's exact bytes for
+   *  it): a single-char key from an armed tab is rewritten to its ctrl
+   *  sequence, the tab's arm clearing with the key it rode. Everything
+   *  else — control codes, ESC sequences, IME text, a multi-char paste
+   *  through xterm — passes through untouched, and the arm survives only
+   *  for a key it could have ridden. */
+  const rewriteKey = React.useCallback((sid, data) => {
+    if (data.length !== 1 || !ctrlTabsRef.current[sid]) return data;
+    const code = data.toUpperCase().charCodeAt(0);
+    const seq = code >= 64 && code <= 95 ? String.fromCharCode(code - 64) : null;
+    setCtrlTabs((s) => (seq != null ? { ...s, [sid]: false } : s));
+    return seq ?? data;
+  }, []);
+  const rewriteKeyRef = React.useRef(rewriteKey);
+  rewriteKeyRef.current = rewriteKey;
+  /** The touch key row's writer: a cap's exact bytes to the tab's shell,
+   *  through the same bridge channel xterm's own keys end in. The
+   *  sticky-ctrl transform applies first (a cap is "the next key" when
+   *  the arm is on), so an armed Ctrl plus the ↓ cap sends ctrl+↓, not
+   *  a bare ↓. */
+  const sendKey = React.useCallback((sid, data) => {
+    bridge.terminalWrite(sid, rewriteKey(sid, data));
+  }, [bridge, rewriteKey]);
+  /** Toggle the tab's sticky-ctrl arm; returns nothing (the panel reads
+   *  the lit state through `ctrlTabs`, re-rendered by setState). */
+  const toggleCtrl = React.useCallback((sid) => {
+    setCtrlTabs((s) => (s[sid] ? { ...s, [sid]: false } : { ...s, [sid]: true }));
   }, []);
   const focus = React.useCallback((sid) => recs.current.get(sid)?.term.focus(), []);
   // Hiding a panel that holds the focus (xterm's textarea, the close
@@ -332,6 +382,9 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
   // tab's state change must not refit (and repaint) the terminal the user
   // is looking at.
   const prevOpen = React.useRef(null);
+  // The tab the effect last saw active: the "left tab" whose sticky Ctrl
+  // arm clears when the user switches away (see below).
+  const prevActive = React.useRef(null);
   const activeEntry = _UT_entryOf(state, activeSessionId);
   React.useEffect(() => {
     const entry = activeEntry;
@@ -345,11 +398,27 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
       // exact "Settings is showing" test (the composer's refocus guard
       // reads it the same way). The page owns focus then; xterm grabbing
       // it would leave the page's keys — Enter on its buttons, its search
-      // — typing into a terminal the user cannot see.
-      if (prevOpen.current !== activeSessionId && !document.querySelector(".st-host:not([hidden])")) {
+      // — typing into a terminal the user cannot see. And not on a
+      // touchscreen: an opened panel popping the software keyboard over
+      // the output it was opened to watch is the one thing no terminal
+      // user wants (composer.jsx's refocus guard bails the same way); the
+      // panel keeps the focus, focus arrives when they tap the body.
+      if (prevOpen.current !== activeSessionId
+        && !window.OMP_MOBILE?.isTouch?.()
+        && !document.querySelector(".st-host:not([hidden])")) {
         focus(activeSessionId);
       }
+      // Leaving a tab whose sticky Ctrl was armed disarms it (the glow
+      // belongs to the panel being typed into, not one two tabs away);
+      // the update runs whatever the new tab's panel state, so a switch
+      // to a tab with no terminal yet still disarms the left one.
     }
+    if (prevActive.current && prevActive.current !== activeSessionId
+      && ctrlTabsRef.current[prevActive.current]) {
+      const left = prevActive.current;
+      setCtrlTabs((s) => (s[left] ? { ...s, [left]: false } : s));
+    }
+    prevActive.current = activeSessionId;
     prevOpen.current = entry.open ? activeSessionId : null;
   }, [activeEntry, activeSessionId, height, syncTick, fit, spawn, focus]);
 
@@ -387,7 +456,13 @@ function useTerminal({ bridge, activeSessionId, sessionIds, tweaks, setTweak }) 
     for (const sid of Object.keys(state)) if (state[sid].dirty) out[sid] = true;
     return out;
   }, [state]);
-  return { state, height, toggle, close, setHeight, mountFor, copySelection, paste, respawn, dirtyTabs };
+  // `sendKey` (per-key, with the sticky-ctrl rewrite), `ctrlTabs` (which
+  // panels' Ctrl caps are lit) and `toggleCtrl` arm/disarm them — the
+  // phone tier's touch key row (design/terminal-panel.jsx) calls these.
+  return {
+    state, height, toggle, close, setHeight, mountFor, copySelection, paste, respawn, dirtyTabs,
+    sendKey, ctrlTabs, toggleCtrl,
+  };
 }
 
 Object.assign(window, { useTerminal });

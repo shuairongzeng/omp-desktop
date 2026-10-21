@@ -79,6 +79,25 @@
         return v.length <= 2 ? v : ref;
       })
     : s;
+  // Highlight cost caps: a multi-megabyte fence (an agent pasting a log
+  // into its reply) puts hljs.highlight through megabytes of regex work
+  // on every settled render, and highlightAuto tries every registered
+  // language on top, so its cap is half. Over a cap the fence renders as
+  // plain escaped <code> in the same wrapper — the colouring is skipped,
+  // never the content.
+  const MAX_HIGHLIGHT_UNITS = 64 * 1024; // UTF-16 code units: a cheap byte floor
+  const MAX_AUTO_UNITS = 32 * 1024;
+  const MAX_HIGHLIGHT_LINES = 2000;
+  // Whether `s` spans more than `cap` lines. It only ever decides
+  // *whether* to highlight, so the count stops at the cap instead of
+  // scanning a megabyte that is already over it.
+  const linesOver = (s, cap) => {
+    let n = 1;
+    for (let i = s.indexOf('\n'); i !== -1; i = s.indexOf('\n', i + 1)) {
+      if (++n > cap) return true;
+    }
+    return false;
+  };
   window.marked.use({
     renderer: {
       // One renderer for both token kinds: a block (`<div>…`, a comment, a
@@ -114,11 +133,16 @@
         // memo key flips on the settled text). Read per render, not a
         // second parser registration: every other renderer below behaves
         // identically with it on.
-        if (!window.OMP_MARKDOWN.skipHighlight) {
+        // The size caps (MAX_HIGHLIGHT_* / MAX_AUTO_UNITS) reach the same
+        // verdict for oversized fences: plain escaped <code> in the same
+        // wrapper, colouring skipped — never the content.
+        const tooBig = code.length > MAX_HIGHLIGHT_UNITS || linesOver(code, MAX_HIGHLIGHT_LINES);
+        if (!window.OMP_MARKDOWN.skipHighlight && !tooBig) {
           try {
             highlighted = language && hljs.getLanguage(language)
               ? hljs.highlight(code, { language }).value
-              : hljs.highlightAuto(code).value;
+              : code.length <= MAX_AUTO_UNITS ? hljs.highlightAuto(code).value
+              : escapeHtml(code);
           } catch (_) {
             highlighted = escapeHtml(code);
           }

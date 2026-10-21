@@ -30,6 +30,10 @@ pub struct Frame {
     pub name: Option<String>,
     /// `device_info` os tag, when present.
     pub os: Option<String>,
+    /// Top-level `from` (the sender's connection id), when present. The
+    /// relay tags phone→desktop `cmd` frames with it; a desktop `res` may
+    /// echo it back for unicast routing.
+    pub from: Option<String>,
 }
 
 /// Envelope rules (`docs/architecture/remote-control.md`):
@@ -42,6 +46,8 @@ pub struct Frame {
 /// - `pair_grant`/`pair_deny` require string `pair_id`.
 /// - `revoke` requires string `phone_hash`.
 /// - `device_info` requires string `name`; string `os` is optional.
+/// - `hello` carries `v` + `caps` with no required fields (the relay and
+///   desktop peers announce capabilities; the relay never parses `caps`).
 pub fn parse(text: &str) -> Inbound {
     let v: Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -55,6 +61,7 @@ pub fn parse(text: &str) -> Inbound {
     };
     let str_field = |k: &str| obj.get(k).and_then(Value::as_str).map(String::from);
     let id = obj.get("id").and_then(Value::as_u64);
+    let from = str_field("from");
     let frame = |t: &str, pair_id: Option<String>, phone_hash: Option<String>| {
         Inbound::Valid(Frame {
             t: t.to_string(),
@@ -63,6 +70,7 @@ pub fn parse(text: &str) -> Inbound {
             phone_hash,
             name: None,
             os: None,
+            from: from.clone(),
         })
     };
 
@@ -101,9 +109,14 @@ pub fn parse(text: &str) -> Inbound {
                 phone_hash: None,
                 name: Some(n),
                 os: str_field("os"),
+                from,
             }),
             None => Inbound::Invalid,
         },
+        // Capability handshake: the relay sends one on every join, the
+        // desktop broadcasts one on connect. `v`/`caps` are opaque to the
+        // relay (peers decide what to make of them).
+        "hello" => frame(t, None, None),
         _ => Inbound::UnknownType,
     }
 }
@@ -134,12 +147,24 @@ pub fn tag_from(text: &str, conn_id: &str) -> String {
 pub mod emit {
     use super::Value;
 
+    /// Capabilities the relay announces in its join-time `hello` frame:
+    /// `res-unicast` (a `res` carrying `from` goes only to that phone),
+    /// `transcript-window` (windowed get_messages is the norm), `hello`
+    /// (this handshake itself exists).
+    pub const RELAY_CAPS: [&str; 3] = ["res-unicast", "transcript-window", "hello"];
+
     fn json(v: Value) -> String {
         v.to_string()
     }
 
     pub fn res(id: Option<u64>, ok: bool, error: Option<&str>) -> String {
         json(serde_json::json!({"t":"res","id":id,"ok":ok,"error":error}))
+    }
+
+    /// The relay's own capability announcement, sent to every client on
+    /// join: `{"t":"hello","v":1,"caps":["res-unicast","transcript-window","hello"]}`.
+    pub fn hello() -> String {
+        json(serde_json::json!({"t":"hello","v":1,"caps":RELAY_CAPS}))
     }
 
     /// Oversize drop notice to the sender only.
@@ -210,6 +235,8 @@ mod tests {
             r#"{"t":"list_phones"}"#,
             r#"{"t":"device_info","name":"My PC"}"#,
             r#"{"t":"device_info","name":"My PC","os":"windows"}"#,
+            r#"{"t":"hello","v":1,"caps":["res-unicast","transcript-window","hello"]}"#,
+            r#"{"t":"hello"}"#,
         ];
         for c in cases {
             assert!(matches!(parse(c), Inbound::Valid(_)), "{c} must parse");
@@ -394,5 +421,45 @@ mod tests {
         assert_eq!(v["list"][0]["hash"], "h1");
         assert_eq!(v["list"][1]["name"], "b");
         assert_eq!(v["list"][1]["paired_at"], 2);
+    }
+
+    #[test]
+    fn from_field_extracted_when_string() {
+        // A desktop res echoing `from` (the unicast routing key).
+        let Inbound::Valid(f) =
+            parse(r#"{"t":"res","id":42,"ok":true,"value":1,"from":"a1b2c3d4"}"#)
+        else {
+            panic!();
+        };
+        assert_eq!(f.t, "res");
+        assert_eq!(f.id, Some(42));
+        assert_eq!(f.from.as_deref(), Some("a1b2c3d4"));
+
+        // cmd frames the relay tags also extract `from`.
+        let Inbound::Valid(f) = parse(r#"{"t":"cmd","id":5,"name":"x","from":"deadbeef"}"#)
+        else {
+            panic!();
+        };
+        assert_eq!(f.from.as_deref(), Some("deadbeef"));
+        assert_eq!(f.name, None);
+
+        // No `from` → None; a non-string `from` is ignored (never
+        // misroutes a unicast).
+        let Inbound::Valid(f) = parse(r#"{"t":"res","id":1,"ok":false,"error":"x"}"#) else {
+            panic!();
+        };
+        assert_eq!(f.from, None);
+        let Inbound::Valid(f) = parse(r#"{"t":"res","id":1,"ok":true,"from":7}"#) else {
+            panic!();
+        };
+        assert_eq!(f.from, None);
+    }
+
+    #[test]
+    fn relay_hello_shape() {
+        let v: Value = serde_json::from_str(&emit::hello()).unwrap();
+        assert_eq!(v["t"], "hello");
+        assert_eq!(v["v"], 1);
+        assert_eq!(v["caps"], serde_json::json!(emit::RELAY_CAPS));
     }
 }

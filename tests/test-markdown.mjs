@@ -242,4 +242,39 @@ check("table cell content stays escaped through the wrap", () => {
   assert.ok(html.includes("&lt;img src=t onerror=alert(1)&gt;"), html);
 });
 
+// ── Highlight size caps (oversized fences stay plain but whole) ──────────
+
+check("a fence over 64KB skips highlighting but keeps the wrapper and copy button", () => {
+  const code = "x".repeat(65 * 1024); // one line, > 64KB
+  const html = marked.parse("```js\n" + code + "\n```");
+  // Same structure as a highlighted block: pre.code-block.copy-host > code.hljs
+  // + exactly one copy button, no hljs spans.
+  assert.match(html, /^<pre class="code-block copy-host"><code class="hljs language-js">/);
+  assert.equal(html.match(/<span /g), null);
+  assert.equal(html.match(/<button /g)?.length, 1, html.slice(0, 200));
+  assert.ok(html.includes("</code><button "), html.slice(0, 200));
+  assert.equal(textOf(/<code class="hljs[^"]*">([\s\S]*)<\/code>/.exec(html)[1]), code);
+});
+
+check("a fence over 2000 lines skips highlighting", () => {
+  const code = Array.from({ length: 2001 }, () => "y").join("\n"); // 2001 lines, tiny
+  const html = marked.parse("```\n" + code + "\n```");
+  assert.equal(html.match(/<span /g), null);
+  assert.match(html, /^<pre class="code-block copy-host"><code class="hljs">/);
+  assert.equal(textOf(/<code class="hljs[^"]*">([\s\S]*)<\/code>/.exec(html)[1]), code);
+});
+
+check("highlightAuto input between 32KB and 64KB skips auto (no language tag)", () => {
+  // No language → auto-detect path; 40KB is under the explicit cap but
+  // over the auto cap, so it renders escaped without hljs spans.
+  const code = "z".repeat(40 * 1024);
+  const html = marked.parse("```\n" + code + "\n```");
+  assert.equal(html.match(/<span /g), null);
+});
+
+check("a fence under the caps still highlights", () => {
+  const html = marked.parse('```js\nconst a = 1;\n```');
+  assert.ok(html.includes('<span class="hljs-keyword">const</span>'), html);
+});
+
 console.log(`markdown: ${passed} checks passed`);

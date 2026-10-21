@@ -182,36 +182,39 @@
     }
     return prev.concat(next);
   }
-  // Bash output → the card's colored display lines: the last 20, the same
-  // tail while streaming and once finished. Only the last ~20 lines are
-  // ever shown, so the split runs on a bounded tail of the text (a
-  // `tool_execution_update` carries the whole accumulated output —
-  // splitting all of it per frame is O(total²) over a long command's run),
-  // not on the full string. Same output shape either way.
-  function _bashLines(text) {
-    // Walk back to just past the 20th newline from the end, and never
-    // start earlier than one window before the end (a pathological
-    // no-newline blob — a minified dump, base64 — must not be split from
-    // the string's start). `lastIndexOf` scans backwards natively, so the
-    // walk is O(20 lines + one window) instead of a full split per
-    // streaming update. Fewer than 20 newlines in reach: the windowed
-    // tail already holds every line there is.
+  // Bash output → the card's colored display lines: every line, plus the
+  // raw line count in `totalLines` (tool-card.jsx shows only the tail
+  // while collapsed). The colour regex runs per line either way, so the
+  // one cost that scaled with hidden lines — a full split per streaming
+  // update — is bounded by the same WINDOW the walk below used to pay:
+  // while the card is running only the last 32KB is re-split, and the
+  // settled card splits once. A pathological no-newline blob (a minified
+  // dump, base64) is still one line, whatever its length.
+  function _bashLines(text, running = false) {
+    // Streaming: the whole accumulated output arrives again per
+    // `tool_execution_update`; splitting all of it every frame is
+    // O(total²) over a long command's run, so re-split only the tail and
+    // append to nothing — the running card shows the tail anyway (the
+    // collapsed preview and the live tail-scroll both read the end).
     const WINDOW = 32768;
-    const floor = text.length > WINDOW ? text.length - WINDOW : 0;
-    let nl = 0, i = text.length;
-    while (nl < 20 && i > floor) {
-      const prev = text.lastIndexOf("\n", i - 1);
-      if (prev === -1 || prev < floor) break;
-      nl++;
-      i = prev;
+    if (running && text.length > WINDOW) {
+      const cut = text.length - WINDOW;
+      const head = text.lastIndexOf("\n", cut);
+      const start = head === -1 ? cut : head + 1;
+      return _bashLinesFrom(text.slice(start), text);
     }
-    const cut = nl === 20 ? i + 1 : floor;
-    return text.slice(cut).split("\n").slice(-20).map(line => ({
-      line,
-      color: /^[✓✔]|^PASS|\bpassed\b/.test(line) ? "accent"
-           : /^[✗✘]|^FAIL|^Error|\bfailed\b/.test(line) ? "rose"
-           : "fg-3",
-    }));
+    return _bashLinesFrom(text, text);
+  }
+  // `text` (already the part to split) → line objects; `totalLines` counts
+  // the raw string's lines (a streaming slice may hold fewer), the same
+  // count split() itself would give — trailing empty line included, as the
+  // pre-full-output renderer's split did.
+  function _bashLinesFrom(text, total) {
+    const totalLines = total.split("\n").length;
+    const _color = (line) => /^[✓✔]|^PASS|\bpassed\b/.test(line) ? "accent"
+         : /^[✗✘]|^FAIL|^Error|\bfailed\b/.test(line) ? "rose"
+         : "fg-3";
+    return text.split("\n").map(line => ({ line, color: _color(line), totalLines }));
   }
   // A tool result's text content, as the model received it.
   function _resultText(result) {
@@ -378,7 +381,7 @@
     // copy button takes the full output without the notices (issue #33).
     if (card.tool === "bash") {
       const text = _resultText(event.result);
-      if (text) extra.output = _bashLines(text);
+      if (text) extra.output = _bashLines(text, false);
       const clip = _bashOutputText(text, details);
       if (clip) extra.outputText = clip;
     }
@@ -460,7 +463,7 @@
     }
     if (card.tool === "bash") {
       const text = _resultText(pr);
-      if (text) extra.output = _bashLines(text);
+      if (text) extra.output = _bashLines(text, true);
     }
     if (card.tool === "task" && details.progress?.length) {
       const existingByIdx = new Map((card.subagents ?? []).map(s => [s.index, s]));
@@ -534,6 +537,21 @@
         // (app/turn-status.js). Only a failure that ended its run counts —
         // omp keeps some failed attempts it then continued from.
         const failure = failures.get(index) ?? null;
+        // The failed turn's own prompt text, for the failure card's resend
+        // button (assistant-bubble.jsx): the last bubble-producing user
+        // entry before this message. A hidden follow-up between them (a
+        // job wake-up, a skill call) is skipped — custom messages have no
+        // role. Pure tool-result user turns have no bubble and no text;
+        // the walk keeps going past those instead of stopping empty.
+        let promptText = null;
+        if (failure) {
+          for (let j = index - 1; j >= 0; j--) {
+            const m = messages[j];
+            if (m?.role !== "user") continue;
+            const t = adaptUserContent(Array.isArray(m.content) ? m.content : []).text;
+            if (t) { promptText = t; break; }
+          }
+        }
         if (designBlocks.length > 0 || thought || failure) {
           // omp's persisted AgentMessage may carry usage in either RPC shape
           // ({input, output}) or raw Anthropic shape ({input_tokens, output_tokens}).
@@ -547,7 +565,7 @@
             blocks: designBlocks,
             streaming: false,
             tokens, tokensIn, tokensOut,
-            ...(failure ? { failure } : {}),
+            ...(failure ? { failure, promptText: promptText ?? "" } : {}),
           });
         }
       }

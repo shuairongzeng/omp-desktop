@@ -122,6 +122,35 @@ where
             .expect("stream ended")
             .expect("ws error");
         match msg {
+            Message::Text(t) => {
+                // The relay's join-time `hello` (t=hello + caps) is
+                // positional noise for other assertions; the dedicated
+                // hello tests read it via raw_json.
+                let v: Value = serde_json::from_str(t.as_str()).unwrap();
+                if v["t"] == "hello" && v.get("caps").is_some() {
+                    continue;
+                }
+                return v;
+            }
+            Message::Ping(_) | Message::Pong(_) => continue,
+            other => panic!("unexpected frame: {other:?}"),
+        }
+    }
+}
+
+/// Read the next text frame as JSON, skipping only pings — unlike
+/// [`next_json`], hello frames are returned (the hello tests need them).
+async fn raw_json<S>(s: &mut S) -> Value
+where
+    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    loop {
+        let msg = timeout(Duration::from_secs(10), s.next())
+            .await
+            .expect("timed out waiting for frame")
+            .expect("stream ended")
+            .expect("ws error");
+        match msg {
             Message::Text(t) => return serde_json::from_str(t.as_str()).unwrap(),
             Message::Ping(_) | Message::Pong(_) => continue,
             other => panic!("unexpected frame: {other:?}"),
@@ -785,4 +814,346 @@ where
         }
     }
     panic!("no frame with t={want} arrived");
+}
+
+// ---------------------------------------------------------------------------
+// res unicast / hello / phone friendly names
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn res_with_from_unicasts_only_to_target_phone() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+
+    let tok1 = pair_phone(&relay, &mut desktop, "UniOne").await;
+    let tok2 = pair_phone(&relay, &mut desktop, "UniTwo").await;
+    let mut p1 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok1}")),
+        Some("UniOne"),
+    )
+    .await;
+    let mut p2 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok2}")),
+        Some("UniTwo"),
+    )
+    .await;
+    let peer1 = eventually_json(&mut desktop, "peer").await; // p1 online
+    let conn1 = peer1["phone"].as_str().unwrap().to_string();
+    let _ = eventually_json(&mut desktop, "peer").await; // p2 online
+
+    // A res echoing p1's conn id: only p1 sees it.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"res","id":11,"ok":true,"value":"just you","from":conn1}),
+    )
+    .await;
+    let res = eventually_json(&mut p1, "res").await;
+    assert_eq!(res["id"], 11);
+    assert_eq!(res["value"], "just you");
+    // p2 must NOT see it: the next res p2 can receive is a later marker.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"res","id":12,"ok":true,"value":"marker"}),
+    )
+    .await;
+    for p in [&mut p1, &mut p2] {
+        let res = eventually_json(p, "res").await;
+        assert_eq!(res["id"], 12, "unicast frame (id 11) must not reach p2");
+    }
+
+    // No `from` → broadcast: both phones see it.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"res","id":13,"ok":true,"value":"all"}),
+    )
+    .await;
+    for p in [&mut p1, &mut p2] {
+        let res = eventually_json(p, "res").await;
+        assert_eq!(res["id"], 13);
+        assert!(res.get("from").is_none(), "desktop res is never tagged");
+    }
+}
+
+#[tokio::test]
+async fn res_with_stale_from_degrades_to_broadcast() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+
+    let tok1 = pair_phone(&relay, &mut desktop, "GoneUA").await;
+    let tok2 = pair_phone(&relay, &mut desktop, "StayUA").await;
+    let p1 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok1}")),
+        Some("GoneUA"),
+    )
+    .await;
+    let peer = eventually_json(&mut desktop, "peer").await; // p1 online
+    let gone_conn = peer["phone"].as_str().unwrap().to_string();
+    drop(p1);
+    let gone = eventually_json(&mut desktop, "peer").await; // p1 offline
+    assert_eq!(gone["phone"], gone_conn.as_str());
+
+    let mut p2 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok2}")),
+        Some("StayUA"),
+    )
+    .await;
+    let _ = eventually_json(&mut desktop, "peer").await; // p2 online
+
+    // `from` names a connection that left: degrade to broadcast so the
+    // frame is never lost.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"res","id":21,"ok":true,"value":"fallback","from":gone_conn}),
+    )
+    .await;
+    let res = eventually_json(&mut p2, "res").await;
+    assert_eq!(res["id"], 21);
+    assert_eq!(res["value"], "fallback");
+}
+
+#[tokio::test]
+async fn hello_frame_on_join_relay_and_desktop_broadcast() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+
+    // Every join (any role) immediately gets the relay's own hello.
+    let hello = raw_json(&mut desktop).await;
+    assert_eq!(hello["t"], "hello");
+    assert_eq!(hello["v"], 1);
+    let caps = hello["caps"].as_array().unwrap();
+    assert!(caps.iter().any(|c| c == "res-unicast"));
+    assert!(caps.iter().any(|c| c == "transcript-window"));
+    assert!(caps.iter().any(|c| c == "hello"));
+
+    // A joining phone also gets the relay hello first.
+    let tok = pair_phone(&relay, &mut desktop, "HelloUA").await;
+    let mut phone = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok}")),
+        Some("HelloUA"),
+    )
+    .await;
+    let ph = raw_json(&mut phone).await;
+    assert_eq!(ph["t"], "hello");
+    assert_eq!(ph["v"], 1);
+
+    // The desktop's own hello (its caps) is broadcast like an evt.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"hello","v":1,"caps":["gz","transcript-window","ask-sync"]}),
+    )
+    .await;
+    let desktop_hello = eventually_hello_with_caps(&mut phone, "gz").await;
+    assert_eq!(desktop_hello["v"], 1);
+    assert!(
+        desktop_hello["caps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c == "ask-sync")
+    );
+}
+
+#[tokio::test]
+async fn pair_wait_socket_gets_relay_hello_too() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+    send(&mut desktop, serde_json::json!({"t":"pair_begin"})).await;
+    let code = next_json(&mut desktop).await;
+    let pair_token = code["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('#')
+        .next()
+        .unwrap()
+        .to_string();
+
+    // The pre-auth pair socket is greeted with the relay hello before
+    // (or while) waiting for its verdict.
+    let mut phone = connect(
+        &ws_url(&relay, &format!("role=phone&pair={pair_token}")),
+        Some("PairHelloUA"),
+    )
+    .await;
+    let first = raw_json(&mut phone).await;
+    assert_eq!(first["t"], "hello");
+    assert_eq!(first["v"], 1);
+    assert!(first["caps"].as_array().is_some());
+    // And the normal pair flow still works behind it.
+    let req = next_json(&mut desktop).await;
+    assert_eq!(req["t"], "pair_request");
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"pair_grant","pair_id":req["pair_id"].as_str().unwrap()}),
+    )
+    .await;
+    let paired = next_json(&mut phone).await;
+    assert_eq!(paired["t"], "paired");
+}
+
+#[tokio::test]
+async fn phone_query_name_cleaned_and_preferred_over_ua() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+
+    // Pair with a friendly name in the query (control chars + surrounding
+    // spaces): the relay stores the CLEANED name.
+    let tok = pair_phone_with_name(
+        &relay,
+        &mut desktop,
+        "IgnoredUA",
+        Some("\u{1}Pixel\u{7} 9\u{1b}"),
+    )
+    .await;
+    let _phone = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok}")),
+        Some("IgnoredUA"),
+    )
+    .await;
+    let peer = eventually_json(&mut desktop, "peer").await;
+    assert_eq!(peer["name"], "Pixel 9");
+
+    // A name longer than 60 chars is truncated (chars, not bytes).
+    let tok2 = pair_phone_with_name(&relay, &mut desktop, "IgnoredUA", Some(&"x".repeat(80)))
+        .await;
+    let _phone2 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok2}")),
+        Some("IgnoredUA"),
+    )
+    .await;
+    let peer2 = eventually_json(&mut desktop, "peer").await;
+    assert_eq!(peer2["name"].as_str().unwrap().chars().count(), 60);
+
+    // Multi-byte names truncate at 60 chars too.
+    let tok3 = pair_phone_with_name(&relay, &mut desktop, "IgnoredUA", Some(&"\u{5b89}".repeat(100)))
+        .await;
+    let _phone3 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok3}")),
+        Some("IgnoredUA"),
+    )
+    .await;
+    let peer3 = eventually_json(&mut desktop, "peer").await;
+    assert_eq!(peer3["name"].as_str().unwrap().chars().count(), 60);
+
+    // A control-only name falls back to the UA.
+    let tok4 = pair_phone_with_name(&relay, &mut desktop, "FallbackUA", Some("\u{1}\u{2}")).await;
+    let _phone4 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok4}")),
+        Some("FallbackUA"),
+    )
+    .await;
+    let peer4 = eventually_json(&mut desktop, "peer").await;
+    assert_eq!(peer4["name"], "FallbackUA");
+}
+
+#[tokio::test]
+async fn phone_reconnect_with_query_name_overrides_persisted() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+
+    // Paired without a friendly name (UA persisted)…
+    let tok = pair_phone(&relay, &mut desktop, "OldUA").await;
+    // …then reconnects supplying one: the query name wins for presence.
+    let phone = connect(
+        &ws_url(
+            &relay,
+            &format!(
+                "role=phone&device={DEVICE}&token={tok}&name={}",
+                urlencode("Android · 15")
+            ),
+        ),
+        Some("OldUA"),
+    )
+    .await;
+    let peer = eventually_json(&mut desktop, "peer").await;
+    assert_eq!(peer["name"], "Android · 15");
+
+    // And a reconnect WITHOUT the name falls back to the persisted one.
+    drop(phone);
+    let _ = eventually_json(&mut desktop, "peer").await; // offline
+    let _phone2 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok}")),
+        Some("OldUA"),
+    )
+    .await;
+    let peer2 = eventually_json(&mut desktop, "peer").await;
+    assert_eq!(peer2["name"], "OldUA");
+}
+
+// ---------------------------------------------------------------------------
+// Extra helpers
+// ---------------------------------------------------------------------------
+
+/// Like [`pair_phone`], but the pair socket's URL carries a friendly
+/// `name` (percent-encoded — control characters cannot ride a URL raw).
+async fn pair_phone_with_name<S>(
+    relay: &Relay,
+    desktop: &mut S,
+    ua: &str,
+    name: Option<&str>,
+) -> String
+where
+    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+        + SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error>
+        + Unpin,
+{
+    send(desktop, serde_json::json!({"t":"pair_begin"})).await;
+    let code = next_json(desktop).await;
+    assert_eq!(code["t"], "pair_code");
+    let pair_token = code["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('#')
+        .next()
+        .unwrap()
+        .to_string();
+
+    let query = match name {
+        Some(n) => format!("role=phone&pair={pair_token}&name={}", urlencode(n)),
+        None => format!("role=phone&pair={pair_token}"),
+    };
+    let mut phone = connect(&ws_url(relay, &query), Some(ua)).await;
+    let req = next_json(desktop).await;
+    assert_eq!(req["t"], "pair_request");
+    let pair_id = req["pair_id"].as_str().unwrap().to_string();
+    send(
+        desktop,
+        serde_json::json!({"t":"pair_grant","pair_id":pair_id}),
+    )
+    .await;
+    let paired = next_json(&mut phone).await;
+    assert_eq!(paired["t"], "paired");
+    paired["token"].as_str().unwrap().to_string()
+}
+
+/// Poll raw frames until a hello whose caps include `cap` (both the relay
+/// hello and a desktop hello carry caps; the cap pins whose is whose).
+async fn eventually_hello_with_caps<S>(s: &mut S, cap: &str) -> Value
+where
+    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    for _ in 0..20 {
+        let v = raw_json(s).await;
+        if v["t"] == "hello"
+            && v["caps"]
+                .as_array()
+                .is_some_and(|c| c.iter().any(|x| x == cap))
+        {
+            return v;
+        }
+    }
+    panic!("no hello with cap {cap} arrived");
+}
+
+/// Percent-encode a query component (control chars and separators out).
+fn urlencode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.as_bytes() {
+        match *b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }

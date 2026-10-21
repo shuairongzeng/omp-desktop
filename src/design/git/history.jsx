@@ -7,7 +7,23 @@
 const { Icon: _GH_Icon } = window;
 const { relativeTime: _GH_relativeTime } = window.OMP_GIT_BROWSER;
 
-const _GH_ROW = 34;
+const _GH_ROW_DESKTOP = 34;
+// The phone tier's row height (git.css ≤760px): finger-sized touch
+// targets. Both constants feed the same geometry (graph circles, edges
+// and the absolute row layout), so the switch keeps them in lockstep.
+const _GH_ROW_PHONE = 40;
+const _GH_ROW = _GB_rowHeight();
+/** The commit-row height for this viewport: 34px on desktop, 40px at
+ *  git.css's phone tier. Evaluated once at module load — the browser
+ *  dialog is remounted per project, but a mid-session breakpoint
+ *  crossing does not re-run module code, so the rows keep their geometry
+ *  until the page reloads; the strip's own show/hide is CSS and stays
+ *  live. */
+function _GB_rowHeight() {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function"
+    && window.matchMedia("(max-width: 760px)").matches
+    ? _GH_ROW_PHONE : _GH_ROW_DESKTOP;
+}
 const _GH_LANE = 14;
 const _GH_R = 3.5;
 const _GH_COLORS = ["var(--accent)", "var(--cyan)", "var(--lilac)", "var(--amber)", "var(--magenta)", "var(--lime)"];

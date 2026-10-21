@@ -2,9 +2,10 @@
    plus ScrubbableDiff (shown for `edit` tools with a parsed diff). */
 
 const { Icon: _TC_Icon, TOOL_META: _TC_TOOL_META, EvalCell: _TC_EvalCell, CopyButton: _TC_Copy, CopyHost: _TC_CopyHost, CollapseToggle: _TC_Collapse, ImageThumbs: _TC_Thumbs } = window;
-const { bashPreview: _TC_bashPreview } = window.OMP_COLLAPSE;
 const { readTarget: _TC_readTarget, inProject: _TC_inProject } = window.OMP_FILE_PREVIEW;
 const { formatBytes: _TC_size } = window.OMP_UPDATER;
+// Lines a collapsed bash card keeps in view (adapter keeps the full array).
+const _TC_BASH_TAIL_LINES = 20;
 
 // One open-in-git-browser button per file an edit (or a write) touched; a card whose
 // paths are not known yet (a running edit in a mode the start frame does
@@ -209,7 +210,15 @@ function ToolCard({ msg, idx, highlighted, onInspectSubagent, onOpenFile, onPrev
   const meta    = _TC_TOOL_META[msg.tool] || { color: "var(--fg-3)", icon: "circle", label: msg.tool };
   const running = msg.status === "running";
   const failed  = !running && msg.isError;
-  const bashLines = collapsed && msg.output ? _TC_bashPreview(msg.output) : msg.output;
+  // Bash body lines: the full array while expanded (adapter keeps every
+  // line now); collapsed, the last BASH_TAIL_LINES plus a "showing … of N"
+  // head note, replacing the old preview helper. Running cards are never
+  // collapsed (chat-collapse keeps them open), so the tail slice only
+  // matters for settled ones.
+  const bashAll = msg.tool === "bash" ? msg.output ?? null : null;
+  const bashLines = collapsed && bashAll ? bashAll.slice(-_TC_BASH_TAIL_LINES) : bashAll;
+  const bashTotal = bashAll?.length ?? 0;
+  const bashHidden = collapsed ? Math.max(0, bashTotal - _TC_BASH_TAIL_LINES) : 0;
 // Live tail of a running bash/eval card: keeps the newest output line in
 // view, the same auto-scroll TaskAgentRow applies to its own body. For
 // eval the scrollable element is the last running cell's .eval-output
@@ -315,8 +324,16 @@ function ToolCard({ msg, idx, highlighted, onInspectSubagent, onOpenFile, onPrev
           )}
 
           {msg.tool === "bash" && bashLines && (
-            // Copies the whole output, not just the lines shown.
+            // Copies the whole output, not just the lines shown. Collapsed
+            // only the tail renders, with the head note saying how much is
+            // hidden; expanded (the collapse system's default for long
+            // bodies on tap) every line does — .tool-bash already scrolls.
             <_TC_CopyHost label="Copy output" text={msg.outputText}>
+              {bashHidden > 0 && (
+                <div className="bash-tail-note mono">
+                  showing last {_TC_BASH_TAIL_LINES} of {bashTotal} lines
+                </div>
+              )}
               <pre className="tool-bash mono selectable" ref={outputRef}>
                 {bashLines.map((l, i) => (
                   <div key={i} style={{ color: `var(--${l.color})` }}>{l.line}</div>

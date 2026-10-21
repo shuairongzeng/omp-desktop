@@ -17,6 +17,16 @@
  *  - paired but none selected: the device picker (hub) takes over.
  *  - nothing paired: an overlay asks to pair; invokes reject with
  *    `not paired`.
+ *
+ * Connection model: EVERY close retries — first-connect failures and
+ * mid-session drops share the same capped exponential backoff (a phone
+ * that boots before the relay answers, or with the radio still handing
+ * off, must not be stranded on a dead overlay). The desktop announces
+ * itself with a `hello` frame (`caps`: gz, transcript-window, ask-sync);
+ * the caps land on `window.__TAURI__.__remoteCaps` for debugging and gate
+ * nothing today. Desktop restarts arrive as `peer desktop:true` — the
+ * room is new, so every live event subscription replays and the app
+ * resyncs the active tab.
  */
 (function () {
   "use strict";
@@ -32,6 +42,7 @@
   const pending = new Map(); // id → { resolve, reject, timer }
   const listeners = new Map(); // event name → Set<cb>
   let overlay = null;
+  let remoteCaps = null; // the desktop's hello caps, null before one arrives
 
   const DEVICES = () => window.OMP_REMOTE_DEVICES;
   const storeNow = () => DEVICES().load(localStorage);
@@ -39,6 +50,23 @@
 
   const wsUrl = (query) =>
     `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?${query}`;
+
+  /** This handset's friendly name (the desktop's phone list shows it):
+   *  "<platform> · mobile/desktop" from the modern UA-Data when present,
+   *  else a short UA summary. Bounded to 60 chars; the relay cleans it
+   *  again anyway. */
+  function phoneName() {
+    const ua = navigator.userAgentData || navigator.userAgent || "";
+    let name;
+    if (ua && typeof ua === "object") {
+      name = `${ua.platform || "unknown"} · ${ua.mobile ? "mobile" : "desktop"}`;
+    } else {
+      const s = String(ua);
+      const m = /\(([^)]+)\)/.exec(s); // "(Windows NT 10.0; …)" style
+      name = (m ? m[1] : s).split(";")[0].trim() || "unknown";
+    }
+    return name.slice(0, 60);
+  }
 
   // ── pairing landing (/p#<pair-token>) ────────────────────────────────
   function pairingPage() {
@@ -88,7 +116,8 @@
     overlay.querySelector(".ro-sub").textContent = sub || "";
     overlay.querySelector(".ro-code").style.display = withCodeEntry ? "flex" : "none";
     // Optional one-button escape hatch (the offline overlay's "switch
-    // device"). Property assignment, never a markup handler (CSP).
+    // device", the retry card's "立即重试"). Property assignment, never a
+    // markup handler (CSP).
     const act = overlay.querySelector(".ro-action");
     if (action) {
       act.textContent = action.label;
@@ -124,8 +153,22 @@
   // the phone both laggy and blind to streaming replies. On re-open we
   // flush the queue, replay event subscriptions, and ask live.js to
   // resync the active tab (get_state + get_messages fill the gap).
+  // First-connect failures take the SAME loop: an overlay that says
+  // "refresh yourself" is a dead end on a phone whose only failure was
+  // dialing too early.
   let retryMs = 1000;
   let reconnectTimer = 0;
+
+  /** Re-send one fresh `sub` per live listener (ids from the shared
+   *  seq — the desktop refcounts per phone, so a replayed sub is always
+   *  paired with the unsub the final unlisten will send). Shared by
+   *  onopen (boot + reconnect) and the desktop-restart peer frame. */
+  function replaySubs(sock) {
+    for (const name of listeners.keys()) {
+      sock.send(JSON.stringify({ t: "cmd", id: ++seq, name: "sub", args: { name } }));
+    }
+  }
+
   function connect() {
     const store = storeNow();
     if (store.devices.length === 0) {
@@ -140,7 +183,9 @@
       return;
     }
     if (ws && (ws.readyState === 0 || ws.readyState === 1)) return; // already connecting/open
-    const sock = new WebSocket(wsUrl(`role=phone&device=${encodeURIComponent(sel.device)}&token=${encodeURIComponent(sel.token)}`));
+    const sock = new WebSocket(wsUrl(
+      `role=phone&device=${encodeURIComponent(sel.device)}&token=${encodeURIComponent(sel.token)}` +
+      `&name=${encodeURIComponent(phoneName())}`));
     ws = sock;
     connDevice = sel.device;
     sock.onopen = () => {
@@ -160,9 +205,7 @@
       // Subscriptions always replay from the live registry (queued `sub`
       // frames were skipped above): covers both boot-time listeners and
       // re-subscribing after a drop.
-      for (const name of listeners.keys()) {
-        sock.send(JSON.stringify({ t: "cmd", id: ++seq, name: "sub", args: { name } }));
-      }
+      replaySubs(sock);
       if (everConnected) {
         window.OMP_BRIDGE?._remoteResync?.();
       }
@@ -170,14 +213,32 @@
     };
     /** The desktop gzips reply values over 32 KB into `{gz: base64}` to
      *  keep the handset's uplink honest; inflate them back here so callers
-     *  see plain values. Anything else passes through untouched. */
+     *  see plain values. Anything else passes through untouched.
+     *  DecompressionStream unavailable (very old browser): the pending
+     *  promise rejects with a typed error instead of resolving garbage. */
     async function decodeValue(value) {
       if (!value || typeof value !== "object" || typeof value.gz !== "string") return value;
-      const bin = atob(value.gz);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const bytes = b64Bytes(value.gz);
+      if (typeof DecompressionStream !== "function") {
+        throw new Error("unsupported frame encoding");
+      }
       const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
       return JSON.parse(await new Response(stream).text());
+    }
+
+    // Decode base64 to its bytes. One allocation where the engine offers
+    // it (Uint8Array.fromBase64, Chromium 140+): no intermediate binary
+    // string, no per-byte copy loop. Older webviews fall back to the atob
+    // path. Both throw on invalid input, which the caller reports. (The
+    // same helper lives in live.js — it is IIFE-private there, and the
+    // shim must never import live.js, so the equivalent is local.)
+    const b64Direct = typeof Uint8Array.fromBase64 === "function";
+    function b64Bytes(b64) {
+      if (b64Direct) return Uint8Array.fromBase64(b64);
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
     }
 
     sock.onmessage = (ev) => {
@@ -188,11 +249,24 @@
         if (!p) return;
         pending.delete(frame.id);
         clearTimeout(p.timer);
-        if (frame.ok) { decodeValue(frame.value).then((v) => p.resolve(v), () => p.resolve(frame.value)); }
-        else p.reject(new Error(frame.error || "remote command failed"));
+        if (frame.ok) {
+          decodeValue(frame.value).then((v) => p.resolve(v), (e) => p.reject(
+            e instanceof Error && e.message === "unsupported frame encoding"
+              ? e
+              : new Error("unsupported frame encoding")));
+        } else p.reject(new Error(frame.error || "remote command failed"));
       } else if (frame.t === "evt") {
         const set = listeners.get(frame.name);
         if (set) for (const cb of set) cb({ event: frame.name, payload: frame.payload });
+      } else if (frame.t === "hello") {
+        // The room desktop's caps (it sent this on its own connect, and
+        // the relay repeats its own on ours). Kept for debugging on
+        // window.__TAURI__.__remoteCaps; nothing gates on it yet.
+        remoteCaps = Array.isArray(frame.caps) ? frame.caps : [];
+        if (window.__TAURI__ && window.__TAURI__.__remoteShim) {
+          window.__TAURI__.__remoteCaps = remoteCaps;
+        }
+        log("desktop caps:", remoteCaps.join(","));
       } else if (frame.t === "device") {
         // The room desktop's display identity (greet/update): keep the
         // paired list's name fresh — the hub and the topbar chip show it.
@@ -204,19 +278,41 @@
         });
       } else if (frame.t === "peer" && frame.desktop === true) {
         hideOverlay();
-        // Events were missed while the desktop was gone; pull the gap.
+        // Events were missed while the desktop was gone; pull the gap. A
+        // desktop restart is a NEW room membership: its subscriptions
+        // died with the old one, so every live listener replays (fresh
+        // frames — the desktop's per-phone refcounts were rebuilt empty).
+        replaySubs(sock);
         window.OMP_BRIDGE?._remoteResync?.();
       } else if (frame.t === "dropped") {
-        console.warn("[remote] relay dropped a frame:", frame.reason);
+        // The relay dropped an oversize frame (ours, or one addressed to
+        // us): a pending invoke for that id must not hang to its 30s
+        // timeout — reject it with the reason. No pending id (an evt, or
+        // a reply we already resolved): just log.
+        const p = frame.id != null ? pending.get(frame.id) : null;
+        if (p) {
+          pending.delete(frame.id);
+          clearTimeout(p.timer);
+          p.reject(new Error("relay dropped the reply (oversize)"));
+        } else {
+          console.warn("[remote] relay dropped a frame:", frame.reason);
+        }
       }
     };
     sock.onclose = () => {
       wsOpen = false;
+      // First-connect failure and mid-session drop share the loop; the
+      // retry card (with its button) tells a first-connect user the page
+      // is not stranded, the banner tells a connected-then-dropped user
+      // the page is alive.
       if (!everConnected) {
-        showOverlay("连不上服务器", "检查 relay 服务与网络后刷新。若刚换过设备令牌，需要重新配对。");
-        return;
+        showOverlay("连不上服务器", "正在自动重试。也可立即重试，或检查网络与 relay 服务。", false, {
+          label: "立即重试",
+          onClick: () => { retryMs = 0; clearTimeout(reconnectTimer); connect(); },
+        });
+      } else {
+        showBanner("连接中断，正在重连…");
       }
-      showBanner("连接中断，正在重连…");
       clearTimeout(reconnectTimer);
       reconnectTimer = setTimeout(connect, retryMs);
       retryMs = Math.min(retryMs * 2, 15000);
@@ -312,6 +408,7 @@
 
   window.__TAURI__ = {
     __remoteShim: true,
+    __remoteCaps: null,
     core: { invoke },
     event: { listen },
   };

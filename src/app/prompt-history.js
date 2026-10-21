@@ -131,9 +131,19 @@
     return changed;
   }
 
+  /** The exact text `record` would store for a send (framing stripped,
+   *  trimmed), or "" when the entry would be skipped (blank or
+   *  skip-listed). live.js's global archive write uses this so the
+   *  per-tab list and prompt-history.json never disagree about what a
+   *  prompt looks like. */
+  function normalize(text, { framingPrefix = "", skip = [] } = {}) {
+    const t = typeof text === "string" ? _stripFraming(text, framingPrefix).trim() : "";
+    return !t || skip.includes(t) ? "" : t;
+  }
+
   window.OMP_PROMPT_HISTORY = {
     DEFAULT_LIMIT, MIN_LIMIT, MAX_LIMIT,
     clampLimit, record, mergeOlder, promptsFromMessages, step,
-    caretOnFirstLine, caretOnLastLine, trimAll,
+    caretOnFirstLine, caretOnLastLine, trimAll, normalize,
   };
 })();

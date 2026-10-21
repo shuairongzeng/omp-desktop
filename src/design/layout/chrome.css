@@ -82,6 +82,16 @@
   font-size: var(--d-text-xs); color: var(--fg-4);
   text-transform: lowercase; letter-spacing: 0.04em;
 }
+/* The load-time degradation notice (ProfileMenu's `degraded` prop): amber,
+   icon-led, wraps — it explains why the list below is built-in only. */
+.profile-degraded {
+  display: flex; gap: 6px; align-items: flex-start;
+  margin: 2px 6px 6px; padding: 6px 8px;
+  border: 1px solid color-mix(in oklab, var(--amber) 45%, transparent);
+  border-radius: var(--r-2);
+  color: var(--amber); font-size: var(--d-text-xs); line-height: 1.4;
+}
+.profile-degraded svg { flex: none; margin-top: 1px; }
 /* Bounds the row list, not `.profile-pop` itself, so the create/rename form
    and hint stay pinned below and visible. The backend allows up to
    MAX_PROFILES = 64 (src-tauri/src/profiles.rs); at one ~30px row apiece
@@ -255,6 +265,26 @@
 /* The agent yielded, a background job will wake it: a hollow ring, slower. */
 .tab-run-dot.background { box-shadow: inset 0 0 0 1.5px var(--accent); animation: tab-run-pulse 2.6s ease-in-out infinite; }
 .tab-run-dot.waiting-user { background: var(--amber); animation: tab-run-pulse 2.6s ease-in-out infinite; }
+/* Attention upgrade: a tab waiting on the user stops being a 6px pulse
+   dot and says so — the amber pill 待审批 (mobile-draft frame 4's
+   vocabulary; .chat-jump-latest.needs-approval uses the same fill).
+   `content` rather than new markup: the dot span is rendered by
+   TabRunDot (tab-group-chip.jsx) in four places (tab bar, group chip,
+   group dropdown rows, sidebar rows); CSS text upgrades all of them
+   without touching the component. The group dropdown's 10px fixed
+   gutter (.tab-group-dot) keeps the small dot — its rows are dense
+   list items, not attention surfaces. Running and every other state
+   keep the original dot: only "your input blocks the run" earns text.
+   Same rule on a phone (the tab bar itself is hidden ≤760px, so this
+   is desktop-only in practice, as the slice notes). */
+.tab-run-dot.waiting-user:not(.tab-group-dot >) {
+  width: auto; height: 15px; padding: 1px 6px;
+  background: var(--amber); border-radius: var(--r-pill);
+  color: var(--amber-fg, #06241B);
+  font-family: var(--font-sans); font-size: var(--d-text-xs); font-weight: 600;
+  line-height: 1; white-space: nowrap;
+}
+.tab-run-dot.waiting-user:not(.tab-group-dot >)::after { content: "待审批"; }
 .tab-run-dot.failed { background: var(--rose); }
 .tab-run-dot.term-dirty { background: var(--accent); }
 /* omp is retrying a failed request: an amber ring that spins. */
@@ -446,5 +476,18 @@
   /* The remaining cells spread across the bar instead of bunching left. */
   .status { justify-content: space-between; }
   .status .status-sep { display: none; }
+
+  /* ── Touch targets for the dropdown menus (attention system) ──────
+     The profile popover's rows and the thinking menu's rows are the
+     phone's only way to those settings (the desktop chrome that also
+     hosts the profile chip is display:none above). Their 5px vertical
+     padding makes ~25px rows — half a finger. 40px is the minimum the
+     drawer's rows (sidebar.css) already use; the thinking menu keeps
+     its hint sub-line, so it grows by padding, not a fixed height.
+     The group-dropdown member rows (.tab-group-item) are session
+     pickers, not menu settings — they stay dense. */
+  .profile-item, .thinking-item {
+    min-height: 40px; padding-top: 10px; padding-bottom: 10px;
+  }
 }
 

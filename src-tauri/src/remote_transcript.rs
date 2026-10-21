@@ -56,7 +56,20 @@ pub struct TranscriptWindow {
 /// Returns `Err` when `path` cannot be opened or read; the message includes the
 /// underlying I/O error.
 #[tauri::command]
-pub fn remote_transcript_window(
+pub async fn remote_transcript_window(
+    path: String,
+    before: Option<usize>,
+    limit: Option<usize>,
+) -> Result<TranscriptWindow, String> {
+    // The scan reads the whole session file (hundreds of MB for a long
+    // conversation) — off the IPC thread, or every phone page-turn would
+    // freeze the desktop UI (the repo rule: blocking work goes through
+    // `off_ipc`).
+    crate::off_ipc(move || transcript_window(path, before, limit)).await?
+}
+
+/// The blocking body of [`remote_transcript_window`] — see its docs.
+fn transcript_window(
     path: String,
     before: Option<usize>,
     limit: Option<usize>,
@@ -371,7 +384,7 @@ mod tests {
     #[test]
     fn newest_window_reports_older_rows_and_a_cursor() {
         let path = fixture("window");
-        let window = remote_transcript_window(path.to_string_lossy().into_owned(), None, Some(2))
+        let window = transcript_window(path.to_string_lossy().into_owned(), None, Some(2))
             .expect("readable fixture");
 
         assert_eq!(texts(&window), ["m3", "m4"]);
@@ -384,7 +397,7 @@ mod tests {
     #[test]
     fn head_window_has_no_older_rows() {
         let path = fixture("head");
-        let first = remote_transcript_window(path.to_string_lossy().into_owned(), Some(3), Some(3))
+        let first = transcript_window(path.to_string_lossy().into_owned(), Some(3), Some(3))
             .expect("readable fixture");
 
         assert_eq!(texts(&first), ["m0", "m1", "m2"]);
@@ -410,7 +423,7 @@ mod tests {
         });
         std::fs::write(&path, line.to_string() + "\n").expect("write fixture transcript");
 
-        let window = remote_transcript_window(path.to_string_lossy().into_owned(), None, None)
+        let window = transcript_window(path.to_string_lossy().into_owned(), None, None)
             .expect("readable fixture");
         let blocks = window.messages[0]
             .get("content")
@@ -466,7 +479,7 @@ mod tests {
             .collect::<Vec<_>>();
         std::fs::write(&path, rows.join("\n") + "\n").expect("write fixture transcript");
 
-        let window = remote_transcript_window(path.to_string_lossy().into_owned(), None, Some(2))
+        let window = transcript_window(path.to_string_lossy().into_owned(), None, Some(2))
             .expect("window over omp-ordered rows");
 
         assert_eq!(texts(&window), ["m3", "m4"]);
@@ -497,7 +510,7 @@ mod tests {
             .collect::<Vec<_>>();
         std::fs::write(&path, rows.join("\n") + "\n").expect("write fixture transcript");
 
-        let window = remote_transcript_window(path.to_string_lossy().into_owned(), None, Some(5))
+        let window = transcript_window(path.to_string_lossy().into_owned(), None, Some(5))
             .expect("readable fixture");
         let bytes = serde_json::to_vec(&window.messages)
             .expect("serialize")
@@ -517,10 +530,8 @@ mod tests {
     fn missing_file_errors() {
         let path = unique_temp_file("missing");
 
-        let err =
-            remote_transcript_window(path.to_string_lossy().into_owned(), None, None).unwrap_err();
+        let err = transcript_window(path.to_string_lossy().into_owned(), None, None).unwrap_err();
 
         assert!(err.contains("open"), "unexpected error: {err}");
     }
 }
-

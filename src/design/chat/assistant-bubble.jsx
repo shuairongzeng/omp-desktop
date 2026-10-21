@@ -48,8 +48,13 @@ const _messageText = (msg) => (msg.blocks ?? [])
 // A request that failed for good — omp's own retries are behind it
 // (app/turn-status.js `failureOf`). `retryable` (the "temporary" chip) is
 // omp's live `prompt_result` verdict and unknown for a reloaded turn.
-function _AB_Failure({ failure: f }) {
+// `onResend(text)`: offered by the chat owner; the failed turn's own user
+// text comes from `promptText` (adapter/live attach it next to `failure`).
+// Without the prop, or without a text to send, no button renders.
+function _AB_Failure({ failure: f, promptText, onResend }) {
   const where = [f.provider, f.model].filter(Boolean).join(" · ");
+  const canResend = !!onResend;
+  const resend = () => { onResend(promptText ?? null); };
   return (
     <div className="ass-failure">
       <div className="ass-failure-head">
@@ -59,6 +64,13 @@ function _AB_Failure({ failure: f }) {
           <span className="chip warn" title="omp already retried it; sending again later may work">temporary</span>
         )}
         {where && <span className="chip muted mono">{where}</span>}
+        {canResend && (
+          <button type="button" className="btn ghost outlined ass-resend"
+            title={promptText ? "send this turn's prompt again" : "send the turn again"}
+            onClick={resend}>
+            <_ChatIcon name="refresh" size={11} /> resend
+          </button>
+        )}
       </div>
       <div className="ass-failure-msg selectable">{f.headline}</div>
       {f.raw !== f.headline && (
@@ -84,7 +96,7 @@ function _AB_Retries({ retries: r }) {
 
 // `thoughtCollapsed`: true/false when the thinking has a toggle, undefined
 // when it is too short to collapse (app/chat-collapse.js).
-function AssistantBubble({ msg, idx, highlighted, annotable, annotations, onAnnotate, thoughtCollapsed, onToggleCollapse, onOpenKanban }) {
+function AssistantBubble({ msg, idx, highlighted, annotable, annotations, onAnnotate, thoughtCollapsed, onToggleCollapse, onOpenKanban, onResend }) {
   // A failed request has no text of its own; its copy is the provider's error.
   const copyText = msg.streaming ? "" : (_messageText(msg) || msg.failure?.raw || "");
   return (
@@ -139,7 +151,7 @@ function AssistantBubble({ msg, idx, highlighted, annotable, annotations, onAnno
           }
           return null;
         })}
-        {msg.failure && <_AB_Failure failure={msg.failure} />}
+        {msg.failure && <_AB_Failure failure={msg.failure} promptText={msg.promptText} onResend={onResend} />}
       </div>
     </div>
   );

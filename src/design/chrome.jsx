@@ -24,7 +24,7 @@ const IS_WIN = typeof navigator !== "undefined" &&
 // ── Window chrome ─────────────────────────────────────────────────────
 function WindowChrome({
   project, onCmd,
-  profiles, activeProfileId, startupProfileId,
+  profiles, activeProfileId, startupProfileId, profilesDegraded,
   onSelectProfile, onCreateProfile, onRenameProfile, onDeleteProfile, onSetStartupProfile,
   connected = null, profileLabel,
   sessions = [], activeId = null,
@@ -156,6 +156,7 @@ function WindowChrome({
         profiles={profiles}
         activeId={activeProfileId}
         startupId={startupProfileId}
+        degraded={profilesDegraded}
         onSelect={onSelectProfile}
         onCreate={onCreateProfile}
         onRename={onRenameProfile}

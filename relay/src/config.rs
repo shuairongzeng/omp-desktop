@@ -233,9 +233,29 @@ pub fn truncate_display(raw: &str) -> String {
     raw.chars().take(80).collect()
 }
 
-/// Phone display name: User-Agent truncated to 80 chars.
+/// Phone display name: User-Agent truncated to 80 chars. The fallback
+/// when a phone supplies no friendly name in the WS query.
 pub fn phone_name(ua: &str) -> String {
     truncate_display(ua)
+}
+
+/// Max chars for a phone's query-supplied friendly name (WS `&name=`).
+pub const PHONE_NAME_MAX_CHARS: usize = 60;
+
+/// Clean a phone-supplied friendly name (the WS query `&name=`): strip
+/// control characters, trim, cap at 60 chars. `None` when absent or
+/// nothing usable remains — the caller falls back to the UA-derived
+/// name ([`phone_name`]).
+pub fn clean_phone_name(raw: Option<&str>) -> Option<String> {
+    let cleaned: String = raw?
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(PHONE_NAME_MAX_CHARS)
+        .collect();
+    (!cleaned.is_empty()).then_some(cleaned)
 }
 
 #[cfg(test)]
@@ -353,6 +373,33 @@ mod tests {
         // Multi-byte safe: truncation at 80 *chars*, not bytes.
         let wide = "你".repeat(100);
         assert_eq!(phone_name(&wide).chars().count(), 80);
+    }
+
+    #[test]
+    fn clean_phone_name_strips_and_truncates() {
+        // None / empty / blank → None (caller falls back to the UA name).
+        assert_eq!(clean_phone_name(None), None);
+        assert_eq!(clean_phone_name(Some("")), None);
+        assert_eq!(clean_phone_name(Some("   ")), None);
+        // Control characters are stripped, surrounding whitespace trimmed.
+        assert_eq!(
+            clean_phone_name(Some("Pixel\u{7}\u{1b} 8")),
+            Some("Pixel 8".into())
+        );
+        // Caps at 60 chars (chars, not bytes).
+        assert_eq!(
+            clean_phone_name(Some(&"x".repeat(80))).as_deref(),
+            Some("x".repeat(60).as_str())
+        );
+        let wide = clean_phone_name(Some(&"你".repeat(100)));
+        assert_eq!(wide.as_deref(), Some("你".repeat(60).as_str()));
+        // Only control characters → nothing usable after cleaning.
+        assert_eq!(clean_phone_name(Some("\u{1}\u{2}")), None);
+        // Trim survives: the name is still used.
+        assert_eq!(
+            clean_phone_name(Some("  Android 14  ")),
+            Some("Android 14".into())
+        );
     }
 
     #[test]

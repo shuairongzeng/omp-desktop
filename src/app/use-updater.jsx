@@ -73,10 +73,12 @@ function useUpdater({ bridge, autoCheck, skipped, setTweak }) {
   const openRelease = React.useCallback(async () => {
     const url = stateRef.current.update?.releaseUrl;
     if (!url || !bridge) return;
-    // For a notify-only install this is the modal's only action; a launcher
-    // that can't start (no xdg-open) must at least leave a trace.
+    // For a notify-only install this is the modal's only action — a launcher
+    // that can't start (no xdg-open) must surface in the modal, not just the
+    // console. The reducer's error channel keeps the update card visible
+    // (phase "available" + error line).
     const res = await bridge.openExternalUrl(url);
-    if (!res.ok) console.error("[updater] opening the release page failed:", res.error);
+    if (!res.ok) dispatch({ type: "install-failed", error: `Couldn't open the release page (${res.error}). Copy the link: ${url}` });
   }, [bridge]);
 
   return {

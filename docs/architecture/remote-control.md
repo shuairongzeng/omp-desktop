@@ -49,11 +49,12 @@ Client → relay → desktop:
 { "t": "cmd", "id": 42, "name": "send_command", "args": { … } }
 ```
 
-Desktop → relay → all phones:
+Desktop → relay → phones:
 
 ```json
-{ "t": "res", "id": 42, "ok": true, "value": … }        // ok:false → "error": "…"
+{ "t": "res", "id": 42, "ok": true, "value": …, "from": "<phone-conn-id>" }
 { "t": "evt", "name": "agent://line/<sid>", "payload": … }
+{ "t": "hello", "v": 1, "caps": ["gz", "transcript-window", "ask-sync"] }
 ```
 
 Command names and payload shapes are exactly the Tauri command surface
@@ -61,6 +62,31 @@ the webview already uses; the shim makes `invoke(name, args)` a `cmd`
 frame and a `listen(name, cb)` subscription a filter on `evt` frames.
 The relay validates the envelope shape (`t`, and per-type fields) and
 forwards the frame verbatim.
+
+Three refinements on top of that verbatim rule:
+
+- **`res` unicast**: the desktop's `respond` fills the res frame's `from`
+  with the triggering cmd frame's `from` (the relay stamps every phone
+  frame with its connection id). The relay sends a `res` with a live
+  `from` to that phone only — two phones in one room share the id space
+  (each counts from 0), so a broadcast `res` would answer B with A's
+  data. No `from` (a legacy desktop) or a gone phone falls back to
+  broadcast. `evt` frames stay broadcast.
+- **`hello` caps handshake**: the relay greets every connected client
+  with its own `hello` (`caps`: `res-unicast`, `transcript-window`,
+  `hello`), and the desktop broadcasts its `hello` on connect and on
+  every `peer phone:true` (a joining phone). The phone shim records the
+  caps (`__TAURI__.__remoteCaps`); a `{gz: …}` payload it cannot decode
+  rejects the pending invoke (`unsupported frame encoding`) instead of
+  resolving a garbage object. Unknown caps are ignored — that is the
+  extension point.
+- **Streaming coalescing**: the desktop's remote-agent holds a
+  `message_update` event frame for up to 100 ms per session and forwards
+  only the newest one (each carries the full accumulated text);
+  `message_end` / `agent_end` / `turn_end` and any non-update frame
+  flush a pending update first, then go themselves. A handset uplink
+  would otherwise see 10–30 full-text frames a second, and the relay's
+  256-frame outbox would kill the connection mid-turn.
 
 Room control frames (relay ↔ one client, never forwarded):
 
@@ -162,6 +188,17 @@ announces the drop, the socket reopens with capped backoff
 3. calls `OMP_BRIDGE._remoteResync()`, which re-sends `_initFetch`
    (`get_state` + `get_messages`): completed messages missed during the
    gap merge in by `ts`, streaming resumes from live events.
+
+The mirror case: the *desktop's* app restarts while the phone's socket
+never dropped. The phone's subscriptions lived in the desktop webview's
+remote-agent, so they died with it. The `peer desktop:true` frame that
+announces the return therefore runs the same subscription replay before
+`_remoteResync()` — without it the phone looks online, answers commands,
+and never streams again.
+
+A first connect that fails (relay down, no network) enters the same
+capped backoff with an "auto-retrying" overlay and a retry-now button —
+it used to be a dead end that only a page reload escaped.
 
 ## Windowed transcripts and projected replays
 

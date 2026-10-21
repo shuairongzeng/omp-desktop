@@ -42,7 +42,13 @@ pub struct DirListing {
 /// Returns `Err` when `path` does not exist, is not a directory, or its
 /// entries cannot be read; the message includes the underlying I/O error.
 #[tauri::command]
-pub fn remote_list_dirs(path: Option<String>) -> Result<DirListing, String> {
+pub async fn remote_list_dirs(path: Option<String>) -> Result<DirListing, String> {
+    // A network drive can hold a read for seconds — off the IPC thread.
+    crate::off_ipc(move || list_dirs_blocking(path)).await?
+}
+
+/// The blocking body of [`remote_list_dirs`].
+fn list_dirs_blocking(path: Option<String>) -> Result<DirListing, String> {
     path.map_or_else(
         || {
             Ok(DirListing {
@@ -155,14 +161,14 @@ fn is_hidden(name: &str) -> bool {
 /// On Windows the system bookkeeping folders are hidden by name rather than
 /// by a dot prefix.
 #[cfg(target_os = "windows")]
-fn is_hidden(name: &str) -> bool {
+const fn is_hidden(name: &str) -> bool {
     name.eq_ignore_ascii_case("$Recycle.Bin")
         || name.eq_ignore_ascii_case("System Volume Information")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{remote_list_dirs, DirListing, MAX_ENTRIES};
+    use super::{list_dirs_blocking, DirListing, MAX_ENTRIES};
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -183,7 +189,7 @@ mod tests {
     }
 
     fn listing(path: &Path) -> DirListing {
-        remote_list_dirs(Some(as_arg(path))).expect("list directory")
+        list_dirs_blocking(Some(as_arg(path))).expect("list directory")
     }
 
     fn names(listing: &DirListing) -> Vec<&str> {
@@ -199,7 +205,7 @@ mod tests {
         }
         std::fs::write(root.join("not-a-dir.txt"), b"x").expect("write fixture file");
 
-        let listing = remote_list_dirs(Some(as_arg(&root))).expect("list directory");
+        let listing = list_dirs_blocking(Some(as_arg(&root))).expect("list directory");
 
         assert_eq!(names(&listing), ["alpha", "Beta", "delta", "Gamma"]);
         assert_eq!(listing.parent, root.parent().map(as_arg));
@@ -244,7 +250,7 @@ mod tests {
         let root = unique_temp_dir("missing");
         let target = as_arg(&root);
 
-        let err = remote_list_dirs(Some(target.clone())).expect_err("missing path must fail");
+        let err = list_dirs_blocking(Some(target.clone())).expect_err("missing path must fail");
 
         assert!(err.contains(&target), "unexpected error: {err}");
     }
@@ -256,7 +262,7 @@ mod tests {
         let file = root.join("plain.txt");
         std::fs::write(&file, b"x").expect("write fixture file");
 
-        let err = remote_list_dirs(Some(as_arg(&file))).expect_err("file path must fail");
+        let err = list_dirs_blocking(Some(as_arg(&file))).expect_err("file path must fail");
 
         assert!(err.contains("not a directory"), "unexpected error: {err}");
 
@@ -265,7 +271,7 @@ mod tests {
 
     #[test]
     fn roots_listing_has_no_parent_and_entries_exist() {
-        let listing = remote_list_dirs(None).expect("list roots");
+        let listing = list_dirs_blocking(None).expect("list roots");
 
         assert!(listing.parent.is_none());
         assert_ne!(listing.entries.len(), 0);

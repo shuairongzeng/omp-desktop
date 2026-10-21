@@ -10,9 +10,37 @@
    ═════════════════════════════════════════════════════════════════════ */
 
 /* QR for the pairing URL. qrcode-generator is vendored at src/qrcode.js;
-   modules are drawn as 1×1 rects so no markup string is injected. */
+   modules are drawn as 1×1 rects so no markup string is injected. The
+   library (57 KB) is needed only when the pairing modal actually opens, so
+   it is injected on first use (the terminal's ensureXterm pattern); a
+   failed load is not cached. */
+let _srrQrcodeReady = null;
+function _SRR_ensureQrcode() {
+  if (window.qrcode) return Promise.resolve();
+  if (!_srrQrcodeReady) {
+    _srrQrcodeReady = new Promise((resolve, reject) => {
+      const el = window.document.createElement("script");
+      el.src = "qrcode.js";
+      el.onload = () => resolve();
+      el.onerror = () => { el.remove(); reject(new Error("could not load qrcode.js")); };
+      window.document.head.appendChild(el);
+    });
+    _srrQrcodeReady = _srrQrcodeReady.catch((err) => { _srrQrcodeReady = null; throw err; });
+  }
+  return _srrQrcodeReady;
+}
+
 function _SRR_QrSvg({ text, size = 200 }) {
+  const [libReady, setLibReady] = React.useState(!!window.qrcode);
+  React.useEffect(() => {
+    if (libReady) return undefined;
+    let dead = false;
+    _SRR_ensureQrcode().then(() => { if (!dead) setLibReady(true); })
+      .catch((e) => console.warn("[remote] qrcode load failed:", e));
+    return () => { dead = true; };
+  }, [libReady]);
   const data = React.useMemo(() => {
+    if (!libReady) return null;
     try {
       const q = window.qrcode(0, "M");
       q.addData(text);
@@ -24,7 +52,7 @@ function _SRR_QrSvg({ text, size = 200 }) {
           if (q.isDark(r, c)) cells.push(`${c},${r}`);
       return { n, cells };
     } catch { return null; }
-  }, [text]);
+  }, [text, libReady]);
   if (!data) return null;
   return (
     <svg className="remote-qr-svg" width={size} height={size}
@@ -180,9 +208,16 @@ function _SRR_Pair({ row, query }) {
   const [error, setError] = React.useState(null);
   const [st, setSt] = React.useState(null);
   // Click-to-copy feedback for the pairing modal: "url" | "code" for 1.5s.
-  const [copied, setCopied] = React.useState(null);
-  const copyTimer = React.useRef(null);
-  React.useEffect(() => () => clearTimeout(copyTimer.current), []);
+  // The revoke's armed row ("吊销?" for a second click): profile-menu.jsx's
+  // inline-confirm pattern, timing out 3s after arming.
+  const [armedRevoke, setArmedRevoke] = React.useState(null);
+  const revokeTimer = React.useRef(null);
+  const armRevoke = (hash) => {
+    clearTimeout(revokeTimer.current);
+    setArmedRevoke(hash);
+    revokeTimer.current = setTimeout(() => setArmedRevoke(null), 3000);
+  };
+  React.useEffect(() => () => { clearTimeout(copyTimer.current); clearTimeout(revokeTimer.current); }, []);
   const copyPairText = (text, what) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(what);
@@ -220,7 +255,13 @@ function _SRR_Pair({ row, query }) {
     window.OMP_BRIDGE?.remoteSend({ t: "pair_begin" }).catch((e) => setError(String(e?.message || e)));
   };
 
+  // Two-step revoke: the first click only arms ("吊销?"), the second within
+  // 3s actually revokes; anything else disarms (armRevoke's timer or a
+  // different row's first click).
   const revoke = (hash) => {
+    if (armedRevoke !== hash) { armRevoke(hash); setError(null); return; }
+    clearTimeout(revokeTimer.current);
+    setArmedRevoke(null);
     setError(null);
     window.OMP_BRIDGE?.remoteSend({ t: "revoke", phone_hash: hash }).catch((e) => setError(String(e?.message || e)));
   };
@@ -246,7 +287,11 @@ function _SRR_Pair({ row, query }) {
               <Icon name="phone" size={11} />
               <span className="remote-phone-name" title={p.hash}>{p.name || "未知设备"}</span>
               <span className="remote-phone-date">{String(p.paired_at || "").slice(0, 10)}</span>
-              <Button onClick={() => revoke(p.hash)}><Icon name="trash" size={11} />吊销</Button>
+              <Button accent={armedRevoke === p.hash}
+                title={armedRevoke === p.hash ? "再点一次确认吊销该手机" : `吊销 ${p.name || "该手机"} 的访问`}
+                onClick={() => revoke(p.hash)}>
+                {armedRevoke === p.hash ? "吊销?" : <><Icon name="trash" size={11} />吊销</>}
+              </Button>
             </div>
           ))}
         </div>

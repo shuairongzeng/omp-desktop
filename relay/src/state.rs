@@ -95,8 +95,12 @@ pub struct Pairing {
     pub code: String,
     pub device: String,
     /// User-Agent of the phone that presented the pair token (empty until
-    /// then); becomes the persisted phone name.
+    /// then); becomes the persisted phone name when the phone supplied no
+    /// friendly name.
     pub user_agent: String,
+    /// Phone-supplied friendly name from the pairing WS query (`&name=`,
+    /// cleaned by the handler); takes precedence over `user_agent`.
+    pub friendly_name: Option<String>,
     /// Pair-token expiry (from `pair_begin`, 5 min).
     pub expires_at: Instant,
     /// Set once the phone connects; carries the grant/deny verdict to it.
@@ -437,6 +441,7 @@ mod tests {
             code: pair_code(),
             device: "d".into(),
             user_agent: String::new(),
+            friendly_name: None,
             expires_at: Instant::now() + std::time::Duration::from_secs(300),
             phone_tx: None,
         };
@@ -459,6 +464,7 @@ mod tests {
             code: pair_code(),
             device: "d".into(),
             user_agent: String::new(),
+            friendly_name: None,
             expires_at: Instant::now() - std::time::Duration::from_secs(1),
             phone_tx: None,
         };
@@ -483,6 +489,7 @@ mod tests {
             code: pair_code(),
             device: "d".into(),
             user_agent: String::new(),
+            friendly_name: None,
             expires_at: Instant::now() + std::time::Duration::from_secs(60),
             phone_tx: None,
         };
@@ -492,6 +499,7 @@ mod tests {
             code: pair_code(),
             device: "d".into(),
             user_agent: String::new(),
+            friendly_name: None,
             expires_at: Instant::now() - std::time::Duration::from_secs(1),
             phone_tx: None,
         };

@@ -14,6 +14,7 @@ function useBridgeSnapshot(bridge, setters) {
     const unsub = bridge.onUpdate((snap) => {
       setters.setMessages(snap.messages);
       setters.setStreaming(snap.isStreaming);
+      setters.setExitReason?.(snap.exitReason ?? null);
       setters.setCtx(snap.ctx);
       if (setters.setTrimmedCount) setters.setTrimmedCount(snap.trimmedCount ?? 0);
       if (setters.setWindowed) setters.setWindowed(snap.windowed ?? false);
@@ -27,6 +28,7 @@ function useBridgeSnapshot(bridge, setters) {
       if (snap.thinkingLevel) setters.setThinkingLevel(snap.thinkingLevel);
       setters.setSessions(snap.sessions ?? []);
       setters.setPromptHistory(snap.promptHistory ?? []);
+      setters.setGlobalPromptHistory?.(snap.globalPromptHistory ?? []);
       setters.setSubagents(snap.subagents);
       setters.setSubagentTranscripts(snap.subagentTranscripts ?? {});
       setters.setQueue(snap.queue);
@@ -35,6 +37,7 @@ function useBridgeSnapshot(bridge, setters) {
       setters.setExtWidgets(snap.extWidgets);
       setters.setProfiles(snap.profiles ?? []);
       setters.setStartupProfileId(snap.startupProfileId ?? _UB_DEFAULT_PROFILE_ID);
+      setters.setProfilesDegraded?.(snap.profilesDegraded ?? null);
       setters.setRecentProjects(snap.recentProjects ?? []);
       setters.setNoTabProfileId(snap.noTabProfileId ?? _UB_DEFAULT_PROFILE_ID);
       setters.setWorkspaceNotes(snap.workspaceNotes ?? []);

@@ -7,8 +7,12 @@
 
 const { Icon } = window;
 
-function PromptHistoryModal({ open, entries, onClose, onPick }) {
+function PromptHistoryModal({ open, entries, onClose, onPick, globalEntries = [] }) {
   const [activeIdx, setActiveIdx] = React.useState(0);
+  // "tab" = this tab's session-only recall (Ctrl+↑ source); "all" = the
+  // cross-session archive (prompt_history.rs), persisted across restarts.
+  const [scope, setScope] = React.useState("tab");
+  const shown = scope === "all" ? globalEntries : entries;
   const listRef = React.useRef(null);
   const containerRef = React.useRef(null);
 
@@ -24,7 +28,7 @@ function PromptHistoryModal({ open, entries, onClose, onPick }) {
   // Reset selection to the newest entry each time the modal opens.
   React.useEffect(() => { if (open) setActiveIdx(0); }, [open]);
 
-  const clampedIdx = entries.length > 0 ? Math.max(0, Math.min(activeIdx, entries.length - 1)) : 0;
+  const clampedIdx = shown.length > 0 ? Math.max(0, Math.min(activeIdx, shown.length - 1)) : 0;
 
   React.useEffect(() => {
     if (!open || !listRef.current) return;
@@ -58,7 +62,7 @@ function PromptHistoryModal({ open, entries, onClose, onPick }) {
       if (e.key === "Escape") return; // the shared Esc stack closes us
       if (e.key === "ArrowDown") {
         e.preventDefault(); e.stopPropagation();
-        setActiveIdx(Math.max(0, Math.min(clampedIdx + 1, entries.length - 1)));
+        setActiveIdx(Math.max(0, Math.min(clampedIdx + 1, shown.length - 1)));
       } else if (e.key === "ArrowUp") {
         e.preventDefault(); e.stopPropagation();
         setActiveIdx(Math.max(clampedIdx - 1, 0));
@@ -68,12 +72,12 @@ function PromptHistoryModal({ open, entries, onClose, onPick }) {
         // the composer's send() while the picker is open, regardless of
         // whether there's an entry under the cursor.
         e.preventDefault(); e.stopPropagation();
-        if (entries[clampedIdx]) pick(entries[clampedIdx]);
+        if (shown[clampedIdx]) pick(shown[clampedIdx]);
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, onClose, entries, clampedIdx]);
+  }, [open, onClose, shown, clampedIdx]);
 
   if (!open) return null;
 
@@ -82,18 +86,33 @@ function PromptHistoryModal({ open, entries, onClose, onPick }) {
       <div ref={containerRef} tabIndex={-1} className="bridge slide-in" onClick={e => e.stopPropagation()} style={{ width: "min(640px, calc(100vw - 32px))", maxHeight: "72vh", outline: "none" }}>
         <div className="bridge-input-row" style={{ padding: "12px 16px", gap: 10 }}>
           <Icon name="clock" size={16} color="var(--accent)" />
-          <span style={{ color: "var(--fg)", fontWeight: 550, flex: 1 }}>Prompt history</span>
+          <span style={{ color: "var(--fg)", fontWeight: 550 }}>Prompt history</span>
+          <div role="tablist" style={{ marginLeft: "auto", display: "flex", gap: 2, background: "var(--bg-hover)", borderRadius: 8, padding: 2 }}>
+            {[["tab", "this tab"], ["all", "all sessions"]].map(([key, label]) => (
+              <button key={key} role="tab" aria-selected={scope === key}
+                onClick={() => { setScope(key); setActiveIdx(0); }}
+                style={{
+                  border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer",
+                  fontSize: "var(--d-text-xs)",
+                  background: scope === key ? "var(--bg-elevated)" : "transparent",
+                  color: scope === key ? "var(--fg)" : "var(--fg-3)",
+                  fontWeight: scope === key ? 600 : 400,
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
           <span className="mono" style={{ color: "var(--fg-4)", fontSize: "var(--d-text-xs)" }}>
-            {entries.length} {entries.length === 1 ? "prompt" : "prompts"}
+            {shown.length} {shown.length === 1 ? "prompt" : "prompts"}
           </span>
           <span className="kbd">esc</span>
         </div>
 
         <div ref={listRef} className="bridge-body" style={{ maxHeight: "56vh", padding: "6px 8px" }}>
-          {entries.length === 0 && (
-            <div className="bridge-empty">no prompts sent in this tab yet</div>
+          {shown.length === 0 && (
+            <div className="bridge-empty">{scope === "all" ? "no prompts recorded yet" : "no prompts sent in this tab yet"}</div>
           )}
-          {entries.map((text, idx) => {
+          {shown.map((text, idx) => {
             const isSelected = idx === clampedIdx;
             return (
               <div

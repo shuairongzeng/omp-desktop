@@ -9,6 +9,14 @@
  * subscriptions are refcounted per phone connection (the relay tags frames
  * with `from` and reports phone join/leave via `peer`), so a disconnecting
  * phone's listeners are torn down.
+ *
+ * Protocol: replies are unicast. The relay tags every phone cmd with the
+ * sending connection's id (`from`); `respond` copies that id into the res
+ * frame's top level, and the relay routes the reply back to that phone
+ * alone (broadcast only for a legacy/absent `from`). The agent also
+ * broadcasts a `hello` frame announcing its caps when it comes online and
+ * whenever a new phone joins, so handsets can discover `gz` support before
+ * a large reply lands.
  */
 (function () {
   "use strict";
@@ -17,7 +25,11 @@
     window.__OMP_REMOTE_AGENT = { armed: false, reason: window.__TAURI__ ? "shim" : "no-tauri-yet" };
     return; // phone side: inert
   }
-  window.__OMP_REMOTE_AGENT = { armed: true };
+  // The desktop's advertised caps (the `hello` frame's `caps` array): `gz`
+  // = replies over the size threshold ride as `{gz: base64}`; `ask-sync`
+  // = a reconnecting phone can re-pull its pending asks.
+  const DESKTOP_CAPS = ["gz", "transcript-window", "ask-sync"];
+  window.__OMP_REMOTE_AGENT = { armed: true, HELLO_CAPS: DESKTOP_CAPS };
 
   // No aliasing: Tauri's event/core methods are called on their objects —
   // an unbound alias (`const f = __TAURI__.event.listen`) silently loses
@@ -72,12 +84,24 @@
     }
   }
 
-  async function respond(id, ok, valueOrError) {
+  async function respond(id, ok, valueOrError, from) {
     const frame = { t: "res", id, ok };
+    // Unicast: echo the triggering cmd's `from` (the phone's connection
+    // id) so the relay routes this reply to that phone alone.
+    if (typeof from === "string" && from) frame.from = from;
     if (ok) frame.value = await encodeValue(valueOrError);
     else frame.error = String(valueOrError);
     send(frame);
   }
+
+  // The desktop's hello broadcast: sent when the agent detects the desktop
+  // connection is live and again whenever a new phone joins the room, so
+  // late-joining handsets learn the caps they were not there for.
+  function broadcastHello() {
+    window.__OMP_REMOTE_AGENT.hellos = (window.__OMP_REMOTE_AGENT.hellos || 0) + 1;
+    send({ t: "hello", v: 1, caps: DESKTOP_CAPS });
+  }
+  let desktopOnline = false;
 
   /** Whether one stdout line is worth a phone's wire. The desktop's own
    *  large fetches ride the same `agent://line/{id}` channel the phone
@@ -94,6 +118,83 @@
     return !(obj && typeof obj === "object" && obj.type === "rpc_chunk");
   }
 
+  // ── streaming-update coalescing (per session, 100 ms trailing edge) ──
+  // A phone's WAN radio wakes once per ~100 ms; the phone-side apply is
+  // idempotent full-state (the frame with the LATEST text wins), so the
+  // intermediate message_update frames between two wakes are pure wire
+  // cost. Each session's latest update rides a timer; any terminal frame
+  // (message_end / agent_end / turn_end) or non-update line flushes the
+  // pending update FIRST and then itself, preserving order and no-loss
+  // for everything that is not an update.
+  const COALESCE_MS = 100;
+  const updateTimers = new Map(); // session id (the line channel suffix) → timer
+  const updatePending = new Map(); // session id → { seq, text } — the newest envelope
+
+  /** The session a coalesced line belongs to: the `agent://line/{id}`
+   *  channel's id, or null for anything else. */
+  function lineSession(name) {
+    return typeof name === "string" ? /^agent:\/\/line\/(.+)$/.exec(name)?.[1] ?? null : null;
+  }
+
+  /** The parsed frame's type, or null for a non-JSON / non-object line
+   *  (already filtered by forwardableLine, but a parse here is cheap and
+   *  this is also the gate that never throws on odd input). */
+  function lineType(payload) {
+    const text = payload?.text;
+    if (typeof text !== "string") return null;
+    try {
+      const obj = JSON.parse(text);
+      return obj && typeof obj === "object" && typeof obj.type === "string" ? obj.type : null;
+    } catch { return null; }
+  }
+
+  function sendLine(name, payload) {
+    send({ t: "evt", name, payload: payload ?? null });
+  }
+
+  /** Drop a session's armed coalesce timer and its pending update (the
+   *  listener is going away — the phone unsubscribed or dropped). */
+  function clearSession(id) {
+    const timer = updateTimers.get(id);
+    if (timer !== undefined) { clearTimeout(timer); updateTimers.delete(id); }
+    updatePending.delete(id);
+  }
+
+  /** Push one line out: an `update` type is coalesced per its session
+   *  (pending flush first when a new update arms a NEW timer — the
+   *  pending older frame is superseded), anything else flushes that
+   *  session's pending update and rides immediately. */
+  function forwardLine(name, payload) {
+    const id = lineSession(name);
+    if (id === null) { sendLine(name, payload); return; }
+    if (lineType(payload) === "message_update") {
+      // Supersede: a new update replaces the pending one in place — the
+      // phone's apply is last-writer-wins, and this IS the latest frame.
+      if (updatePending.has(id) && updateTimers.has(id)) {
+        updatePending.set(id, payload);
+        return;
+      }
+      updatePending.set(id, payload);
+      updateTimers.set(id, setTimeout(() => {
+        updateTimers.delete(id);
+        const pending = updatePending.get(id);
+        updatePending.delete(id);
+        if (pending) sendLine(name, pending);
+      }, COALESCE_MS));
+      return;
+    }
+    // A non-update frame rides now, but never ahead of the pending
+    // update of the same session: flush it first, then this frame.
+    const timer = updateTimers.get(id);
+    if (timer !== undefined) { clearTimeout(timer); updateTimers.delete(id); }
+    const pending = updatePending.get(id);
+    if (pending) {
+      updatePending.delete(id);
+      sendLine(name, pending);
+    }
+    sendLine(name, payload);
+  }
+
   function addSub(phoneId, name) {
     if (typeof name !== "string" || name.length > 200) return;
     let perPhone = byPhone.get(phoneId);
@@ -106,7 +207,7 @@
     active.set(name, entry);
     listenTauri(name, (ev) => {
       if (name.startsWith("agent://line/") && !forwardableLine(ev.payload)) return;
-      send({ t: "evt", name, payload: ev.payload ?? null });
+      forwardLine(name, ev.payload);
     }).then((un) => {
       if (active.get(name) === entry) entry.unlisten = un;
       else un(); // unsubscribed while the listener was registering
@@ -127,6 +228,8 @@
     if (--entry.count <= 0) {
       active.delete(name);
       if (entry.unlisten) entry.unlisten();
+      const id = lineSession(name);
+      if (id !== null) clearSession(id);
     }
   }
 
@@ -143,16 +246,16 @@
     const phoneId = typeof frame.from === "string" ? frame.from : "?";
     const jsHandlers = window.OMP_BRIDGE?._remoteHandlers;
     try {
-      if (name === "sub") { addSub(phoneId, args && args.name); respond(id, true, null); return; }
-      if (name === "unsub") { delSub(phoneId, args && args.name); respond(id, true, null); return; }
-      if (UNSUPPORTED.has(name)) { respond(id, false, `${name} is unsupported on remote`); return; }
+      if (name === "sub") { addSub(phoneId, args && args.name); respond(id, true, null, frame.from); return; }
+      if (name === "unsub") { delSub(phoneId, args && args.name); respond(id, true, null, frame.from); return; }
+      if (UNSUPPORTED.has(name)) { respond(id, false, `${name} is unsupported on remote`, frame.from); return; }
 
       // `js:*` — answers that live in this webview, not in Rust (the live
       // tab list above all; the phone's boot attaches to these ids).
       if (typeof name === "string" && name.startsWith("js:")) {
         const h = jsHandlers?.[name.slice(3)];
-        if (!h) { respond(id, false, `unknown js handler ${name}`); return; }
-        respond(id, true, (await h(args || {})) ?? null);
+        if (!h) { respond(id, false, `unknown js handler ${name}`, frame.from); return; }
+        respond(id, true, (await h(args || {})) ?? null, frame.from);
         return;
       }
 
@@ -177,12 +280,12 @@
       // `close_tab` invoke.
       if (name === "close_tab" && jsHandlers) {
         await jsHandlers.closeTab(args?.sessionId ?? args?.session_id);
-        respond(id, true, null);
+        respond(id, true, null, frame.from);
         return;
       }
       if (name === "close_all_tabs" && jsHandlers) {
         await jsHandlers.closeAllTabs();
-        respond(id, true, null);
+        respond(id, true, null, frame.from);
         return;
       }
       // Opening a folder on the phone: the native dialog (`open_project`)
@@ -192,7 +295,7 @@
       // phone's sheet closes on it and reports on its absence.
       if (name === "open_project_at" && jsHandlers) {
         const opened = await jsHandlers.openProjectAt(args?.path ?? args);
-        respond(id, true, opened ?? null);
+        respond(id, true, opened ?? null, frame.from);
         return;
       }
       // The journal replay is the phone's disconnect-gap catch-up: the raw
@@ -201,14 +304,14 @@
       // (`remote_replay_events`) before it touches the wire.
       if (name === "replay_events" && jsHandlers) {
         const replay = await jsHandlers.remoteReplay(args || {});
-        respond(id, true, replay);
+        respond(id, true, replay, frame.from);
         return;
       }
 
       const value = await invoke(name, args || {});
-      respond(id, true, value === undefined ? null : value);
+      respond(id, true, value === undefined ? null : value, frame.from);
     } catch (e) {
-      respond(id, false, (e && e.message) || String(e));
+      respond(id, false, (e && e.message) || String(e), frame.from);
     }
   }
 
@@ -217,11 +320,11 @@
     const f = ev.payload;
     if (f && f.t === "cmd") handleCmd(f);
   });
-
   listenTauri("remote://control", (ev) => {
     const f = ev.payload;
     if (!f) return;
     if (f.t === "peer" && f.phone && f.online === false) dropPhone(f.phone);
+    else if (f.t === "peer" && f.phone && f.online === true) broadcastHello(); // a new handset joined the room
     else if (f.t === "pair_request") {
       // The pair-approval dialog (design/remote-pair-dialog.jsx) answers.
       window.dispatchEvent(new CustomEvent("remote-pair-request", { detail: f }));
@@ -232,6 +335,20 @@
 
   // Connector status (connecting/online/reconnecting/…) for the Settings UI.
   listenTauri("remote://status", (ev) => {
-    window.dispatchEvent(new CustomEvent("remote-status", { detail: ev.payload || null }));
+    // Connector state (connecting/online/reconnecting/off): "online" is
+    // the moment the room can hear the desktop — announce its hello then
+    // (once), and remember leaving it so a reconnect re-announces.
+    const f = ev.payload;
+    if (f && typeof f.status === "string") {
+      if (f.status === "online") {
+        if (!desktopOnline) { desktopOnline = true; broadcastHello(); }
+      } else {
+        // Any other state (connecting/reconnecting/off) means the room
+        // cannot hear the desktop right now: disarm, so the next "online"
+        // re-announces (a desktop restart must reach late phones too).
+        desktopOnline = false;
+      }
+    }
+    window.dispatchEvent(new CustomEvent("remote-status", { detail: f || null }));
   });
 })();

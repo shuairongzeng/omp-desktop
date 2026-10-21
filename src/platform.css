@@ -150,6 +150,13 @@
   animation: caret-blink 0.9s step-end infinite;
   margin-left: 1px;
 }
+
+/* Task lists (marked GFM `- [ ]` / `- [x]`): no bullet on the checkbox's
+   own item (the box is the marker), the theme accent for the check, and
+   a 16px hit/read size — the browser default (~13px) reads as text noise
+   beside 15px body text. */
+.md-content li:has(> input[type="checkbox"]) { list-style: none; }
+.md-content input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
 @keyframes caret-blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0; }

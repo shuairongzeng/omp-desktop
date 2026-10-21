@@ -189,5 +189,8 @@
     ensureXterm,
     createXterm,
     copySelection,
+    // Was missing while use-terminal destructured it — the touch keypad's
+    // paste key and the right-click path both need it.
+    paste,
   };
 })();

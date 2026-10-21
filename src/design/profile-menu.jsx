@@ -15,6 +15,7 @@ const { Icon, DEFAULT_PROFILE_ID, isSubmitEnter } = window;
 
 function ProfileMenu({
   profiles = [], activeId = DEFAULT_PROFILE_ID, startupId = DEFAULT_PROFILE_ID,
+  degraded = null,
   onSelect, onCreate, onRename, onDelete, onSetStartup,
 }) {
   const [open,  setOpen]  = React.useState(false);
@@ -218,6 +219,16 @@ function ProfileMenu({
       {open && (
         <div className="profile-pop" role="menu" ref={popRef} onKeyDown={onPopKey}>
           <div className="profile-pop-head mono" role="none">profile · this tab</div>
+
+          {/* The profiles file was unreadable at startup and the list fell
+              back to the built-in profile: say so, or the user's profiles
+              simply look deleted (the file is still on disk). */}
+          {degraded && (
+            <div className="profile-degraded" role="alert" title={degraded}>
+              <Icon name="warn" size={12} />
+              <span>profiles.json couldn't be read — showing the built-in profile only. Your saved profiles are still on disk; fix the file and restart.</span>
+            </div>
+          )}
 
           {/* role="none" on every non-menuitem container: a generic element
               between role="menu" and its items breaks the owned-elements

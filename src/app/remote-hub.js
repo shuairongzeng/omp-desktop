@@ -26,26 +26,30 @@
 
   const D = () => window.OMP_REMOTE_DEVICES;
 
-  const STYLE = `#remote-hub{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:#0a0e14;color:#e6e6e6;font-family:system-ui;padding:20px;text-align:left}
-#remote-hub .rh-card{width:100%;max-width:420px;max-height:85vh;max-height:85dvh;overflow-y:auto;background:#10151d;border:1px solid #1f2733;border-radius:14px;padding:20px}
+  // Theme variables (styles.css) keep the picker on the app's palette —
+  // the hub renders over the live app, so a hand-rolled dark-only set of
+  // hexes clashed on daylight/sakura. `.rh-input` is 16px (not 15) so iOS
+  // Safari does not zoom the viewport on focus.
+  const STYLE = `#remote-hub{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:var(--bg-app);color:var(--fg);font-family:system-ui;padding:20px;text-align:left}
+#remote-hub .rh-card{width:100%;max-width:420px;max-height:85vh;max-height:85dvh;overflow-y:auto;background:var(--bg-surface);border:1px solid var(--line);border-radius:14px;padding:20px}
 #remote-hub .rh-title{font-size:17px;font-weight:600;margin-bottom:4px}
 #remote-hub .rh-sub{font-size:13px;opacity:.6;line-height:1.6;margin:6px 0}
 #remote-hub .rh-list{display:flex;flex-direction:column;gap:8px;margin:12px 0}
-#remote-hub .rh-row{display:flex;align-items:center;gap:10px;padding:12px;background:#151b25;border:1px solid #232c3a;border-radius:10px;cursor:pointer}
-#remote-hub .rh-row.online{border-color:#2c4a33}
+#remote-hub .rh-row{display:flex;align-items:center;gap:10px;padding:12px;background:var(--bg-elevated);border:1px solid var(--line);border-radius:10px;cursor:pointer}
+#remote-hub .rh-row.online{border-color:var(--accent-deep)}
 #remote-hub .rh-row-main{flex:1;min-width:0}
 #remote-hub .rh-row-name{font-size:15px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #remote-hub .rh-row-meta{font-size:12px;opacity:.55;margin-top:2px}
-#remote-hub .rh-dot{width:9px;height:9px;border-radius:50%;flex:none;background:#5a6675}
-#remote-hub .rh-dot.online{background:#3ecf6e}
-#remote-hub .rh-dot.offline{background:#5a6675}
-#remote-hub .rh-dot.connecting{background:#d9a441}
-#remote-hub .rh-row-tag{font-size:11px;opacity:.7;border:1px solid #2a3340;border-radius:99px;padding:1px 8px;flex:none}
-#remote-hub .rh-forget{background:none;border:none;color:#8b95a3;font-size:12px;padding:6px;flex:none}
+#remote-hub .rh-dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--fg-4)}
+#remote-hub .rh-dot.online{background:var(--accent)}
+#remote-hub .rh-dot.offline{background:var(--fg-4)}
+#remote-hub .rh-dot.connecting{background:var(--amber)}
+#remote-hub .rh-row-tag{font-size:11px;opacity:.7;border:1px solid var(--line-bright);border-radius:99px;padding:1px 8px;flex:none}
+#remote-hub .rh-forget{background:none;border:none;color:var(--fg-3);font-size:12px;padding:6px;flex:none}
 #remote-hub .rh-pair-line{display:flex;gap:8px;margin-top:8px}
-#remote-hub .rh-input{flex:1;padding:9px 12px;font-size:15px;letter-spacing:2px;text-transform:uppercase;background:#151a22;border:1px solid #2a3340;border-radius:8px;color:#e6e6e6;text-align:center}
-#remote-hub .rh-btn{padding:9px 16px;font-size:14px;background:#3b82f6;border:none;border-radius:8px;color:#fff}
-#remote-hub .rh-btn.ghost{background:#1c2430;color:#c6cdd8;border:1px solid #2a3340}
+#remote-hub .rh-input{flex:1;padding:9px 12px;font-size:16px;letter-spacing:2px;text-transform:uppercase;background:var(--bg-input);border:1px solid var(--line);border-radius:8px;color:var(--fg);text-align:center}
+#remote-hub .rh-btn{padding:9px 16px;font-size:14px;background:var(--accent);border:none;border-radius:8px;color:var(--accent-fg,#06241B)}
+#remote-hub .rh-btn.ghost{background:var(--bg-hover);color:var(--fg-2);border:1px solid var(--line)}
 #remote-hub .rh-actions{display:flex;gap:8px;justify-content:space-between;margin-top:6px}`;
 
   let overlay = null;

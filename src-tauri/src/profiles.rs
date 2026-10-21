@@ -441,6 +441,14 @@ pub struct ProfileStore {
     /// them would see a pointer from after a mutation and a list from before
     /// it. `ProfileList` ships both in one IPC payload for the same reason.
     cache: Mutex<ProfilesFile>,
+    /// Set when startup had to fall back to the built-in profile because
+    /// `profiles.json` was unreadable twice (see [`read_or_recover_retrying`]):
+    /// the user's profiles are then absent from the list, and without this
+    /// the UI could not tell "no profiles configured" apart from "profiles
+    /// lost to a broken file". Carries the last error text (it names the
+    /// file). Immutable after `load` — a later successful `mutate` rewrites
+    /// the file, but the fact *this* run started degraded stays true.
+    degraded: Option<String>,
 }
 
 /// `profiles.json` and its siblings, each derived once from the primary.
@@ -474,15 +482,26 @@ impl ProfileStore {
         // An unreadable file gets one delayed retry ([`read_or_recover_retrying`])
         // before the built-in-only fallback: a whole run's worth of respawns
         // would otherwise land under the wrong profile.
+        let mut degraded = None;
         let file = normalize_file(files.as_ref().map_or_else(ProfilesFile::default, |files| {
             read_or_recover_retrying(&files.path, &Self::snapshot_ring(&files.snapshots))
-                .unwrap_or_default()
+                .unwrap_or_else(|e| {
+                    degraded = Some(e);
+                    (ProfilesFile::default(), false)
+                })
                 .0
         }));
         Self {
             files,
             cache: Mutex::new(file),
+            degraded,
         }
+    }
+
+    /// The load-time degradation note, if this run started from the
+    /// built-in-only fallback (see the field's docs).
+    pub fn degraded(&self) -> Option<&str> {
+        self.degraded.as_deref()
     }
 
     /// The backing files of a file-backed test store.
@@ -1847,5 +1866,26 @@ mod tests {
         let unreadable = store.files().snapshots.join("unreadable.json");
         std::fs::create_dir_all(&unreadable).expect("occupy the path");
         assert!(read_or_recover_retrying(&unreadable, &ring).is_err());
+    }
+
+    #[test]
+    fn a_degraded_load_marks_the_store_for_the_ui() {
+        // `profiles.json` unreadable at both attempts (a directory sits where
+        // the file should be): the store falls back to the built-in profile
+        // and `degraded()` carries the error so `list_profiles` can surface
+        // it — otherwise a user with profiles sees an empty list with no
+        // explanation.
+        let (store, scratch) = scratch_store();
+        let path = store.path().to_path_buf();
+        drop(store);
+        // The fixture may not have written the primary yet — remove it if
+        // present, then occupy the path with a directory.
+        let _ = std::fs::remove_file(&path);
+        std::fs::create_dir_all(&path).expect("occupy the path with a directory");
+        let degraded = ProfileStore::load(Some(path));
+        assert_eq!(degraded.snapshot().0.len(), 1, "built-in only");
+        assert!(degraded.degraded().is_some(), "degradation is reported");
+        drop(degraded);
+        drop(scratch);
     }
 }

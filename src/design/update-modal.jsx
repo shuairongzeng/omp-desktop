@@ -75,7 +75,7 @@ function UpdateModal({ updater, busyTabs }) {
           {phase === "idle" && <div className="panel-empty mono">not checked yet</div>}
           {phase === "checking" && !update && <div className="panel-empty mono">checking for updates…</div>}
           {phase === "uptodate" && <div className="panel-empty mono">you're on the latest version</div>}
-          {phase === "error" && <div className="panel-empty mono update-error">{error}</div>}
+          {phase === "error" && <div className="panel-empty mono update-error" title={error}>{U.humanizeError(error)}</div>}
 
           {update && (
             <>
@@ -86,7 +86,7 @@ function UpdateModal({ updater, busyTabs }) {
                 </span>
               </div>
               {update.notes && <pre className="update-notes selectable">{update.notes}</pre>}
-              {error && <div className="update-error mono">{error}</div>}
+              {error && <div className="update-error mono" title={error}>{U.humanizeError(error)}</div>}
               {!update.canInstall && (
                 <div className="update-hint mono">
                   This installation is managed outside the app (system package or source build) —

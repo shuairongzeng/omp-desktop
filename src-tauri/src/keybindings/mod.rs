@@ -80,6 +80,7 @@ pub const ACTION_IDS: &[&str] = &[
     "desktop.panel.rules",
     "desktop.panel.stats",
     "desktop.composer.promptHistory",
+    "desktop.composer.focus",
     "desktop.session.compact",
     "desktop.session.export",
     "desktop.update.check",

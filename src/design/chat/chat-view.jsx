@@ -187,7 +187,7 @@ function hasPendingAsk(messages, hidden = m => window.OMP_TURN_STATUS.isHidden(m
 // (app/chat-collapse.js). `followOutput` and `submitKey` are tweaks too: the
 // first lets new output move a view at the bottom, the second is the ask
 // editor's send chord.
-function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, onAskAnswer, onAskDialogAnswer, onConfirmAsk, onCancelAsk, onGrantApproval, onStopRetry, hasProjectPath, onInspectSubagent, onOpenFile, onPreviewFile, projectRoot, foldModes, collapseAfter, collapseOverrides, onToggleCollapse, onOpenKanban, followOutput = true, submitKey = "enter", windowed = false, windowCursor = null, onLoadOlder = null }) {
+function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, onAskAnswer, onAskDialogAnswer, onConfirmAsk, onCancelAsk, onGrantApproval, onStopRetry, hasProjectPath, onInspectSubagent, onOpenFile, onPreviewFile, projectRoot, foldModes, collapseAfter, collapseOverrides, onToggleCollapse, onOpenKanban, onResend, followOutput = true, submitKey = "enter", windowed = false, windowCursor = null, onLoadOlder = null }) {
   const scrollRef   = React.useRef(null);
   const pinnedRef   = React.useRef(true);   // assume start pinned to bottom
   const prevTopRef  = React.useRef(0);
@@ -373,6 +373,7 @@ function ChatView({ messages, planMode, annotations, onAnnotate, hoveredMsgIdx, 
               annotations={annotations}
               onAnnotate={onAnnotate}
               onOpenKanban={onOpenKanban}
+              onResend={onResend}
               thoughtCollapsed={collapsed[m._id]} onToggleCollapse={onToggleCollapse} />;
           })}
           <div style={{ height: 24 }} />

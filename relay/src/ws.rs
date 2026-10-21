@@ -11,7 +11,7 @@
 //! the desktop's `pair_grant`/`pair_deny` reaches it through the pairing's
 //! stored outbox (`Outbound::Text` verdict, then `Outbound::Close`).
 
-use crate::config::{phone_name, sha256_hex};
+use crate::config::{clean_phone_name, phone_name, sha256_hex};
 use crate::frame::{self, Inbound};
 use crate::state::{App, Conn, Outbound, Outbox, PairAuth, Pairing, Role, SharedApp};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -41,6 +41,10 @@ pub(crate) struct WsQuery {
     device: Option<String>,
     token: Option<String>,
     pair: Option<String>,
+    /// Phone-supplied friendly name (pair/token connections); cleaned and
+    /// preferred over the UA-derived fallback.
+    #[serde(default)]
+    name: Option<String>,
 }
 
 /// The WebSocket endpoint: authenticate from the query string BEFORE
@@ -78,7 +82,14 @@ pub async fn ws_handler(
                     PairAuth::Ok(s) => s,
                     _ => return unauthorized(),
                 };
-                return pairing_wait(app, ws, session, ua).await;
+                return pairing_wait(
+                    app,
+                    ws,
+                    session,
+                    ua,
+                    clean_phone_name(q.name.as_deref()),
+                )
+                .await;
             }
             let (Some(device), Some(token)) = (q.device.clone(), q.token.clone()) else {
                 return unauthorized();
@@ -88,7 +99,12 @@ pub async fn ws_handler(
             if !app.has_phone(&device, &hash).await {
                 return unauthorized();
             }
-            let name = app.phone_name_for(&device, &hash).await.unwrap_or_default();
+            // Friendly name from the query wins (cleaned); without one the
+            // persisted (UA-derived) name stands.
+            let name = match clean_phone_name(q.name.as_deref()) {
+                Some(n) => n,
+                None => app.phone_name_for(&device, &hash).await.unwrap_or_default(),
+            };
             ws.on_upgrade(move |socket| phone_session(app, socket, device, hash, name))
         }
         _ => unauthorized(),
@@ -188,14 +204,19 @@ async fn pairing_wait(
     ws: WebSocketUpgrade,
     mut session: Pairing,
     ua: String,
+    friendly: Option<String>,
 ) -> Response {
     session.user_agent = ua;
+    session.friendly_name = friendly;
     let pair_id = session.pair_id.clone();
     let device = session.device.clone();
     let (phone_tx, phone_rx) = App::outbox();
     session.phone_tx = Some(phone_tx.clone()); // phone needs its own reply handle
-                                               // Tell the room's desktop a phone wants in (it shows the approve/deny
-                                               // dialog). No desktop → immediate denial.
+    // Capability handshake: the phone learns the relay's caps immediately,
+    // even while it waits for the verdict.
+    phone_tx.send(Outbound::Text(frame::emit::hello()));
+    // Tell the room's desktop a phone wants in (it shows the approve/deny
+    // dialog). No desktop → immediate denial.
     if let Some(dtx) = desktop_sender(&app, &device).await {
         dtx.send(Outbound::Text(frame::emit::pair_request(
             &pair_id,
@@ -266,6 +287,12 @@ async fn pump(app: SharedApp, socket: WebSocket, conn: Conn, host: String) {
     let mut ping = tokio::time::interval(PING_PERIOD);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping.tick().await; // first tick fires immediately; skip it
+
+    // Capability handshake: every authenticated join (either role) gets
+    // the relay's own `hello` first, so both ends know what this relay
+    // does (res-unicast routing, windowed transcripts, the handshake
+    // itself). After `install_outbox` so the frame lands on this socket.
+    tx.send(Outbound::Text(frame::emit::hello()));
 
     // A joining phone missed the desktop's join/leave broadcasts: greet it
     // with the room's current identity + presence (its picker row and the
@@ -379,10 +406,27 @@ async fn handle_frame(app: &SharedApp, conn: &Conn, tx: &Outbox, text: &str, hos
                 }
             }
         }
-        (Role::Phone, "res" | "evt") => {} // dropped: phones never emit these
+        (Role::Phone, "res" | "evt" | "hello") => {} // dropped: phones never emit these
 
         // ---- desktop → relay → phones (verbatim) ----
-        (Role::Desktop, "res" | "evt") => {
+        // A `res` echoing `from` (the requesting phone's conn id) goes to
+        // that phone alone when it is still online; a missing `from` or a
+        // gone target degrades to the broadcast (legacy phones never sent
+        // `from`, so their replies must stay broadcast).
+        (Role::Desktop, "res") => {
+            let routed = match f.from.as_deref() {
+                Some(from) => phone_sender(app, &conn.device, from).await,
+                None => None,
+            };
+            match routed {
+                Some(tx) => tx.send(Outbound::Text(text.to_string())),
+                None => broadcast_to_phones(app, &conn.device, text).await,
+            }
+        }
+        // `evt` always broadcasts, as does the desktop's own `hello`
+        // (its caps: gz, transcript-window, ask-sync) — phones record
+        // the peer's caps from it.
+        (Role::Desktop, "evt" | "hello") => {
             broadcast_to_phones(app, &conn.device, text).await;
         }
         (Role::Desktop, "cmd") => {} // dropped: desktop never issues cmds
@@ -399,6 +443,7 @@ async fn handle_frame(app: &SharedApp, conn: &Conn, tx: &Outbox, text: &str, hos
                 code: code.clone(),
                 device: conn.device.clone(),
                 user_agent: String::new(),
+                friendly_name: None,
                 expires_at: crate::state::pair_ttl(),
                 phone_tx: None,
             };
@@ -421,7 +466,12 @@ async fn handle_frame(app: &SharedApp, conn: &Conn, tx: &Outbox, text: &str, hos
                 &session.device,
                 sha256_hex(&token),
                 crate::config::PhoneEntry {
-                    name: phone_name(&session.user_agent),
+                    // The pairing query's friendly name wins; the
+                    // UA-derived fallback otherwise.
+                    name: session
+                        .friendly_name
+                        .clone()
+                        .unwrap_or_else(|| phone_name(&session.user_agent)),
                     paired_at: crate::state::unix_now(),
                 },
             )
@@ -504,6 +554,16 @@ fn pair_url(host: &str, token: &str) -> String {
 async fn desktop_sender(app: &SharedApp, device: &str) -> Option<Outbox> {
     let rooms = app.rooms.lock().await;
     rooms.map.get(device).and_then(|r| r.desktop_tx.clone())
+}
+
+/// One phone's outbox by connection id (res unicast routing); `None` when
+/// the phone is not in the room.
+async fn phone_sender(app: &SharedApp, device: &str, conn_id: &str) -> Option<Outbox> {
+    let rooms = app.rooms.lock().await;
+    rooms
+        .map
+        .get(device)
+        .and_then(|r| r.phones.get(conn_id).map(|(_, t)| t.clone()))
 }
 
 /// Initial frames for a freshly joined phone: the desktop's stored display

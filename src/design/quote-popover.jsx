@@ -9,7 +9,9 @@ function QuotePopover({ x, y, onPick }) {
   const { Icon: _QP_Icon } = window;
   return (
     <button type="button" className="quote-pop" style={{ left: x, top: y }}
-      onMouseDown={e => e.preventDefault()} onClick={onPick}>
+      onMouseDown={e => e.preventDefault()}
+      onTouchStart={e => e.preventDefault()}
+      onClick={onPick}>
       <_QP_Icon name="quote" size={11} />
       <span>Add to prompt</span>
     </button>

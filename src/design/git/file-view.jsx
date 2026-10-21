@@ -13,6 +13,24 @@ function GitFileView({ path, file, error, commit, onStage, onDiscard }) {
   const bodyRef = React.useRef(null);
   const scrollToLine = i => bodyRef.current?.querySelector(`[data-line="${i}"]`)?.scrollIntoView({ block: "center" });
   const [hunk, setHunk] = React.useState(0);
+  // Two-step discard (profile-menu.jsx's armedDelete pattern): a discard
+  // is irreversible, so the first tap re-renders the button armed ("sure?")
+  // and only the second runs it. Any file change, pane leave or a click
+  // elsewhere disarms; a timer alone would race a slow bridge round-trip,
+  // the explicit resets are the real guards.
+  const [armed, setArmed] = React.useState(false);
+  React.useEffect(() => { setArmed(false); }, [path]);
+  React.useEffect(() => {
+    if (!armed) return undefined;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  const onDiscardClick = () => {
+    if (!armed) { setArmed(true); return; }
+    setArmed(false);
+    onDiscard?.();
+  };
+
   const lines = file?.kind === "Text" ? file.lines : null;
   const hunks = React.useMemo(() => (lines ? _GV_hunkStarts(lines) : []), [lines]);
   const copyText = React.useMemo(() => (lines ? _GV_diffText(lines) : ""), [lines]);
@@ -52,7 +70,8 @@ function GitFileView({ path, file, error, commit, onStage, onDiscard }) {
   const actions = Boolean(onStage && meta);
 
   return (
-    <div className="gitb-pane gitb-view">
+    <div className="gitb-pane gitb-view"
+      onPointerDown={e => { if (armed && !e.target.closest?.(".gitb-discard")) setArmed(false); }}>
       <div className="gitb-pane-head gitb-view-head mono">
         {commit && (
           <span className="gitb-view-commit" title={`${commit.id}\n${commit.subject}`}>
@@ -80,7 +99,11 @@ function GitFileView({ path, file, error, commit, onStage, onDiscard }) {
         )}
         {actions && <>
           <button type="button" className="btn ghost gitb-act" onClick={onStage} title="git add"><_GV_Icon name="check" size={11} /> stage</button>
-          <button type="button" className="btn ghost gitb-act danger" onClick={onDiscard} title="restore from HEAD"><_GV_Icon name="trash" size={11} /> discard</button>
+          <button type="button" className={`btn ghost gitb-act danger gitb-discard ${armed ? "armed" : ""}`}
+            onClick={onDiscardClick} aria-live="polite"
+            title={armed ? "tap again to discard this file's change" : "restore from HEAD"}>
+            <_GV_Icon name="trash" size={11} /> {armed ? "discard?" : "discard"}
+          </button>
         </>}
         {copyText && <_GV_Copy className="gitb-copy" label="Copy diff" text={copyText} />}
       </div>

@@ -94,6 +94,7 @@ function App() {
   // ── Live data (all per-session — driven by OMP_BRIDGE.onUpdate) ───────────
   const [messages,      setMessages]      = React.useState([]);
   const [streaming,     setStreaming]     = React.useState(false);
+  const [exitReason,    setExitReason]    = React.useState(null);
   const [model,         setModelState]    = React.useState(NULL_MODEL);
   // #19: messages trimmed from the transcript head (live.js _trimMessages),
   // surfaced by the minimap's "−N earlier" badge.
@@ -112,6 +113,7 @@ function App() {
   // promptHistories. Never persisted; re-sourced from the bridge snapshot
   // on every update, same as any other per-session field here.
   const [promptHistory, setPromptHistory] = React.useState([]);
+  const [globalPromptHistory, setGlobalPromptHistory] = React.useState([]);
   // Subagent manager (src/app/subagents.js shape) + the active tab's
   // on-demand agent transcripts.
   const [subagents,           setSubagents]           = React.useState(() => window.OMP_SUBAGENTS.emptySubagents());
@@ -135,6 +137,7 @@ function App() {
   // The profile itself is per tab (see sessions[].profile); this is just the
   // catalogue the selector renders.
   const [profiles,        setProfiles]        = React.useState([]);
+  const [profilesDegraded, setProfilesDegraded] = React.useState(null);
   // Which profile is ticked as the default for new tabs / the next launch.
   // App-wide and persisted, unlike a tab's own profile.
   const [startupProfileId, setStartupProfileId] = React.useState(DEFAULT_PROFILE_ID);
@@ -164,12 +167,12 @@ function App() {
     window.__TAURI__?.window?.getCurrentWindow?.()?.show?.()?.catch?.(() => {});
   }, []);
   useBridgeSnapshot(bridge, {
-    setMessages, setStreaming, setCtx, setKanban, setPlanMeta, setTrimmedCount, setWindowed, setWindowCursor,
+    setMessages, setStreaming, setExitReason, setCtx, setKanban, setPlanMeta, setTrimmedCount, setWindowed, setWindowCursor,
     setModels, setActivity, setSparkline,
     setModelState, setThinkingLevel,
-    setSessions, setActiveSessionId, setProfiles, setStartupProfileId, setRecentProjects,
+    setSessions, setActiveSessionId, setProfiles, setProfilesDegraded, setStartupProfileId, setRecentProjects,
     setNoTabProfileId, setWorkspaceNotes, setApprovalModes, setCloseConfirm,
-    setPromptHistory, setSubagents, setSubagentTranscripts, setQueue, setQueueSending, setGoal, setExtWidgets,
+    setPromptHistory, setGlobalPromptHistory, setSubagents, setSubagentTranscripts, setQueue, setQueueSending, setGoal, setExtWidgets,
   });
   useThemeEffect(t);
   useBackgroundImage(t);
@@ -251,11 +254,47 @@ React.useEffect(() => {
   const prev = document.title;
   const folder = activeProject.path ? _AL_basename(activeProject.path) : "";
   const withFolder = folder && folder !== activeProject.name ? `${activeProject.name} · ${folder}` : activeProject.name;
+  // Background tabs waiting on the user stay visible in the title even when
+  // the active tab is idle — the count is the whole point of the badge.
+  const waiting = sessions.filter(s => s.runState === "waiting-user").length;
+  const badge = waiting > 0 ? `(${waiting} 待审批) ` : "";
   document.title = activeProject.id
-    ? `${streaming ? "● " : ""}${withFolder} — OMP Desktop`
-    : "OMP Desktop";
+    ? `${badge}${streaming ? "● " : ""}${withFolder} — OMP Desktop`
+    : (badge ? `${badge}OMP Desktop` : "OMP Desktop");
   return () => { document.title = prev; };
-}, [activeProject.id, activeProject.name, activeProject.path, streaming]);
+}, [activeProject.id, activeProject.name, activeProject.path, streaming, sessions]);
+
+  // ── OS notifications (app/notify.js, tauri-plugin-notification) ─────────
+  // A tab flipping busy → idle (notifyDone) or → waiting-user (notifyAsk)
+  // fires a system notification — but only when nobody is looking at that
+  // tab (window hidden, or the tab is in the background). `shouldNotify`
+  // holds the decision matrix; tested in tests/test-notify.mjs.
+  const notifyPrevRef = React.useRef(new Map()); // sessionId → runState
+  React.useEffect(() => {
+    const N = window.OMP_NOTIFY;
+    if (!N) return;
+    const prev = notifyPrevRef.current;
+    const next = new Map();
+    for (const s of sessions) {
+      if (!s?.id) continue;
+      next.set(s.id, s.runState);
+      const before = prev.get(s.id);
+      if (before === undefined || before === s.runState) continue;
+      const kind = s.runState === "waiting-user" ? "ask" : "done";
+      if (!N.shouldNotify({
+        // shouldNotify's busy side is {busy, running}: normalise the other
+        // in-flight states onto "busy" so retrying/background also notify.
+        prevRun: ["running", "retrying", "background"].includes(before) ? "busy" : before,
+        nextRun: s.runState,
+        documentHidden: document.hidden,
+        isActiveTab: s.id === activeSessionId,
+        tweaks: t,
+      })) continue;
+      const folder = s.path ? _AL_basename(s.path) : "";
+      N.fire(kind, { sessionTitle: s.title || "", projectName: folder });
+    }
+    notifyPrevRef.current = next;
+  }, [sessions, activeSessionId, t]);
   const activeProfileLabel = profiles.find(p => p.id === activeProfileId)?.name ?? activeProfileId;
   // Status-bar approvals cell: the mode the rendered tab's omp runs, or
   // `running ⇢ target` while a change waits for its turn to end. Read
@@ -454,6 +493,10 @@ React.useEffect(() => {
     // The phone topbar's clock (chrome.jsx): the full history modal with
     // no project filter — the desktop's Ctrl+H.
     "open-history":  () => openHistory(null),
+    // Composer ＋ sheet: new conversation in the current project — the
+    // desktop tab bar's always-visible ＋. (Called from the event listener,
+    // long after this render completed — the closure is fresh.)
+    "open-new":      () => { if (activeProject.path) handleNewInProject(activeProject.path); },
   };
   React.useEffect(() => {
     const onMobile = e => {
@@ -622,17 +665,30 @@ React.useEffect(() => {
   const [quote, setQuote] = React.useState(null); // { x, y, text } | null
   React.useEffect(() => {
     const Q = window.OMP_QUOTE;
-    const onMouseUp = () => {
-      const sel = window.getSelection();
+    const coarse = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+    let selTimer = 0;
+    const place = (sel) => {
       const text = Q.quotableText(sel);
-      if (!text) return; // a collapsed selection is handled by selectionchange
+      if (!text) return;
       const rect = sel.getRangeAt(0).getBoundingClientRect();
       const { x, y } = Q.popoverPos(rect, window.innerWidth, window.innerHeight);
       setQuote({ x, y, text });
     };
+    const onMouseUp = () => {
+      const sel = window.getSelection();
+      place(sel); // a collapsed selection is handled by selectionchange
+    };
     const onSelectionChange = () => {
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) setQuote(null);
+      if (!sel || sel.isCollapsed) { clearTimeout(selTimer); setQuote(null); return; }
+      // Touch long-press selections never fire mouseup — once the selection
+      // has been stable for a beat, offer the pill too.
+      if (!coarse) return;
+      clearTimeout(selTimer);
+      selTimer = setTimeout(() => {
+        const s2 = window.getSelection();
+        if (s2 && !s2.isCollapsed) place(s2);
+      }, 350);
     };
     const onMouseDown = (e) => { if (!e.target.closest?.(".quote-pop")) setQuote(null); };
     const onKey = (e) => { if (e.key === "Escape") setQuote(null); };
@@ -645,6 +701,7 @@ React.useEffect(() => {
     document.addEventListener("keydown", onKey, true);
     document.addEventListener("scroll", onScroll, true);
     return () => {
+      clearTimeout(selTimer);
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("selectionchange", onSelectionChange);
       document.removeEventListener("mousedown", onMouseDown);
@@ -961,6 +1018,7 @@ React.useEffect(() => {
     "desktop.panel.rules":     () => setRulesOpen(v => !v),
     "desktop.panel.stats":     () => setStatsOpen(v => !v),
     "desktop.composer.promptHistory": () => setPromptHistoryOpen(v => !v),
+    "desktop.composer.focus":  () => window.dispatchEvent(new CustomEvent("omp:focus-composer")),
     "desktop.session.compact": () => bridge?.compact(),
     "desktop.session.export":  () => bridge?.exportHtml(),
     "desktop.update.check":    updater.check,
@@ -1065,6 +1123,7 @@ React.useEffect(() => {
             profiles={profiles}
             activeProfileId={activeProfileId}
             startupProfileId={startupProfileId}
+            profilesDegraded={profilesDegraded}
             onSelectProfile={handleSelectProfile}
             onCreateProfile={handleCreateProfile}
             onRenameProfile={handleRenameProfile}
@@ -1157,6 +1216,7 @@ React.useEffect(() => {
                     followOutput={t.followOutput}
                     submitKey={t.submitKey}
                     onOpenKanban={handleOpenKanban}
+                    onResend={text => { if (text && !streaming) handleSend(text); }}
                     windowed={windowed}
                     windowCursor={windowCursor}
                     onLoadOlder={handleLoadOlder}
@@ -1202,6 +1262,8 @@ React.useEffect(() => {
                     submitKey={t.submitKey}
                     pasteCollapseLines={t.pasteCollapseLines}
                     approvalCell={approvalCell}
+                    exitReason={exitReason}
+                    onRestart={() => bridge?.restartSession?.().then(r => { if (r && r.ok === false) console.error("[app] restart failed:", r.error); })}
                   />
                 </>)}
               </main>
@@ -1369,6 +1431,7 @@ React.useEffect(() => {
         <PromptHistoryModal
           open={promptHistoryOpen}
           entries={promptHistory}
+          globalEntries={globalPromptHistory}
           onClose={() => setPromptHistoryOpen(false)}
           onPick={handlePickHistoryPrompt}
         />

@@ -11,7 +11,14 @@
    shrank — and reports the final height once (`onHeight`,
    ui/use-edge-drag.js). Right-click on the body copies a selection, else
    pastes; Shift+Right-click passes through to the WebView's own menu.
-   `TerminalPanels` renders the panels of every tab for app-live.jsx.
+
+   Phone tier (touch only, terminal.css's ≤760px layer sizes the parts):
+   a key row under the head — Esc / sticky Ctrl / ↑ / ↓ / Tab / 粘贴 —
+   whose caps write the exact bytes through useTerminal's `sendKey` (the
+   same bridge.terminalWrite channel xterm's own keys take), and a
+   double-tap on the handle that flips between the 240 px tweak and half
+   the column. `TerminalPanels` renders the panels of every tab for
+   app-live.jsx.
    ═════════════════════════════════════════════════════════════════════ */
 
 const { Icon: _TP_Icon } = window;
@@ -19,7 +26,21 @@ const {
   clampHeight: _TP_clamp, isExited: _TP_isExited, entryOf: _TP_entryOf, shellLabel: _TP_shellLabel,
 } = window.OMP_TERMINAL;
 
-function TerminalPanel({ entry, height, hidden, onHeight, onClose, onRestart, mountRef, onContextMenu, shellLabel, cwd }) {
+// Read once at module level, the composer's `touch` convention: a coarse
+// pointer drives this UI (app/mobile.js isTouch). Not a per-render check —
+// the pointer kind does not change under a mounted page.
+const _TP_touch = Boolean(window.OMP_MOBILE?.isTouch?.());
+
+function TerminalPanel({
+  entry, height, hidden, onHeight, onClose, onRestart, mountRef, onContextMenu, shellLabel, cwd,
+  // Phone tier (touch only): the touch key row under the head and the
+  // handle's two-level double-tap. `touch` gates the row's render,
+  // `onKey` writes a cap's sequence, `onPaste` the clipboard, `ctrlOn`
+  // lights the Ctrl cap and `onToggleCtrl` arms/disarms it (all three
+  // come from useTerminal's return; optional so the panel still renders
+  // when a caller passes none).
+  touch, onKey, onPaste, ctrlOn, onToggleCtrl,
+}) {
   const drag = window.useEdgeDrag({
     begin: (e) => {
       const column = e.currentTarget.closest(".session");
@@ -53,6 +74,36 @@ function TerminalPanel({ entry, height, hidden, onHeight, onClose, onRestart, mo
   };
   const exited = _TP_isExited(entry);
 
+  // Phone: a drag already resizes at pointer granularity, and the drag
+  // gesture needs the handle anyway — the double-tap flips between two
+  // levels instead: the tweak's 240 px compact and half the session
+  // column (the 820px layer caps the panel at 60% and floors it at
+  // 30vh; clampHeight keeps both inside). Desktop keeps the single
+  // reset level.
+  // (A double-click reaches this handler after useEdgeDrag's own tap
+  // cycle: a pointerdown/up pair with no move; `drag.size` is null by
+  // then, so `shown` reads the committed height.)
+  const toggleLevel = (e) => {
+    if (!touch) return onHeight(240);
+    // The handle sits inside the panel, inside the session column; the
+    // event's own node is the reliable way to it (mountRef is a callback
+    // ref, not a node).
+    const column = e?.currentTarget?.closest?.(".session")?.getBoundingClientRect().height
+      ?? window.innerHeight;
+    const half = column / 2;
+    onHeight(_TP_clamp(shown >= half ? 240 : half, column));
+  };
+
+  // A cap press: `seq` is the exact bytes the row writes (useTerminal's
+  // `onKey`, the channel xterm's own keys take). Buttons blur on tap, so
+  // the terminal's textarea keeps the focus — the soft keyboard stays
+  // down and the sequence (not a keystroke) goes to the shell.
+  const cap = (seq, label, extra = {}) => (
+    <button type="button" className="term-key" onClick={() => onKey?.(seq)} {...extra}>
+      {label}
+    </button>
+  );
+
   return (
     <section className="term-panel" hidden={hidden} style={{ height: shown }}>
       <div
@@ -65,7 +116,7 @@ function TerminalPanel({ entry, height, hidden, onHeight, onClose, onRestart, mo
         tabIndex={0}
         title="drag to resize, double-click for the default height"
         {...drag.handlers}
-        onDoubleClick={() => onHeight(240)}
+        onDoubleClick={toggleLevel}
         onKeyDown={onKeyDown}
       >
         <span className="term-handle-tip">{Math.round(shown)} px</span>
@@ -90,10 +141,36 @@ function TerminalPanel({ entry, height, hidden, onHeight, onClose, onRestart, mo
             </span>
           </button>
         )}
-        <button type="button" className="btn icon ghost term-head-close" title="hide terminal" onClick={onClose}>
+        <button type="button" className="btn icon ghost term-head-close" title="hide terminal" aria-label="hide terminal" onClick={onClose}>
           <_TP_Icon name="close" size={9} />
         </button>
       </div>
+      {touch && (
+        <div className="term-keyrow" role="toolbar" aria-label="terminal keys">
+          <button
+            type="button"
+            className={`term-key term-key-ctrl${ctrlOn ? " on" : ""}`}
+            aria-pressed={Boolean(ctrlOn)}
+            title="粘滞 Ctrl：下一次按键带上 Ctrl"
+            onClick={() => onToggleCtrl?.()}
+          >
+            Ctrl
+          </button>
+          {cap("\x1b", "Esc", { "aria-label": "发送 Esc" })}
+          {cap("\x1b[A", "↑", { "aria-label": "上一条命令（上箭头）" })}
+          {cap("\x1b[B", "↓", { "aria-label": "下一条命令（下箭头）" })}
+          {cap("\t", "Tab", { "aria-label": "发送 Tab" })}
+          <button
+            type="button"
+            className="term-key"
+            title="粘贴剪贴板内容"
+            aria-label="粘贴剪贴板内容"
+            onClick={() => onPaste?.()}
+          >
+            粘贴
+          </button>
+        </div>
+      )}
       <div className="term-body" ref={mountRef} onContextMenu={onContextMenu} />
     </section>
   );
@@ -133,6 +210,15 @@ function TerminalPanels({ sessions, activeId, terminal }) {
             }}
             shellLabel={_TP_shellLabel(entry.status?.shell)}
             cwd={s.path}
+            // Phone tier: the row renders only for a coarse pointer, and
+            // each cap goes through the useTerminal members above. The
+            // optional chains inside the panel keep an older caller
+            // (none today) rendering.
+            touch={_TP_touch}
+            onKey={(seq) => terminal.sendKey?.(s.id, seq)}
+            onPaste={() => terminal.paste(s.id)}
+            ctrlOn={Boolean(terminal.ctrlTabs?.[s.id])}
+            onToggleCtrl={() => terminal.toggleCtrl?.(s.id)}
           />
         );
       })}

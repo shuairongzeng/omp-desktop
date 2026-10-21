@@ -152,13 +152,13 @@ function makeEnv(opts = {}) {
       noteDevice: (device, frame) => { hubCalls.noteDevice.push([device, frame]); },
     };
   }
-  // eslint-disable-next-line no-new-func
   new Function(
     "window", "document", "localStorage", "location", "WebSocket",
-    "setTimeout", "clearTimeout", "console",
+    "setTimeout", "clearTimeout", "console", "navigator",
     src,
   )(win, document, localStorage, location, FakeWebSocket,
-    fakeTimers.setTimeout, fakeTimers.clearTimeout, quiet);
+    fakeTimers.setTimeout, fakeTimers.clearTimeout, quiet,
+    opts.navigator ?? { userAgentData: { platform: "Android", mobile: true } });
 
   return {
     win, document, location, localStorage, sockets,
@@ -225,7 +225,7 @@ await check("without stored auth the overlay asks to pair, invokes reject fast, 
 await check("with auth: connects, queues pre-open frames in order, answers res by id, refcounts subs", async () => {
   const E = makeEnv({ auth: { device: "d1", token: "t1" } });
   assert.equal(E.sockets.length, 1);
-  assert.equal(E.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d1&token=t1");
+  assert.equal(E.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d1&token=t1&name=Android%20%C2%B7%20mobile");
 
   const T = E.win.__TAURI__;
   assert.equal(T.__remoteShim, true);
@@ -563,7 +563,7 @@ const twoDevices = (selected = "d1") => ({
 await check("a legacy single-pairing phone migrates at boot and connects unchanged", async () => {
   const E = makeEnv({ auth: { device: "d1", token: "t1" } });
   assert.equal(E.sockets.length, 1);
-  assert.equal(E.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d1&token=t1");
+  assert.equal(E.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d1&token=t1&name=Android%20%C2%B7%20mobile");
   const saved = E.saved();
   assert.equal(saved.devices.length, 1);
   assert.equal(saved.selected, "d1");
@@ -573,7 +573,7 @@ await check("a legacy single-pairing phone migrates at boot and connects unchang
 await check("with several devices paired, boot connects the SELECTED room and leaves the picker shut", async () => {
   const E = makeEnv({ devices: twoDevices("d2") });
   assert.equal(E.sockets.length, 1);
-  assert.equal(E.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d2&token=t2");
+  assert.equal(E.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d2&token=t2&name=Android%20%C2%B7%20mobile");
   assert.equal(E.hubCalls.open, 0);
 });
 
@@ -642,6 +642,198 @@ await check("remote_set_name joins the desktop-only command wall", async () => {
   const E = makeEnv({ devices: twoDevices("d1") });
   await assert.rejects(E.win.__TAURI__.core.invoke("remote_set_name", { name: "x" }),
     (e) => e.message === "remote_set_name is unsupported on remote");
+});
+
+// ── protocol v2: hello caps, dropped rejects, desktop-restart replay ──────
+
+await check("a hello frame stores the desktop's caps on __remoteCaps", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const sock = E.sockets[0];
+  sock.open();
+  const T = E.win.__TAURI__;
+  assert.equal(T.__remoteCaps, null); // nothing before a hello lands
+
+  sock.message({ t: "hello", v: 1, caps: ["res-unicast", "transcript-window", "hello"] });
+  assert.deepEqual(T.__remoteCaps, ["res-unicast", "transcript-window", "hello"]);
+
+  // a caps-less or non-array hello resets to an empty array, never garbage
+  sock.message({ t: "hello", v: 1 });
+  assert.deepEqual(T.__remoteCaps, []);
+});
+
+await check("a dropped frame with a live pending id rejects it with the oversize reason", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const T = E.win.__TAURI__;
+  const sock = E.sockets[0];
+  sock.open();
+
+  let err = null;
+  const p = T.core.invoke("big_window");
+  p.catch((e) => { err = e; });
+  const id = sock.sent.at(-1).id;
+  sock.message({ t: "dropped", reason: "oversize", id });
+  await drain();
+  assert.ok(err instanceof Error, "the pending invoke rejected");
+  assert.equal(err.message, "relay dropped the reply (oversize)");
+
+  // the 30s timeout was disarmed with the rejection
+  assert.equal(E.fakeTimers.pending(), 0);
+
+  // a dropped frame for an unknown id (an evt, or a resolved reply) only logs
+  sock.message({ t: "dropped", reason: "oversize", id: 999 });
+  assert.equal(E.fakeTimers.pending(), 0);
+  // ...and a dropped frame with no id at all is equally inert
+  sock.message({ t: "dropped", reason: "oversize" });
+  assert.equal(E.fakeTimers.pending(), 0);
+});
+
+await check("a res whose value is gzipped but undecodable rejects the pending, never resolves garbage", async () => {
+  // Node has DecompressionStream; shadow it for this one env so the
+  // shim's missing-codec path runs (a very old handset browser). The
+  // restore is in a finally so a failed assert can't leak the shadow.
+  const origDecompressionStream = globalThis.DecompressionStream;
+  globalThis.DecompressionStream = undefined;
+  try {
+    const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+    const T = E.win.__TAURI__;
+    const sock = E.sockets[0];
+    sock.open();
+
+    const p = T.core.invoke("huge_fetch");
+    const id = sock.sent.at(-1).id;
+    sock.message({ t: "res", id, ok: true, value: { gz: "bm90LWd6aXA=" } });
+    let err = null;
+    p.catch((e) => { err = e; });
+    await drain();
+    assert.ok(err instanceof Error, "the gzipped reply rejected");
+    assert.equal(err.message, "unsupported frame encoding");
+  } finally {
+    globalThis.DecompressionStream = origDecompressionStream;
+  }
+
+  // with the codec present, a valid gz round-trips (the desktop's agent
+  // encodes exactly this shape) and a plain value still resolves verbatim
+  const E2 = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const T2 = E2.win.__TAURI__;
+  const sock2 = E2.sockets[0];
+  sock2.open();
+  const gz = await new Promise((resolve) => {
+    const stream = new Blob([JSON.stringify({ ok: true, n: 7 })]).stream()
+      .pipeThrough(new CompressionStream("gzip"));
+    new Response(stream).arrayBuffer().then((buf) => {
+      const bytes = new Uint8Array(buf);
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      resolve(btoa(bin));
+    });
+  });
+  const p2 = T2.core.invoke("huge_fetch");
+  sock2.message({ t: "res", id: sock2.sent.at(-1).id, ok: true, value: { gz } });
+  // await the decode chain itself (Blob/Response/DecompressionStream are
+  // real async here), not a guessed number of microtask turns
+  const v = await p2;
+  assert.deepEqual(v, { ok: true, n: 7 });
+
+  const p3 = T2.core.invoke("small_fetch");
+  let v3;
+  p3.then((x) => { v3 = x; });
+  sock2.message({ t: "res", id: sock2.sent.at(-1).id, ok: true, value: { a: 1 } });
+  await drain();
+  assert.deepEqual(v3, { a: 1 });
+});
+
+await check("a desktop restart (peer desktop:true) replays every live subscription and resyncs, without a resync on desktop:false", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const T = E.win.__TAURI__;
+  const sock = E.sockets[0];
+  sock.open();
+  let resyncs = 0;
+  E.win.OMP_BRIDGE = { _remoteResync: () => { resyncs++; } };
+
+  await T.event.listen("tab_update", () => {});
+  await T.event.listen("agent://line/s-1", () => {});
+  const subCount = () => sock.sent.filter((f) => f.name === "sub").length;
+  const base = subCount();
+
+  // desktop away and back: the return is a NEW room membership — its
+  // subscription table is empty, so every live listener replays
+  sock.message({ t: "peer", desktop: false });
+  assert.equal(resyncs, 0);
+  assert.equal(subCount(), base); // going offline replays nothing
+
+  sock.message({ t: "peer", desktop: true });
+  assert.equal(resyncs, 1);
+  assert.equal(subCount(), base + 2); // one fresh sub per listener
+  const names = sock.sent.slice(-2).map((f) => f.args.name).sort();
+  assert.deepEqual(names, ["agent://line/s-1", "tab_update"]);
+
+  // a second return (a bounce) replays again — each return is its own room
+  sock.message({ t: "peer", desktop: false });
+  sock.message({ t: "peer", desktop: true });
+  assert.equal(resyncs, 2);
+  assert.equal(subCount(), base + 4);
+
+  // listeners added after the restart replay too (ordinary refcount path)
+  await T.event.listen("chat_update", () => {});
+  assert.equal(subCount(), base + 5);
+});
+
+await check("first-connect failure retries with backoff and a 立即重试 button, and settles into the normal reconnect loop", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const sock = E.sockets[0];
+  sock.shut(); // first-connect FAILURE: onopen never ran, everConnected is false
+
+  // the retry overlay is up (not the old dead-end card), with the button
+  const ov = E.overlay();
+  assert.ok(ov, "the retry overlay is mounted");
+  assert.equal(ov.style.display, "flex");
+  assert.equal(ov.querySelector(".ro-title").textContent, "连不上服务器");
+  const act = ov.querySelector(".ro-action");
+  assert.equal(act.style.display, "block");
+  assert.equal(act.textContent, "立即重试");
+  assert.equal(E.banner(), null); // no banner: never had a session to keep alive
+
+  // the same capped backoff as a mid-session drop
+  const armed = E.fakeTimers.list();
+  assert.equal(armed.length, 1);
+  assert.equal(armed[0].delay, 1000);
+  E.fakeTimers.run(armed[0].id);
+  assert.equal(E.sockets.length, 2);
+  E.sockets[1].shut();
+  assert.equal(E.fakeTimers.list()[0].delay, 2000);
+  assert.equal(act.textContent, "立即重试"); // still the retry card
+
+  // the button dials at once (retryMs 0), not after the backoff wait
+  act.onclick();
+  assert.equal(E.sockets.length, 3); // dialed immediately
+  assert.equal(E.sockets[2].url, E.sockets[1].url);
+
+  // and a SUCCESSFUL open clears the card: everConnected flips, a later
+  // drop shows the in-place banner instead
+  E.sockets[2].open();
+  assert.equal(ov.style.display, "none");
+  E.sockets[2].shut();
+  const banner = E.banner();
+  assert.ok(banner, "a post-connection drop shows the reconnect banner");
+  assert.equal(banner.style.display, "block");
+  assert.equal(ov.style.display, "none"); // the retry card stays down
+});
+
+await check("the pair connection URL carries the phone's friendly name (UA-Data platform · mobile)", async () => {
+  const E = makeEnv({
+    auth: { device: "d1", token: "t1" },
+    navigator: { userAgentData: { platform: "Pixel 9", mobile: true } },
+  });
+  assert.equal(E.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d1&token=t1&name=Pixel%209%20%C2%B7%20mobile");
+
+  // UA-Data absent: the UA-string fallback, first parens segment
+  const E2 = makeEnv({
+    auth: { device: "d1", token: "t1" },
+    navigator: { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15" },
+  });
+  assert.equal(E2.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d1&token=t1&name=iPhone");
 });
 
 // ── summary ────────────────────────────────────────────────────────────────

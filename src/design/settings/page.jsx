@@ -289,6 +289,13 @@ function SettingsPage({ ctx, onClose }) {
       <div className="st-foot">
         <div className="st-inner">
           <span>changes apply at once</span>
+          {/* The app's config folder (tweaks/, remote.json, …) as the OS
+              shows it. The command is S4's `open_config_folder`; failing
+              here only logs — the page must never throw for a link. */}
+          <button type="button" className="st-open-config" onClick={() => {
+            window.__TAURI__?.core?.invoke("open_config_folder")
+              .catch((e) => console.error("open_config_folder failed", e));
+          }} title="open the folder with settings.json, remote.json and the like in your file manager">open settings folder</button>
           <span className="st-sp" />
           {resetArmed && canReset ? (
             <span className="st-reset-confirm" role="status">

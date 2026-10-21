@@ -186,4 +186,13 @@ check("formatBytes picks a readable unit", () => {
   assert.equal(U.formatBytes(NaN), "—");
 });
 
+check("humanizeError maps plugin errors to actionable sentences", () => {
+  assert.match(U.humanizeError("network error: dns error: failed to lookup address"), /network/i);
+  assert.match(U.humanizeError("error sending request: connection timed out"), /network/i);
+  assert.match(U.humanizeError("invalid latest.json: missing field `version`"), /unexpected response/i);
+  assert.match(U.humanizeError("signature verification failed"), /signature/i);
+  // Unrecognized shapes pass through verbatim — never a wrong message.
+  assert.equal(U.humanizeError("something entirely novel"), "something entirely novel");
+});
+
 console.log(`test-updater: ${passed} checks passed`);

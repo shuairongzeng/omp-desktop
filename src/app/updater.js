@@ -137,6 +137,25 @@
     return sessions.filter((s) => isBusyRunState(s?.runState)).length;
   }
 
+  // The updater plugin's error strings are engineer-facing (`network error:
+  // …`, `invalid latest.json`). Map the common shapes to one actionable
+  // sentence; anything unrecognized passes through verbatim (better a raw
+  // message than a wrong one). The raw string stays in state — this is
+  // render-time only.
+  function humanizeError(raw) {
+    const s = String(raw ?? "");
+    const low = s.toLowerCase();
+    if (/network|dns|connect|timeout|timed out|tls|ssl|certificate|send request/.test(low))
+      return "Couldn't reach the update server — check your network and try again.";
+    if (/signature|sign/.test(low))
+      return "The update failed signature verification — download it from the release page instead.";
+    if (/latest\.json|json|parse|deserialize|invalid/.test(low))
+      return "The update server returned an unexpected response — try again later.";
+    if (/404|not found/.test(low))
+      return "No release information was found for this build.";
+    return s;
+  }
+
   window.OMP_UPDATER = Object.freeze({
     STARTUP_DELAY_MS,
     CHECK_INTERVAL_MS,
@@ -150,5 +169,6 @@
     progressPct,
     formatBytes,
     busyTabCount,
+    humanizeError,
   });
 })();

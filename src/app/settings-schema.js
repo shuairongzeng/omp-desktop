@@ -48,13 +48,13 @@
   const SECTIONS = [
     { id: "appearance", icon: "sparkle", title: "Appearance", blurb: "Colour theme, accent, density and text size of the whole window.", groups: [
       { name: "Theme", rows: [
-        tweak("theme", "themes", "Theme", "Picking a theme also resets the accent to the theme's own.", "dark light colour color aurora phosphor daylight"),
-        tweak("accent", "swatches", "Accent", "Focus rings, the active tab, links and the assistant's marks.", "color colour highlight"),
+        tweak("theme", "themes", "Theme", "Picking a theme also resets the accent to the theme's own.", "dark light mode colour color 外观 主题 aurora phosphor daylight nordic solarized sakura midnight"),
+        tweak("accent", "swatches", "Accent", "Focus rings, the active tab, links and the assistant's marks.", "color colour highlight 强调色"),
       ] },
       { name: "Text", rows: [
         tweak("density", "seg", "Density", "Row height, padding and the base text size.", "spacing compact",
           { options: opts(["cozy", "compact", "dense"]) }),
-        tweak("fontSize", "slider", "Font size", "Scales all text and icons, the terminal's font included.", "zoom scale text",
+        tweak("fontSize", "slider", "Font size", "Scales all text and icons, the terminal's font included.", "zoom scale text 字体",
           { min: 75, max: 150, step: 5, unit: "%" }),
         tweak("monoChat", "toggle", "Monospace chat", "Show messages in the monospace font instead of the UI font.", "font"),
         tweak("chatWidth", "seg", "Chat width", "How wide message bubbles and replies may grow when the window is stretched; standard keeps a narrow reading column, full follows the window.", "wide stretch adaptive responsive",
@@ -80,7 +80,7 @@
     ] },
     { id: "remote", icon: "phone", title: "Remote", blurb: "Control this app from your phone through your own relay server (docs/remote.md).", groups: [
       { name: "Connection", rows: [
-        custom("remoteMain", "Remote access", "Connect this app to your relay server; your phone controls the very same tabs over an encrypted link.", "phone mobile relay remote control server",
+        custom("remoteMain", "Remote access", "Connect this app to your relay server; your phone controls the very same tabs over an encrypted link.", "phone mobile relay remote control server 手机 远程",
           { keys: [] }),
       ] },
       { name: "Phones", rows: [
@@ -122,7 +122,7 @@
     ] },
     { id: "composer", icon: "edit", title: "Composer", blurb: "Sending, pasting and recalling prompts.", groups: [
       { name: "Sending", rows: [
-        tweak("submitKey", "seg", "Send with", "In the composer, an ask's answer box and a subagent's steer box; the other chord inserts a newline. One-line fields always send with Enter.", "submit newline shift enter",
+        tweak("submitKey", "seg", "Send with", "In the composer, an ask's answer box and a subagent's steer box; the other chord inserts a newline. One-line fields always send with Enter.", "submit newline shift enter ctrl cmd control ⌘ 发送",
           { options: opts(["enter", "ctrl+enter"]) }),
       ] },
       { name: "Pasting", rows: [
@@ -132,7 +132,7 @@
             get max() { return sessionUi()?.PASTE_LINES_MAX ?? 50; } }),
       ] },
       { name: "History", rows: [
-        tweak("promptHistoryLimit", "slider", "Prompt history", "How many of your prompts `↑` in the composer can recall, per tab.", "recall up arrow", {
+        tweak("promptHistoryLimit", "slider", "Prompt history", "How many of your prompts `↑` in the composer can recall, per tab.", "recall up arrow 历史", {
           step: 10, unit: " prompts",
           get min() { return history()?.MIN_LIMIT ?? 10; },
           get max() { return history()?.MAX_LIMIT ?? 1000; },
@@ -153,7 +153,7 @@
     ] },
     { id: "terminal", icon: "terminal", title: "Terminal", blurb: "The shell panel under the chat. Each tab has its own shell, started in the tab's project folder.", groups: [
       { name: "Shell", src: "terminal.json", rows: [
-        custom("shell", "Shell", "What new terminals run. Running ones keep their shell. `default` runs your default shell.", "powershell pwsh bash cmd"),
+        custom("shell", "Shell", "What new terminals run. Running ones keep their shell. `default` runs your default shell.", "powershell pwsh bash cmd 终端"),
       ] },
       { name: "Panel", rows: [
         tweak("terminalAutoOpen", "toggle", "Open with new tab", "Show the terminal panel when a tab opens.", "auto"),
@@ -164,7 +164,7 @@
     ] },
     { id: "browser", icon: "web", title: "Browser", blurb: "The Chromium panel the agent and you share in each tab.", groups: [
       { name: "Chromium", src: "browser.json", rows: [
-        custom("chromium", "Browser", "Which Chromium the panel runs; panels started afterwards use it. `automatic` finds one installed on this PC.", "chrome edge chromium"),
+        custom("chromium", "Browser", "Which Chromium the panel runs; panels started afterwards use it. `automatic` finds one installed on this PC.", "chrome edge chromium 浏览器"),
       ] },
       { name: "Links", rows: [
         tweak("browserLocalhostInPanel", "toggle", "Open localhost links in the panel", "A click on a `localhost` link in the chat opens it here instead of your system browser.", "dev server url"),
@@ -184,18 +184,20 @@
     ] },
     { id: "session", icon: "clock", title: "Session", blurb: "Tabs across restarts, closing, naming and app updates.", groups: [
       { name: "Tabs", rows: [
-        tweak("restoreTabs", "toggle", "Reopen tabs on launch", "Start with the tabs and conversations that were open when you quit.", "restore session startup"),
+        tweak("restoreTabs", "toggle", "Reopen tabs on launch", "Start with the tabs and conversations that were open when you quit. Turning this off forgets the saved tab list at your next tab change.", "restore session startup"),
         tweak("confirmBusyClose", "toggle", "Ask before closing a working tab", "Closing a tab whose agent is mid-turn stops it. Ask first, also when quitting.", "confirm quit close"),
         tweak("autoName", "toggle", "Name tabs automatically", "omp titles a new conversation from its first turns (one small model call). `/rename` always wins.", "rename title"),
+        tweak("notifyDone", "toggle", "Notify when a reply completes", "A system notification while this window is in the background and the agent finishes its reply.", "notification notify done background 通知 完成"),
+        tweak("notifyAsk", "toggle", "Notify when approval is needed", "A system notification while this window is in the background and the agent stops to ask you something.", "notification notify ask approval background 通知 审批 提醒"),
       ] },
       { name: "Updates", rows: [
-        tweak("updateCheck", "toggle", "Check for updates", "Look for a new release shortly after launch and every 6 hours. You choose when to install; “Check now” works either way.", "version release"),
+        tweak("updateCheck", "toggle", "Check for updates", "Look for a new release shortly after launch and every 6 hours. You choose when to install; “Check now” works either way.", "version release 更新"),
         custom("version", "Version", "The installed OMP Desktop and the newest release.", "version update check skipped"),
       ] },
     ] },
     { id: "approvals", icon: "check", title: "Approvals", sep: true, blurb: "When the agent asks before it runs a tool.", groups: [
       { name: "Approval mode", src: "approval-mode.json", rows: [
-        custom("approvalMode", "Tool approval mode", "When the agent asks before it runs a tool: a default for every project, and projects that override it. A change restarts omp in the affected open tabs; conversations continue.", "yolo write always ask permission project override default"),
+        custom("approvalMode", "Tool approval mode", "When the agent asks before it runs a tool: a default for every project, and projects that override it. A change restarts omp in the affected open tabs; conversations continue.", "yolo write always ask permission project override default 审批"),
       ] },
       { name: "Standing rules", rows: [
         custom("approvalRules", "Always-allow rules", "Rules are only granted from a prompt; here you review and revoke them.", "rules always allow revoke saved answers"),
@@ -203,7 +205,7 @@
     ] },
     { id: "shortcuts", icon: "command", title: "Shortcuts", blurb: "Every app action and its chords. A change to one of omp's own bindings is saved as a desktop override.", groups: [
       { name: "Keyboard shortcuts", src: "keybindings.json", rows: [
-        custom("shortcuts", "Key bindings", "Rebind an action, add a second chord or reset it to its default.", "keys hotkeys keybindings chord rebind shortcut",
+        custom("shortcuts", "Key bindings", "Rebind an action, add a second chord or reset it to its default.", "keys hotkeys keybindings chord rebind shortcut 快捷键",
           { moreKw: () => (window.OMP_KEYMAP?.KEYMAP_ACTIONS ?? []).map(a => `${a.label} ${a.id}`).join(" ") }),
       ] },
     ] },
@@ -303,19 +305,57 @@
   /** resetRows over a section (or all). */
   const resetEdits = (sectionId, values, opts) => resetRows(scope(sectionId).flatMap(sectionRows), values, opts);
 
-  // `moreKw`: keywords known only at runtime (the shortcut action names).
-  // Custom rows show `label` and `desc` too, plus runtime text of their own;
-  // `version` shows runtime text as its desc, `shortcuts` only its editor.
-  const searchText = (row) =>
-    `${row.label} ${(row.desc ?? "").replace(/`/g, "")} ${row.kw ?? ""} ${row.moreKw?.() ?? ""}`.toLowerCase();
+  // `rowText`: label + desc (backticks stripped) + kw + the segment's
+  // option labels ("cozy dense yolo …") — a query naming a choice finds
+  // the row that offers it. `moreKw` (the shortcut action names) is NOT
+  // part of this text: it is matched separately, below, behind an
+  // every-token-is-an-action-name guard.
+  const rowText = (row) => `${row.label} ${(row.desc ?? "").replace(/`/g, "")} ${row.kw ?? ""} ${row.options?.map(o => o.label).join(" ") ?? ""}`.toLowerCase();
+
+  // The `src` file name, verbatim and without ".json" ("terminal.json",
+  // "widgets", "keybindings"), is search text for the whole group: a query
+  // naming the file lands on its rows even though no row repeats it.
+  const groupSrcTokens = (g) => {
+    const src = String(g?.src ?? "").toLowerCase();
+    return `${src} ${src.replace(/\.json$/, "")}`;
+  };
+
+  // A group's per-row corpus: the row's own text plus its group's context —
+  // the section title, the group name and the src file names — so
+  // "appearance" (section) or "terminal.json" (src) finds every row of
+  // that context.
+  const groupCorpus = (s, g) =>
+    g.rows.map(r => `${rowText(r)} ${s.title} ${g.name} ${groupSrcTokens(g)}`.toLowerCase());
 
   /** Every whitespace-separated token of the query in the row's text (a
    *  tokenised AND: "font mono" needs both, in any order). */
   const textMatches = (text, tokens) => tokens.every(tok => text.includes(tok));
 
+  // `moreKw` matched as whole words: "port" must not hit inside "export".
+  // The words of a label/id can contain dots and hyphens ("app.interrupt",
+  // "cycle-backward"), so the split keeps those in one token and the
+  // comparison is exact-equality, not substring.
+  const moreKwWords = (row) => new Set(` ${row.moreKw().toLowerCase()} `.split(/[\s]+/));
+
+  /** Every token of the query equals a word of the row's `moreKw` corpus
+   *  (the shortcut actions' labels and ids). `minTokens` default 1: the
+   *  exact action name/id still finds the Shortcuts row alone; the
+   *  schema-level multi-token guard lives in `search`, where real
+   *  matches are known. */
+  function allTokensInMoreKw(row, tokens, minTokens = 1) {
+    if (!row.moreKw || tokens.length < minTokens) return false;
+    const words = moreKwWords(row);
+    return tokens.every(tok => words.has(tok));
+  }
+
   /** Visible rows whose label, desc or keywords contain every token of the
    *  query, case-insensitive, grouped by section › group in page order;
-   *  `hiddenCount` counts the rows that match but `visibleIf` hides. */
+   *  `hiddenCount` counts the rows that match but `visibleIf` hides.
+   *  Rows the query only finds through `moreKw` (the shortcut action
+   *  names) match only when every token names an action — a multi-token
+   *  query needs all of them to ("port" alone no longer drags in the
+   *  Shortcuts row; "close tab", all action words, still does) — and
+   *  come after the same group's real matches. */
   function search(query, values) {
     const q = String(query ?? "").trim().toLowerCase();
     const bySection = Object.fromEntries(SECTIONS.map(s => [s.id, 0]));
@@ -326,14 +366,21 @@
     const tokens = q.split(/\s+/);
     for (const s of SECTIONS) {
       for (const g of s.groups) {
-        const matched = g.rows.filter(r => textMatches(searchText(r), tokens));
-        if (!matched.length) continue;
+        const corpus = groupCorpus(s, g);
+        const matched = [];
+        const moreKwOnly = [];
+        g.rows.forEach((r, i) => {
+          if (textMatches(corpus[i], tokens)) matched.push(r);
+          else if (allTokensInMoreKw(r, tokens, tokens.length >= 2 ? 2 : 1)) moreKwOnly.push(r);
+        });
+        if (!matched.length && !moreKwOnly.length) continue;
         const hits = matched.filter(r => visible(r, values));
-        hiddenCount += matched.length - hits.length;
-        if (!hits.length) continue;
-        groups.push({ sectionId: s.id, sectionTitle: s.title, groupName: g.name, src: g.src, rows: hits });
-        bySection[s.id] += hits.length;
-        total += hits.length;
+        const moreKwHits = moreKwOnly.filter(r => visible(r, values));
+        hiddenCount += (matched.length - hits.length) + (moreKwOnly.length - moreKwHits.length);
+        if (!hits.length && !moreKwHits.length) continue;
+        groups.push({ sectionId: s.id, sectionTitle: s.title, groupName: g.name, src: g.src, rows: [...hits, ...moreKwHits] });
+        bySection[s.id] += hits.length + moreKwHits.length;
+        total += hits.length + moreKwHits.length;
       }
     }
     return { total, hiddenCount, bySection, groups };

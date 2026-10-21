@@ -33,7 +33,7 @@ fn parses_session_file_with_fallback_title() {
         ],
     );
 
-    let session = parse_session_file(&file_path).expect("parsed session");
+    let session = parse_session_file(&file_path, None).expect("parsed session");
     assert_eq!(session.id, "sess-123");
     assert_eq!(session.title, "What is quantum computing?");
     assert_eq!(session.cwd, "/test/project");
@@ -56,7 +56,7 @@ fn parse_session_file_prefers_filename_uuid_over_stale_body_id() {
         ],
     );
 
-    let session = parse_session_file(&file_path).expect("parsed session");
+    let session = parse_session_file(&file_path, None).expect("parsed session");
     assert_eq!(session.id, "01a096d6-0aa6-75d7-804c-088913a441e6");
 
     let _ = fs::remove_dir_all(&dir);
@@ -74,7 +74,7 @@ fn parses_session_file_with_explicit_title() {
         ],
     );
 
-    let session = parse_session_file(&file_path).expect("parsed session");
+    let session = parse_session_file(&file_path, None).expect("parsed session");
     assert_eq!(session.id, "sess-456");
     assert_eq!(session.title, "Custom Topic Title");
     assert_eq!(
@@ -102,7 +102,7 @@ fn parse_session_file_last_activity_tracks_latest_message_not_creation() {
         ],
     );
 
-    let session = parse_session_file(&file_path).expect("parsed session");
+    let session = parse_session_file(&file_path, None).expect("parsed session");
     assert_eq!(session.timestamp, "2026-09-04T00:00:00.000Z");
     assert_eq!(
         session.updated_at.as_deref(),
@@ -128,7 +128,7 @@ fn parse_session_file_last_activity_beats_a_stale_title_rename() {
         ],
     );
 
-    let session = parse_session_file(&file_path).expect("parsed session");
+    let session = parse_session_file(&file_path, None).expect("parsed session");
     assert_eq!(
         session.updated_at.as_deref(),
         Some("2026-09-08T09:00:00.000Z")
@@ -155,7 +155,7 @@ fn parse_session_file_last_activity_later_retitle_on_first_line_wins() {
         ],
     );
 
-    let session = parse_session_file(&file_path).expect("parsed session");
+    let session = parse_session_file(&file_path, None).expect("parsed session");
     assert_eq!(
         session.updated_at.as_deref(),
         Some("2026-09-10T08:00:00.000Z")
@@ -184,7 +184,7 @@ fn parse_session_file_ignores_lifecycle_events_for_last_activity() {
         ],
     );
 
-    let session = parse_session_file(&file_path).expect("parsed session");
+    let session = parse_session_file(&file_path, None).expect("parsed session");
     assert_eq!(
         session.updated_at.as_deref(),
         Some("2026-09-04T00:05:00.000Z")
@@ -204,7 +204,7 @@ fn parse_session_file_returns_none_without_id_or_timestamp() {
         ],
     );
 
-    assert!(parse_session_file(&file_path).is_none());
+    assert!(parse_session_file(&file_path, None).is_none());
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -223,7 +223,7 @@ fn parse_session_file_tolerates_malformed_json_lines() {
         ],
     );
 
-    let session = parse_session_file(&file_path).expect("parsed despite malformed lines");
+    let session = parse_session_file(&file_path, None).expect("parsed despite malformed lines");
     assert_eq!(session.id, "sess-789");
     assert_eq!(session.message_count, 1);
 
@@ -244,7 +244,7 @@ fn excludes_tool_result_messages_from_count_and_preview() {
         ],
     );
 
-    let session = parse_session_file(&file_path).expect("parsed session");
+    let session = parse_session_file(&file_path, None).expect("parsed session");
     // Only the user + assistant turns count — the toolResult entry is excluded.
     assert_eq!(session.message_count, 2);
     assert_eq!(session.preview.as_deref(), Some("Sure, reading now."));
@@ -276,7 +276,7 @@ fn extract_text_from_content_handles_array_and_string_blocks() {
 #[test]
 fn scan_dir_missing_root_returns_empty() {
     let root = std::env::temp_dir().join("omp_test_does_not_exist_ever");
-    assert!(scan_dir(&root, None)
+    assert!(scan_dir(&root, None, None)
         .expect("ok for missing root")
         .is_empty());
 }
@@ -312,19 +312,19 @@ fn scan_dir_filters_by_cwd_and_sorts_newest_first() {
         ],
     );
 
-    let all = scan_dir(&root, None).expect("scan ok");
+    let all = scan_dir(&root, None, None).expect("scan ok");
     assert_eq!(all.len(), 3);
     // Newest first.
     assert_eq!(all[0].id, "b");
     assert_eq!(all[1].id, "c");
     assert_eq!(all[2].id, "a");
 
-    let filtered = scan_dir(&root, Some("/proj/one")).expect("scan ok");
+    let filtered = scan_dir(&root, Some("/proj/one"), None).expect("scan ok");
     assert_eq!(filtered.len(), 2);
     assert!(filtered.iter().all(|s| s.cwd == "/proj/one"));
 
     // Filter is case- and slash-insensitive.
-    let filtered_win = scan_dir(&root, Some(r"\PROJ\ONE\")).expect("scan ok");
+    let filtered_win = scan_dir(&root, Some(r"\PROJ\ONE\"), None).expect("scan ok");
     assert_eq!(filtered_win.len(), 2);
 
     let _ = fs::remove_dir_all(&root);
@@ -356,7 +356,7 @@ fn scan_dir_sorts_by_last_activity_not_creation_date() {
         ],
     );
 
-    let all = scan_dir(&root, None).expect("scan ok");
+    let all = scan_dir(&root, None, None).expect("scan ok");
     assert_eq!(all.len(), 2);
     assert_eq!(all[0].id, "old");
     assert_eq!(all[1].id, "new");
@@ -485,4 +485,266 @@ fn an_empty_profile_id_reads_the_builtin_tree_like_omp_args_writes_it() {
         sessions_root_for(home, Some(""), Some(OsStr::new("/custom/agent"))),
         Path::new("/custom/agent/sessions")
     );
+}
+
+// ── history governance: delete / rename / query ─────────────────────────────
+
+/// A sessions tree shaped like the real one: `root/<folder>/<file>.jsonl`.
+/// Returns the session file's path.
+fn make_session_file(root: &Path, folder: &str, file: &str, lines: &[String]) -> PathBuf {
+    let dir = root.join(folder);
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(file);
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    write_jsonl(&path, &refs);
+    path
+}
+
+/// A minimal parsable session: title event first, session event second.
+fn session_lines(title: &str) -> Vec<String> {
+    vec![
+        format!(r#"{{"type":"title","v":1,"title":"{title}","updatedAt":"2026-09-04T00:00:00.000Z"}}"#),
+        r#"{"type":"session","version":3,"id":"s1","timestamp":"2026-09-04T00:00:00.000Z","cwd":"/proj/x"}"#.to_string(),
+    ]
+}
+
+#[test]
+fn delete_moves_file_into_trash_and_hides_it_from_scan() {
+    let root = make_test_dir("del_ok");
+    let lines = session_lines("t");
+    let path = make_session_file(&root, "sess-a", "a.jsonl", &lines);
+
+    delete_saved_session(&root, path.to_str().unwrap()).expect("delete ok");
+
+    assert!(!path.exists(), "original file must be gone");
+    let trash = root.join("sess-a").join(".trash").join("a.jsonl");
+    assert!(trash.exists(), "file must live in .trash now");
+    let scanned = scan_dir(&root, None, None).expect("scan ok");
+    assert!(scanned.is_empty(), "trashed session must not be listed");
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn delete_same_name_conflict_gets_a_numeric_suffix() {
+    let root = make_test_dir("del_conflict");
+    let path = make_session_file(&root, "sess-a", "a.jsonl", &session_lines("t"));
+
+    delete_saved_session(&root, path.to_str().unwrap()).expect("first delete ok");
+    let path2 = make_session_file(&root, "sess-a", "a.jsonl", &session_lines("t2"));
+    delete_saved_session(&root, path2.to_str().unwrap()).expect("second delete ok");
+
+    let trash = root.join("sess-a").join(".trash");
+    assert!(trash.join("a.jsonl").exists(), "first trash copy kept");
+    assert!(trash.join("a.1.jsonl").exists(), "second copy suffixed");
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn delete_rejects_path_outside_sessions_root() {
+    let root = make_test_dir("del_outside_root");
+    let outside_dir = make_test_dir("del_outside_file");
+    let outside = outside_dir.join("secret.jsonl");
+    File::create(&outside).unwrap();
+
+    let err = delete_saved_session(&root, outside.to_str().unwrap())
+        .expect_err("path outside sessions root must be rejected");
+    assert!(err.contains("outside the sessions directory"));
+    assert!(outside.exists(), "the outside file must be untouched");
+
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&outside_dir);
+}
+
+#[test]
+fn delete_rejects_flag_like_path() {
+    let root = make_test_dir("del_flag");
+    let err = delete_saved_session(&root, "--auto-approve")
+        .expect_err("flag-shaped path must be rejected");
+    assert!(err.contains("invalid session path"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn delete_rejects_non_jsonl_file_under_root() {
+    let root = make_test_dir("del_nonjsonl");
+    let path = make_session_file(&root, "sess-a", "a.txt", &[]);
+    let err = delete_saved_session(&root, path.to_str().unwrap())
+        .expect_err("non-.jsonl file must be rejected");
+    assert!(err.contains("not a .jsonl session file"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn rename_replaces_only_the_first_line_title() {
+    let root = make_test_dir("rename_ok");
+    let third =
+        r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"hi"}]}}"#;
+    let mut lines = session_lines("old title");
+    lines.push(third.to_string());
+    let path = make_session_file(&root, "sess-a", "a.jsonl", &lines);
+
+    rename_saved_session(&root, path.to_str().unwrap(), "new title").expect("rename ok");
+
+    let content = fs::read_to_string(&path).unwrap();
+    let mut out_lines = content.lines();
+    let first: serde_json::Value = serde_json::from_str(out_lines.next().unwrap()).unwrap();
+    assert_eq!(first["type"], "title");
+    assert_eq!(first["title"], "new title");
+    assert_eq!(first["updatedAt"], "2026-09-04T00:00:00.000Z");
+    let rest: Vec<&str> = out_lines.collect();
+    assert_eq!(
+        rest,
+        vec![
+            r#"{"type":"session","version":3,"id":"s1","timestamp":"2026-09-04T00:00:00.000Z","cwd":"/proj/x"}"#,
+            third,
+        ]
+    );
+    let session = parse_session_file(&path, None).expect("parses after rename");
+    assert_eq!(session.title, "new title");
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn rename_cleans_the_title_before_writing() {
+    let root = make_test_dir("rename_clean");
+    let path = make_session_file(&root, "sess-a", "a.jsonl", &session_lines("old"));
+
+    let long = "x".repeat(200);
+    rename_saved_session(&root, path.to_str().unwrap(), &format!("  a\nb\t {long} "))
+        .expect("rename ok");
+
+    let content = fs::read_to_string(&path).unwrap();
+    let first: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+    let written: String = first["title"].as_str().unwrap().to_string();
+    assert_eq!(written.chars().count(), 120);
+    assert!(!written.contains('\n') && !written.contains('\t'));
+    assert!(written.starts_with("ab"));
+    assert_eq!(written.trim(), written);
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn rename_rejects_empty_and_outside_paths() {
+    let root = make_test_dir("rename_bad");
+    let path = make_session_file(&root, "sess-a", "a.jsonl", &session_lines("old"));
+
+    let err = rename_saved_session(&root, path.to_str().unwrap(), "   ")
+        .expect_err("empty title must be rejected");
+    assert!(err.contains("title must not be empty"));
+
+    let outside_dir = make_test_dir("rename_outside");
+    let outside = outside_dir.join("other.jsonl");
+    File::create(&outside).unwrap();
+    let err = rename_saved_session(&root, outside.to_str().unwrap(), "x")
+        .expect_err("outside path must be rejected");
+    assert!(err.contains("outside the sessions directory"));
+
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&outside_dir);
+}
+
+#[test]
+fn rename_rejects_a_file_whose_first_line_is_not_a_title_event() {
+    let root = make_test_dir("rename_notitle");
+    let lines = vec![r#"{"type":"session","version":3,"id":"s1"}"#.to_string()];
+    let path = make_session_file(&root, "sess-a", "a.jsonl", &lines);
+    let err = rename_saved_session(&root, path.to_str().unwrap(), "x")
+        .expect_err("non-title first line must be rejected");
+    assert!(err.contains("not a title event"));
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn query_matches_message_text_case_insensitively_with_snippet() {
+    let root = make_test_dir("query_hit");
+    let lines: Vec<String> = [
+        r#"{"type":"title","v":1,"title":"unrelated","updatedAt":"2026-09-04T00:00:00.000Z"}"#,
+        r#"{"type":"session","version":3,"id":"s1","timestamp":"2026-09-04T00:00:00.000Z","cwd":"/proj/x"}"#,
+        r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"Please help me Fix the RaIl problem"}]}}"#,
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+    make_session_file(&root, "sess-a", "a.jsonl", &lines);
+
+    let hit = scan_dir(&root, None, Some("rail problem")).expect("scan ok");
+    assert_eq!(hit.len(), 1, "case-insensitive text match");
+    let snippet = hit[0].match_snippet.as_deref().expect("snippet set");
+    assert!(
+        snippet.to_lowercase().contains("rail problem"),
+        "snippet contains the hit: {snippet}"
+    );
+
+    let miss = scan_dir(&root, None, Some("nonexistent phrase")).expect("scan ok");
+    assert!(miss.is_empty(), "non-matching session is dropped");
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn query_matching_only_title_keeps_preview_without_snippet() {
+    let root = make_test_dir("query_title");
+    let lines: Vec<String> = [
+        r#"{"type":"title","v":1,"title":"Deployment notes","updatedAt":"2026-09-04T00:00:00.000Z"}"#,
+        r#"{"type":"session","version":3,"id":"s1","timestamp":"2026-09-04T00:00:00.000Z","cwd":"/proj/x"}"#,
+        r#"{"type":"message","message":{"role":"user","content":[{"type":"text","text":"nothing relevant here"}]}}"#,
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+    make_session_file(&root, "sess-a", "a.jsonl", &lines);
+
+    let hit = scan_dir(&root, None, Some("deployment")).expect("scan ok");
+    assert_eq!(hit.len(), 1, "title match keeps the session");
+    assert!(hit[0].match_snippet.is_none(), "no text hit, no snippet");
+    assert!(hit[0].preview.is_some(), "preview stays");
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn query_none_and_empty_behave_identically_and_unset_snippets() {
+    let root = make_test_dir("query_none");
+    let lines: Vec<String> = [
+        r#"{"type":"title","v":1,"title":"t","updatedAt":"2026-09-04T00:00:00.000Z"}"#,
+        r#"{"type":"session","version":3,"id":"s1","timestamp":"2026-09-04T00:00:00.000Z","cwd":"/proj/x"}"#,
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+    make_session_file(&root, "sess-a", "a.jsonl", &lines);
+
+    let none = scan_dir(&root, None, None).expect("scan ok");
+    let empty = scan_dir(&root, None, Some("   ")).expect("scan ok");
+    assert_eq!(none.len(), 1);
+    assert_eq!(empty.len(), 1);
+    assert!(none[0].match_snippet.is_none());
+    assert!(empty[0].match_snippet.is_none());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn match_snippet_windows_around_the_hit() {
+    // The blob is what `apply_message_event` collected: lowercased text.
+    // A needle must be lowercase to hit it (the caller lowercases the
+    // query before the call).
+    let blob = "aaa contextword bbb";
+    let snip = match_snippet(blob, "contextword").expect("hit");
+    assert_eq!(snip, "aaa contextword bbb");
+
+    let long = format!("{}NEEDLE{}", "x".repeat(300), "y".repeat(300));
+    let snip = match_snippet(&long, "NEEDLE").expect("hit");
+    assert!(snip.contains("NEEDLE"));
+    assert!(
+        snip.chars().count() < 100,
+        "window is ~81 chars, got {}",
+        snip.chars().count()
+    );
+
+    assert!(match_snippet(blob, "zzz").is_none());
 }

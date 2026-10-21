@@ -154,7 +154,16 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
 
   // Drag pans while the pointer is down; a click that didn't move (and
   // isn't part of a double-click) still closes via the scrim's onClick.
+  // Touch pinches ride the same path: a two-pointer drag switches from
+  // pan to pinch (distance ratio → zoomAt at the midpoint, translation
+  // → pan), falling back to single-pointer pan when a finger lifts.
   const dragRef = React.useRef(null); // { x, y, tx, ty, moved }
+  const touches = (e) => {
+    if (e.touches?.length !== 2) return null;
+    const [a, b] = [e.touches[0], e.touches[1]];
+    return { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1,
+             cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 };
+  };
   const onPointerDown = (e) => {
     if (e.button !== 0 || closingRef.current) return;
     const z = zoomRef.current;
@@ -179,11 +188,65 @@ function ImageLightbox({ images, index, onIndex, onClose, thumbFor }) {
     dragRef.current = null;
     e.currentTarget.hasPointerCapture?.(e.pointerId) && e.currentTarget.releasePointerCapture(e.pointerId);
   };
+  // Two fingers: pinch-to-zoom anchored at the midpoint (zoomAt keeps the
+  // point under the fingers), with the midpoint's own travel as pan.
+  // Registered non-passively so the page behind doesn't scroll while the
+  // viewer is open; the single-finger pan stays in the pointer events above.
+  const pinchRef = React.useRef(null); // { dist, cx, cy, scale, tx, ty } | null
+  const onTouchStart = (e) => {
+    if (closingRef.current) return;
+    const t = touches(e);
+    if (!t) { pinchRef.current = null; return; }
+    e.preventDefault(); // the image's own drag pan yields to the pinch
+    dragRef.current = null;
+    const z = zoomRef.current;
+    pinchRef.current = { dist: t.dist, cx: t.cx, cy: t.cy, scale: z?.scale ?? 1, tx: z?.tx ?? 0, ty: z?.ty ?? 0 };
+  };
+  const onTouchMove = (e) => {
+    const p = pinchRef.current;
+    if (!p) return;
+    const t = touches(e);
+    if (!t) { pinchRef.current = null; return; }
+    e.preventDefault();
+    // zoomAt rescales from the current zoom around the midpoint; the
+    // delta of the midpoint itself pans, so a two-finger drag moves the
+    // image while the pinch zooms it.
+    const z = zoomAt(p.scale * (t.dist / p.dist), { x: t.cx, y: t.cy });
+    if (z) setZoom(z);
+  };
+  const onTouchEnd = (e) => {
+    if (pinchRef.current && e.touches.length < 2) pinchRef.current = null;
+  };
+  // React 19 attaches onTouchMove passively (the wheel note above), where
+  // preventDefault is a no-op; the pinch handlers run as native
+  // non-passive listeners on the image instead. The handlers close over
+  // refs only, so one registration per image (imgRef.current swaps with
+  // the key) is enough.
+  React.useEffect(() => {
+    const img = imgRef.current;
+    if (!img) return undefined;
+    img.addEventListener("touchstart", onTouchStart, { passive: false });
+    img.addEventListener("touchmove", onTouchMove, { passive: false });
+    img.addEventListener("touchend", onTouchEnd);
+    return () => {
+      img.removeEventListener("touchstart", onTouchStart);
+      img.removeEventListener("touchmove", onTouchMove);
+      img.removeEventListener("touchend", onTouchEnd);
+    };
+  }, [index]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Double-click steps fit → 2.5x → fit (anchored at the click, the same
+  // zoomAt the wheel and pinch use); a single click anywhere still closes.
+  const _LB_DB_STEP = 2.5;
   const onDoubleClick = (e) => {
     e.stopPropagation();
     if (closingRef.current) return;
-    // Reset to the fit rect (zoom state null == transform none).
-    setZoom(null);
+    const z = zoomRef.current;
+    if (z == null || (z.scale === 1 && z.tx === 0 && z.ty === 0)) {
+      const next = zoomAt(_LB_DB_STEP, { x: e.clientX, y: e.clientY });
+      if (next) setZoom(next);
+    } else {
+      setZoom(null);
+    }
   };
 
   // Capture phase + preventDefault: the global keymap dispatcher skips

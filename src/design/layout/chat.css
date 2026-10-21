@@ -372,6 +372,12 @@
   max-height: 180px; overflow-y: auto;
 }
 .tool-bash > div { line-height: 1.55; }
+.bash-tail-note {
+  padding: 4px 12px 2px;
+  border-top: 1px solid var(--line);
+  color: var(--fg-4);
+  font-size: var(--d-text-xs);
+}
 
 /* ── Collapsible blocks (#44): tool card bodies and thinking ─────────
    app/chat-collapse.js decides; ui/collapse-toggle.jsx is the control.
@@ -385,16 +391,18 @@
    block, the same chevron turned up collapses an open one. */
 .collapse-toggle svg { width: 1.75em; height: 1.75em; transition: transform 120ms; }
 .collapse-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+/* bash keeps its last lines visible when collapsed (tool-card.jsx
+   renders the tail then): fade the top, and when wrapped lines still
+   overflow, cut them off the top too, so the final line (often the exit
+   code or wall time) stays in view. The floating copy button moves to
+   the bottom, out of the fade. */
 .collapse-clip {
   max-height: calc(var(--collapse-lines) * 1.55em + 18px);
   overflow: hidden;
   -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent);
   mask-image: linear-gradient(to bottom, #000 45%, transparent);
 }
-/* bash keeps its last lines (tool-card.jsx renders only those): fade the
-   top, and when wrapped lines still overflow, cut them off the top too, so
-   the final line (often the exit code or wall time) stays in view. The
-   floating copy button moves to the bottom, out of the fade. */
+/* bash tail (see above): same fade, anchored to the end. */
 .collapse-clip.from-end {
   display: flex; flex-direction: column; justify-content: flex-end;
   -webkit-mask-image: linear-gradient(to top, #000 45%, transparent);
@@ -441,9 +449,11 @@
 .copy-host { position: relative; }
 .copy-btn.is-floating { position: absolute; top: 6px; right: 14px; z-index: 1; }
 .copy-btn.ass-copy { margin-left: auto; }
+.copy-btn.user-copy { margin-left: auto; }
 .copy-host:hover > .copy-btn,
 .plan-block:hover .code-block > .copy-btn,
 .row.assistant:hover .copy-btn.ass-copy,
+.row.user:hover .copy-btn.user-copy,
 .diff-wrap:hover .copy-btn.diff-copy,
 .copy-btn:focus-visible,
 .copy-btn.is-copied,
@@ -681,7 +691,7 @@
   .copy-host:hover > .copy-btn,
   .plan-block:hover .code-block > .copy-btn,
   .row.assistant:hover .copy-btn.ass-copy,
-  .diff-wrap:hover .copy-btn.diff-copy,
+  .row.user:hover .copy-btn.user-copy,
   .copy-btn:focus-visible,
   .copy-btn.is-copied,
   .copy-btn.is-failed { opacity: 1; }
@@ -737,7 +747,8 @@
   .eval-output { font-size: 12px; }
   .md-content .code-block,
   .eval-code,
-  .diff-body {
+  .diff-body,
+  .md-content .md-table-wrap {
     -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent 100%);
     mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent 100%);
   }

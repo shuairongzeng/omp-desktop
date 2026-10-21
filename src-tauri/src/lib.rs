@@ -31,6 +31,7 @@ mod private_fs;
 mod profiles;
 mod program_setting;
 mod project_file;
+mod prompt_history;
 mod recent_projects;
 mod redaction;
 mod remote;
@@ -186,7 +187,7 @@ async fn start_session(
 /// Run blocking `work` (file or process I/O, a long scan) off Tauri's IPC
 /// thread, which would otherwise freeze the webview: `spawn_blocking`, with
 /// a panic in `work` reported as `"join error: …"`.
-async fn off_ipc<T: Send + 'static>(
+pub(crate) async fn off_ipc<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work)
@@ -217,6 +218,10 @@ struct ProfileList {
     profiles: Vec<profiles::Profile>,
     /// Always a listed id — the built-in `"default"` when nothing is set.
     startup_id: String,
+    /// Set when this run started with the built-in profile only because
+    /// `profiles.json` was unreadable — the UI must say so, or the user's
+    /// profiles look deleted (the file is still on disk).
+    degraded: Option<String>,
 }
 
 /// Every selectable profile, built-in first (served from the in-memory cache).
@@ -226,6 +231,7 @@ fn list_profiles(store: State<'_, Arc<profiles::ProfileStore>>) -> ProfileList {
     ProfileList {
         profiles,
         startup_id,
+        degraded: store.degraded().map(str::to_owned),
     }
 }
 
@@ -321,7 +327,11 @@ async fn delete_profile(
 }
 
 /// List saved sessions from disk for `profile` (`~/.omp/agent/sessions`, or
-/// `~/.omp/profiles/<id>/agent/sessions` for a named profile).
+/// `~/.omp/profiles/<id>/agent/sessions` for a named profile). A non-empty
+/// `query` filters the result to case-insensitive substring matches over
+/// title/project/cwd/message text and fills `match_snippet` on text hits
+/// (see `saved_sessions::scan_saved_sessions`); `query: None`/empty keeps
+/// the unfiltered behaviour.
 ///
 /// Runs `async` + `spawn_blocking`: `scan_saved_sessions` opens and parses
 /// every persisted `.jsonl` file, which for large histories can take long
@@ -329,13 +339,74 @@ async fn delete_profile(
 #[tauri::command]
 async fn list_saved_sessions(
     cwd: Option<String>,
+    query: Option<String>,
     profile: Option<String>,
     store: State<'_, Arc<profiles::ProfileStore>>,
     app: tauri::AppHandle,
 ) -> Result<Vec<saved_sessions::SavedSession>, String> {
     let profile = store.resolve_owned(profile)?;
-    off_ipc(move || saved_sessions::scan_saved_sessions(&app, cwd.as_deref(), profile.as_deref()))
+    off_ipc(move || {
+        saved_sessions::scan_saved_sessions(
+            &app,
+            cwd.as_deref(),
+            query.as_deref(),
+            profile.as_deref(),
+        )
+    })
+    .await?
+}
+
+/// Move a saved session file into `<its directory>/.trash/` (history-modal
+/// delete). The path is validated against `profile`'s sessions root — see
+/// `saved_sessions::delete_saved_session`.
+///
+/// Runs `async` + `spawn_blocking` (the validation canonicalises paths and
+/// the move touches the disk).
+#[tauri::command]
+async fn delete_saved_session(
+    path: String,
+    profile: Option<String>,
+    store: State<'_, Arc<profiles::ProfileStore>>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let profile = store.resolve_owned(profile)?;
+    off_ipc(move || saved_sessions::delete_saved_session_for(&app, &path, profile.as_deref()))
         .await?
+}
+
+/// Rewrite a saved session's first-line `title` event (history-modal
+/// rename). The path is validated against `profile`'s sessions root — see
+/// `saved_sessions::rename_saved_session`.
+///
+/// Runs `async` + `spawn_blocking` (validation, full-file read, atomic write).
+#[tauri::command]
+async fn rename_saved_session(
+    path: String,
+    title: String,
+    profile: Option<String>,
+    store: State<'_, Arc<profiles::ProfileStore>>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let profile = store.resolve_owned(profile)?;
+    off_ipc(move || {
+        saved_sessions::rename_saved_session_for(&app, &path, &title, profile.as_deref())
+    })
+    .await?
+}
+
+/// Open this app's config folder in the OS file manager. `open::that_detached`
+/// under the spawn gate (see `spawn_gate`): the launcher is a child process
+/// like any other.
+#[tauri::command]
+fn open_config_folder(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("no app config dir: {e}"))?;
+    let _gate = spawn_gate::shared();
+    #[allow(clippy::disallowed_methods)] // under the gate
+    open::that_detached(&dir).map_err(|e| e.to_string())
 }
 
 /// A user-picked file's bytes (`picked_files`): name + base64 contents,
@@ -1250,6 +1321,25 @@ async fn recent_projects_remove(
     with_blocking(&recents, move |s| s.remove(&key, &path)).await
 }
 
+/// The cross-session prompt history, newest first.
+#[tauri::command]
+async fn prompt_history_list(
+    history: State<'_, Arc<prompt_history::PromptHistoryStore>>,
+) -> Result<Vec<String>, String> {
+    with_blocking(&history, |s| Ok(s.list())).await
+}
+
+/// Record a just-sent prompt in the cross-session history and return the
+/// updated list. Already normalized by the caller (live.js strips the
+/// plan-mode framing first).
+#[tauri::command]
+async fn prompt_history_record(
+    text: String,
+    history: State<'_, Arc<prompt_history::PromptHistoryStore>>,
+) -> Result<Vec<String>, String> {
+    with_blocking(&history, move |s| s.record(&text)).await
+}
+
 /// The open-tab layout saved by the previous run (issue #17), minus tabs
 /// whose folder is gone — see `open_tabs::restorable`.
 #[tauri::command]
@@ -1472,6 +1562,10 @@ fn setup(app: &tauri::App) {
     app.manage(Arc::new(recent_projects::RecentProjectsStore::new(
         config_file("recent-projects.json"),
     )));
+    // Cross-session prompt history: <app_config_dir>/prompt-history.json.
+    app.manage(Arc::new(prompt_history::PromptHistoryStore::new(
+        config_file("prompt-history.json"),
+    )));
     // Open-tab layout for the next launch: <app_config_dir>/open-tabs.json.
     app.manage(Arc::new(open_tabs::OpenTabsStore::new(config_file(
         "open-tabs.json",
@@ -1545,6 +1639,7 @@ fn with_plugins_and_state(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder
     builder
         .plugin(navigation_guard::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AgentBridge::new())
         .manage(GitWatcherState::new())
@@ -1576,6 +1671,110 @@ fn reveal_main_window(
         let _ = webview.window().show();
     }
 }
+/// The IPC surface, one row per command. Extracted from `run()` so the
+/// builder spine stays readable (and under clippy's `too_many_lines`).
+fn ipc_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        send_command,
+        start_session,
+        stop_session,
+        terminal_open,
+        terminal_status,
+        terminal_replay,
+        terminal_ack,
+        terminal_write,
+        terminal_resize,
+        terminal_settings,
+        terminal_set_shell,
+        terminal_pick_shell,
+        browser_settings,
+        browser_set_path,
+        browser_pick_path,
+        close_tab,
+        close_all_tabs,
+        browser::commands::browser_open_panel,
+        browser::commands::browser_close_panel,
+        browser::commands::browser_resize,
+        browser::commands::browser_navigate,
+        browser::commands::browser_history,
+        browser::commands::browser_tab_new,
+        browser::commands::browser_tab_close,
+        browser::commands::browser_tab_activate,
+        browser::commands::browser_input,
+        browser::commands::browser_frame_ack,
+        browser::commands::browser_annotate,
+        browser::commands::browser_capture,
+        browser::commands::browser_scroll_to,
+        session_status,
+        replay_events,
+        remote_replay::remote_replay_events,
+        extension_ui_state,
+        open_project,
+        take_pending_open_projects,
+        start_git_watch,
+        stop_git_watch,
+        open_url_external,
+        list_saved_sessions,
+        delete_saved_session,
+        rename_saved_session,
+        open_config_folder,
+        read_file_bytes,
+        copied_file_paths,
+        pick_background_image,
+        conversation_tree,
+        approval_rules_list,
+        approval_approve_and_grant,
+        approval_rules_revoke,
+        approval_mode_get,
+        approval_mode_set_default,
+        approval_mode_set_project,
+        git_browser_status,
+        git_browser_file,
+        git_browser_log,
+        git_browser_commit,
+        git_browser_commit_file,
+        project_file_read,
+        workspace_accept,
+        workspace_reject,
+        widgets_state,
+        widgets_reload,
+        widgets_approve,
+        widgets_set_view,
+        widgets_refresh,
+        usage_stats,
+        goal_continuation_get,
+        goal_continuation_set,
+        list_project_files,
+        list_profiles,
+        create_profile,
+        rename_profile,
+        delete_profile,
+        set_startup_profile,
+        clear_profile_bootstrap,
+        keybindings_list,
+        keybindings_set,
+        keybindings_reset,
+        recent_projects_list,
+        recent_projects_touch,
+        recent_projects_remove,
+        prompt_history_list,
+        prompt_history_record,
+        open_tabs_load,
+        open_tabs_save,
+        remote::remote_get_state,
+        remote::remote_configure,
+        remote::remote_regenerate_token,
+        remote::remote_set_name,
+        remote::remote_send,
+        remote::remote_trust_server_cert,
+        remote_dirs::remote_list_dirs,
+        remote_transcript::remote_transcript_window,
+        model_usage_list,
+        app_update_check,
+        app_update_install,
+        set_close_guard,
+    ]
+}
 
 /// Run the Tauri application. Panics if the runtime fails to initialise.
 ///
@@ -1592,101 +1791,7 @@ pub fn run() {
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     let builder = builder.plugin(single_instance_plugin());
     let app = with_plugins_and_state(builder)
-        .invoke_handler(tauri::generate_handler![
-            send_command,
-            start_session,
-            stop_session,
-            terminal_open,
-            terminal_status,
-            terminal_replay,
-            terminal_ack,
-            terminal_write,
-            terminal_resize,
-            terminal_settings,
-            terminal_set_shell,
-            terminal_pick_shell,
-            browser_settings,
-            browser_set_path,
-            browser_pick_path,
-            close_tab,
-            close_all_tabs,
-            browser::commands::browser_open_panel,
-            browser::commands::browser_close_panel,
-            browser::commands::browser_resize,
-            browser::commands::browser_navigate,
-            browser::commands::browser_history,
-            browser::commands::browser_tab_new,
-            browser::commands::browser_tab_close,
-            browser::commands::browser_tab_activate,
-            browser::commands::browser_input,
-            browser::commands::browser_frame_ack,
-            browser::commands::browser_annotate,
-            browser::commands::browser_capture,
-            browser::commands::browser_scroll_to,
-            session_status,
-            replay_events,
-            remote_replay::remote_replay_events,
-            extension_ui_state,
-            open_project,
-            take_pending_open_projects,
-            start_git_watch,
-            stop_git_watch,
-            open_url_external,
-            list_saved_sessions,
-            read_file_bytes,
-            copied_file_paths,
-            pick_background_image,
-            conversation_tree,
-            approval_rules_list,
-            approval_approve_and_grant,
-            approval_rules_revoke,
-            approval_mode_get,
-            approval_mode_set_default,
-            approval_mode_set_project,
-            git_browser_status,
-            git_browser_file,
-            git_browser_log,
-            git_browser_commit,
-            git_browser_commit_file,
-            project_file_read,
-            workspace_accept,
-            workspace_reject,
-            widgets_state,
-            widgets_reload,
-            widgets_approve,
-            widgets_set_view,
-            widgets_refresh,
-            usage_stats,
-            goal_continuation_get,
-            goal_continuation_set,
-            list_project_files,
-            list_profiles,
-            create_profile,
-            rename_profile,
-            delete_profile,
-            set_startup_profile,
-            clear_profile_bootstrap,
-            keybindings_list,
-            keybindings_set,
-            keybindings_reset,
-            recent_projects_list,
-            recent_projects_touch,
-            recent_projects_remove,
-            open_tabs_load,
-            open_tabs_save,
-            remote::remote_get_state,
-            remote::remote_configure,
-            remote::remote_regenerate_token,
-            remote::remote_set_name,
-            remote::remote_send,
-            remote::remote_trust_server_cert,
-            remote_dirs::remote_list_dirs,
-            remote_transcript::remote_transcript_window,
-            model_usage_list,
-            app_update_check,
-            app_update_install,
-            set_close_guard,
-        ])
+        .invoke_handler(ipc_handler())
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

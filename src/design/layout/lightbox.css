@@ -34,6 +34,9 @@
   box-shadow: var(--shadow-window);
   background: var(--bg-surface);
   user-select: none;
+  /* Pinch-zoom and pan are ours (image-lightbox.jsx); the browser's own
+     gesture handling would fight the zoom state. */
+  touch-action: none;
 }
 .lightbox-img.is-swap { animation: lbFadeIn 180ms var(--ease-out); }
 

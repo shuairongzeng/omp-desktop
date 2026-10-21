@@ -16,6 +16,12 @@ const BACKOFF_MAX: Duration = Duration::from_secs(30);
 enum End {
     /// The user turned remote access off — do not reconnect.
     Stopped,
+    /// The relay closed the socket with code 4000 ("replaced by a newer
+    /// connection"): another desktop is online with the same device id —
+    /// the natural case is a `remote.json` copied to a second machine.
+    /// Retrying would trade the room back and forth forever, so stop and
+    /// say why instead.
+    Replaced,
     /// The connection dropped or failed — back off and retry. Carries the
     /// reason so the status line keeps it through the backoff.
     Retry(String),
@@ -36,6 +42,14 @@ pub async fn run(
             End::Stopped => {
                 mgr.clear_outbox(generation);
                 mgr.set_status(&app, "off");
+                return;
+            }
+            End::Replaced => {
+                mgr.clear_outbox(generation);
+                mgr.set_status(
+                    &app,
+                    "off (another desktop is online with this device id — remote.json was copied?)",
+                );
                 return;
             }
             End::Retry(reason) => mgr.set_status(&app, &format!("reconnecting ({reason})")),
@@ -265,6 +279,11 @@ async fn connect_once(
                 }
                 Some(Ok(tokio_tungstenite::tungstenite::Message::Close(cf))) => {
                     writer.abort();
+                    // 4000: the relay replaced us with a newer desktop
+                    // connection for the same device id (see `End::Replaced`).
+                    if cf.as_ref().is_some_and(|c| u16::from(c.code) == 4000) {
+                        break End::Replaced;
+                    }
                     break End::Retry(format!(
                         "closed by relay: {}",
                         cf.map_or(String::new(), |c| c.code.to_string())

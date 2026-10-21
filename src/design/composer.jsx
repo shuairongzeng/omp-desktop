@@ -15,8 +15,16 @@ const _cmpMobile = () => window.OMP_MOBILE;
 // CustomEvent the app root (app-live.jsx) listens for — the composer
 // never owns those panels.
 const _CMP_SHEET_MS = 3000; // inline sheet notice, self-dismissing
+// The ＋ panel's prompt-history sub-list: how many recent prompts it
+// shows when the "prompt history" row drills in (newest first — the list
+// itself is handed in already newest-first).
+const _CMP_SHEET_HISTORY = 20;
 const { parseMentionQuery, applyMention } = window.OMP_MENTIONS;
 const { prepareImage, carriesFiles, dropHoverAfter, imageFilesFromTransfer, imageFilesFromClipboardAsync, toDataUrl, MAX_ATTACHMENTS } = window.OMP_IMAGES;
+// How long the "attaching image…" chip on the input's top right lingers
+// before fading itself out: a short beat, just enough to explain the
+// swallowed Enter while a paste/pick is still preparing.
+const _CMP_ATTACHING_MS = 1500;
 const { splitDroppedPaths, pathsInsertText } = window.OMP_DROPPED;
 const { isDesktop, slashMenu, midPromptSlashToken, skillMenu, matchesQuery, insertText: slashInsertText } = window.OMP_SLASH;
 const {
@@ -51,7 +59,7 @@ function hintKeyFor(actionId, fallback) {
 // ── The composer (input + plan/steer modes + send) ────────────────────
 // `submitKey` ("enter" | "ctrl+enter") and `pasteCollapseLines` come from the
 // tweaks (Settings › Composer); the defaults match TWEAK_DEFAULTS.
-function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePlan, planBlocked = "", goalMode = false, goalTint = false, onToggleGoal, goalBlocked = "", goalStrip = null, onOpenCmd, onOpenModel, currentModel, thinking, onLoadThinkingLevels, onSetThinking, isStreaming, backgroundWork = false, onAbort, onApprove, annotationCount = 0, microcopy, onFollowUp, draftInsert, promptHistory = [], promptInsert, queue, queueSending, onRemoveQueued, onPromoteQueued, onSendQueuedNow, browserChips = [], onRemoveBrowserChip, onBrowserChipClick, submitKey = "enter", pasteCollapseLines = 5, approvalCell = null }) {
+function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePlan, planBlocked = "", goalMode = false, goalTint = false, onToggleGoal, goalBlocked = "", goalStrip = null, onOpenCmd, onOpenModel, currentModel, thinking, onLoadThinkingLevels, onSetThinking, isStreaming, backgroundWork = false, onAbort, onApprove, annotationCount = 0, microcopy, onFollowUp, draftInsert, promptHistory = [], promptInsert, queue, queueSending, onRemoveQueued, onPromoteQueued, onSendQueuedNow, browserChips = [], onRemoveBrowserChip, onBrowserChipClick, submitKey = "enter", pasteCollapseLines = 5, approvalCell = null, exitReason = null, onRestart = null }) {
   // Drafts are per tab (issue #28). The composer stays mounted across tab
   // switches and keeps one draft per session id (app/session-ui.js
   // DRAFT_IDLE): text, pending image attachments (sent alongside the next
@@ -88,6 +96,13 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   React.useEffect(() => { setDrafts(m => pruneDrafts(m, sessionIds)); }, [sessionIds]);
   const [activeIdx, setActiveIdx] = React.useState(0);
   const taRef   = React.useRef(null);
+  // Global "focus the composer" chord (desktop.composer.focus): app-live
+  // dispatches this window event; the textarea focuses and selects nothing.
+  React.useEffect(() => {
+    const onFocusReq = () => { taRef.current?.focus(); };
+    window.addEventListener("omp:focus-composer", onFocusReq);
+    return () => window.removeEventListener("omp:focus-composer", onFocusReq);
+  }, []);
   // Prompt-history recall (issues #16, #55, Arrow Up/Down): the recall
   // position lives in the tab's draft entry (`historyNav`, an index into the
   // tab's history, null = not recalling), so each tab keeps its own recall.
@@ -134,6 +149,12 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   // fallback chain runs first — a real notify mechanism, when one
   // exists, wins over the in-sheet line.
   const [sheetNotice, setSheetNotice] = React.useState(null);
+  // The ＋ panel's second-level view: null = the row list (default),
+  // "history" = the prompt-history drill-in listing this tab's prompts
+  // (the same newest-first array the desktop's Ctrl+Up modal reads),
+  // capped to _CMP_SHEET_HISTORY rows. Closing the sheet resets it;
+  // the back row returns to the list without closing.
+  const [sheetView, setSheetView] = React.useState(null);
   React.useEffect(() => {
     if (!sheetNotice) return undefined;
     const t = setTimeout(() => setSheetNotice(null), _CMP_SHEET_MS);
@@ -143,7 +164,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     if (typeof window.OMP_BRIDGE?.notify === "function") { try { window.OMP_BRIDGE.notify(msg); return; } catch { /* fall through */ } }
     setSheetNotice(msg);
   };
-  const closeSheet = () => setSheetOpen(false);
+  const closeSheet = () => { setSheetOpen(false); setSheetView(null); };
   // Sheet row "thinking": close, then click the real pill once — after
   // the sheet unmounts, so the pop it opens is not inside a closing
   // sheet. rAF defers past React's unmount commit.
@@ -501,9 +522,20 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   // literal draft (plan §7: Ctrl+Q/Ctrl+Enter sends a follow-up even while a
   // '/' command is being typed), never silently reroute into executing the
   // highlighted palette command instead.
+  // The transient "attaching image…" chip on the input's top right: the
+  // one explanation a swallowed Enter gets while a paste/pick is still
+  // preparing. Fresh key per chip so back-to-back ones re-arm the timer.
+  const [attaching, setAttaching] = React.useState(null); // { key }
+  React.useEffect(() => {
+    if (!attaching) return undefined;
+    const t = setTimeout(() => setAttaching(null), _CMP_ATTACHING_MS);
+    return () => clearTimeout(t);
+  }, [attaching]);
   const sendWith = (dispatcher, { followUp = false } = {}) => {
     if (showSlash && !followUp) { execCmd(filtered[clampedIdx]); return; }
-    if (pendingImages > 0) return; // a paste/pick is still preparing — its image would ship on the *next* message instead
+    // A paste/pick is still preparing: the Enter is swallowed (its image
+    // must not ship on the *next* message) — the transient chip says why.
+    if (pendingImages > 0) { setAttaching({ key: ++noticeCounterRef.current }); return; }
     // A follow-up (`onFollowUp` dispatcher) requires non-empty text.
     if (!(followUp ? hasText : sendable)) return;
     const images = attachments.map(a => a.image);
@@ -938,6 +970,19 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
       ref={rootRef}
       data-drop-kind={dropActive ? dropKind ?? "" : undefined}
       {...(window.__TAURI__?.webview ? {} : { onDragEnter: onFileDrag, onDragOver: onFileDrag, onDragLeave: onFileDrag, onDrop: onFileDrag })}>
+      {/* Dead agent (omp process exited): the transcript explains it via a
+          note, and this strip is the way back — one click respawns the tab
+          with --resume (live.js `restartSession`). */}
+      {exitReason && !isStreaming && onRestart && (
+        <div className="restart-strip" role="alert">
+          <Icon name="warn" size={12} color="var(--rose)" />
+          <span style={{ color: "var(--fg-2)" }}>agent process exited — the conversation is saved</span>
+          <button className="btn ghost outlined" style={{ marginLeft: "auto", height: 24 }}
+            onClick={onRestart}>
+            <Icon name="refresh" size={11} /> restart agent
+          </button>
+        </div>
+      )}
       {planMode && (
         <div className="plan-strip">
           <Icon name="plan" size={12} color="var(--amber)" />
@@ -1031,7 +1076,13 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
           style={{ display: "none" }}
           onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }}
         />
-        <button className="btn icon ghost" title="dictation coming soon" aria-label="dictate" disabled>
+        {/* The dictation control is still "coming soon" (permanently
+            disabled below) — hidden on every width, not just the phone
+            tier: a visible control that can never be tapped is noise.
+            Kept as a component for the day it works; CSS owns the
+            removal (composer.css .cmp-dead-dictate) so behaviour and
+            markup stay in sync when it lands. */}
+        <button className="btn icon ghost cmp-dead-dictate" title="dictation coming soon" aria-label="dictate" disabled aria-hidden="true">
           <Icon name="voice" size={13} />
         </button>
         <div className={`composer-input${text.length > 0 ? " has-clear" : ""}`}>
@@ -1067,22 +1118,45 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
               <Icon name="trash" size={11} />
             </button>
           )}
+          {/* Enter swallowed mid-preparation: the transient "attaching
+              image…" chip (sendWith), sharing the clear button's top-right
+              corner — the trash never renders while a send is blocked, so
+              the spot is free exactly when this is needed. */}
+          {attaching && (
+            <span className="composer-attaching" role="status" key={attaching.key}>attaching image…</span>
+          )}
         </div>
         <button className="btn outlined" title={bridgeHint ? `open command bridge (${bridgeHint})` : "open command bridge"} onClick={onOpenCmd}>
           <Icon name="command" size={11} />
           {bridgeKeyHint && <span className="kbd" style={{ marginLeft: 2 }}>{bridgeKeyHint}</span>}
         </button>
-        {/* Phone streaming row: the send key turns into the stop key
-            (mobile-draft frame 1/2). cmp-mobile-send is display:none on
-            desktop and shows ≤760px, where the steer/abort buttons
-            (plain .btn classes) are hidden by the same tier — the pair
-            is width-gated, matching the layout convention. */}
-        {isStreaming && (
-          <button className="cmp-mobile-send cmp-mobile-stop" title="stop" aria-label="stop" onClick={onAbort}>
-            <Icon name="stop" size={12} />
-          </button>
+        {/* Phone streaming row, reworked: the big accent key stays the
+            *send* key — streaming included — because the send path already
+            steers mid-turn (handleSend routes a submit to bridge.steer
+            while a run is live), so mid-turn interjection needs only a
+            visible key, not a second path. Stop moves beside it as a
+            smaller rose circle (cmp-mobile-stop in composer.css); both
+            are width-gated cmp-only classes, so the desktop row keeps
+            its own steer + abort pair. Steer still honors goal mode's
+            "no mid-turn goal text" rule via `steerable` here; a
+            non-steerable draft keeps the plain stop-only layout. */}
+        {isStreaming && touch && (
+          <>
+            {steerable && (
+              <button className="cmp-mobile-send" title="steer: send while the agent works" aria-label="steer"
+                onClick={send} disabled={pendingImages > 0}>
+                <Icon name={goalMode ? "goal" : "arrow"} size={13} color={goalMode ? "var(--lilac)" : undefined} />
+              </button>
+            )}
+            <button className="cmp-mobile-send cmp-mobile-stop" title="stop" aria-label="stop" onClick={onAbort}>
+              <Icon name="stop" size={10} />
+            </button>
+          </>
         )}
-        {isStreaming ? (
+        {/* Desktop streaming pair (or the phone's Enter-chord fallback
+            on a non-touch narrow window): the phone tier above renders
+            its own pair, so this branch is touch-free. */}
+        {isStreaming && !touch ? (
           <>
             {steerable && (
               <button className={`btn outlined${goalMode ? " goal-resume" : ""}`} onClick={send} disabled={pendingImages > 0}
@@ -1094,7 +1168,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
               <Icon name="stop" size={10} /> abort {abortHint && <span className="kbd">{abortHint}</span>}
             </button>
           </>
-        ) : (
+        ) : !isStreaming && (
           <>
             {planMode && (
               <button className="btn outlined" onClick={onApprove}
@@ -1178,6 +1252,32 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
         return (
           <MobileSheet title="actions" onClose={closeSheet}>
             {sheetNotice && <div className="cmp-sheet-notice" role="status">{sheetNotice}</div>}
+            {/* Second level: this tab's prompt history (the desktop's
+                Ctrl+Up modal capability, phone-sized). A row per prompt,
+                newest first, capped to _CMP_SHEET_HISTORY; a pick replaces
+                the draft exactly the way the modal's does (promptInsert's
+                replace contract, app-live.jsx's handlePickHistoryPrompt),
+                not appended to it. The back row returns to the row list
+                without closing — the sheet's own gestures still own
+                dismissal. */}
+            {sheetView === "history" ? (
+              <>
+                <button className="cmp-sheet-row" onClick={() => setSheetView(null)}>
+                  <span className="cmp-sheet-ic"><Icon name="back" size={14} /></span>
+                  <span className="cmp-sheet-tx">prompt history<span className="s">back to actions</span></span>
+                </button>
+                <div className="cmp-sheet-list">
+                  {promptHistory.length === 0 && (
+                    <div className="cmp-sheet-row cmp-sheet-empty">no prompts sent in this tab yet</div>
+                  )}
+                  {promptHistory.slice(0, _CMP_SHEET_HISTORY).map((p, i) => (
+                    <button className="cmp-sheet-row" key={`${i}-${p}`} onClick={() => { replaceDraft(p); closeSheet(); }}>
+                      <span className="cmp-sheet-tx cmp-sheet-pt">{p}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (<>
             <button className="cmp-sheet-row" onClick={() => { closeSheet(); fileInputRef.current?.click(); }}>
               <span className="cmp-sheet-ic"><Icon name="image" size={14} /></span>
               <span className="cmp-sheet-tx">image<span className="s">photos / files</span></span>
@@ -1201,6 +1301,20 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
               <span className="cmp-sheet-tx">{goalMode ? "goal mode on" : "goal mode"}<span className="s">run until the goal is done · not with plan mode</span></span>
             </button>
             <div className="cmp-sheet-sep" />
+            {/* App-level rows: "new conversation" follows the shared
+                omp:mobile contract (the app root owns tab creation — the
+                same handler the tab bar's "+" and the tab-group popover's
+                "new conversation" row use); "prompt history" drills into
+                the in-sheet list above instead of leaving the composer. */}
+            <button className="cmp-sheet-row" onClick={() => dispatchMobile("open-new")}>
+              <span className="cmp-sheet-ic"><Icon name="plus" size={14} /></span>
+              <span className="cmp-sheet-tx">new conversation<span className="s">start a fresh chat in this project</span></span>
+            </button>
+            <button className="cmp-sheet-row" onClick={() => setSheetView("history")}>
+              <span className="cmp-sheet-ic"><Icon name="clock" size={14} /></span>
+              <span className="cmp-sheet-tx">prompt history<span className="s">recent prompts from this tab</span></span>
+            </button>
+            <div className="cmp-sheet-sep" />
             <button className="cmp-sheet-row" onClick={() => dispatchMobile("open-terminal")}>
               <span className="cmp-sheet-ic"><Icon name="terminal" size={14} /></span>
               <span className="cmp-sheet-tx">terminal</span>
@@ -1213,6 +1327,7 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
               <span className="cmp-sheet-ic"><Icon name="branch" size={14} /></span>
               <span className="cmp-sheet-tx">git changes</span>
             </button>
+            </>)}
           </MobileSheet>
         );
       })()}

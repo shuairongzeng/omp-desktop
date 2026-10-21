@@ -70,7 +70,7 @@ function QueueStrip({ queue, sending, canSendNow, onSendNow, onRemove, onPromote
               )}
               {r.editable && (
                 <button className={_QS_BTN} disabled={busy} onClick={() => run(r, onEdit)}
-                  title="edit: take the text back into the prompt box" aria-label="edit">
+                  title="take the text back into the prompt box (images are not returned)" aria-label="edit">
                   <_QS_Icon name="edit" size={11} />
                 </button>
               )}

@@ -193,3 +193,87 @@
 .tool-foot .diff-path { color: var(--fg-2); }
 .diff-path:hover, .diff-path:focus-visible { color: var(--accent); text-decoration-color: currentColor; }
 .diff-path:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ── Phone tier (≤760px) — one tabbed pane, finger-sized targets ─────────
+   The desktop grid's 220px + 280px column minimums sum past a 390px
+   viewport, squeezing the diff column to 0px. Here git-browser.jsx stops
+   rendering the two inactive panes and shows a Files/Diff/History
+   segment instead; the grid collapses to the one column that is left.
+   Everything is width-gated — desktop never sees any of this. */
+@media (max-width: 760px) {
+  /* No window chrome gutter: the browser is the whole screen. */
+  .gitb-scrim { padding: 0; }
+  .gitb { border-radius: 0; border: none; box-shadow: none; }
+
+  /* ── Head: one 44px row ──────────────────────────────────────────── */
+  /* One 44px row keeps: project name, branch chip, changed count,
+     refresh, close. The leading branch icon and "git" title are redundant
+     with the branch chip beside them; the upstream ahead/behind chip is
+     desktop telemetry. */
+  .gitb-head {
+    min-height: 44px; padding: 0 8px 0 12px; gap: 6px;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  .gitb-head > .ui-icon:first-child { display: none; }
+  .gitb-title { display: none; }
+  .gitb-project { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+  .gitb-head .gitb-ref { max-width: 40%; }
+  .gitb-head .gitb-chip { display: none; }
+  .gitb-head .gitb-head-stats { gap: 8px; flex: none; }
+  .gitb-head .btn { height: 40px; width: 40px; padding: 0; justify-content: center; flex: none; }
+
+  /* ── Pane segment: the tab strip git-browser.jsx renders ─────────── */
+  .gitb-tabs {
+    display: flex; flex: none;
+    padding: 2px; gap: 2px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-surface);
+  }
+  .gitb-tab {
+    appearance: none; border: 0; background: transparent;
+    color: var(--fg-3); font: inherit; font-size: var(--d-text-sm); font-weight: 500;
+    flex: 1; min-width: 0;
+    min-height: 40px;
+    border-radius: var(--r-1);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .gitb-tab.on { color: var(--fg); background: var(--bg-elevated); box-shadow: 0 1px 2px rgb(0 0 0 / .3); }
+  .gitb-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  /* ── One column: the panes' shared border goes, the body is the pane ── */
+  .gitb-body { display: flex; }
+  .gitb-pane { flex: 1; }
+  .gitb-pane + .gitb-pane { border-left: none; }
+
+  /* ── Files pane: ≥40px rows, ≥40px controls ──────────────────────── */
+  .gitb-pane-head { min-height: 44px; padding: 0 10px; }
+  .gitb-toggle { height: 40px; padding: 0 10px; font-size: var(--d-text-sm); margin-left: auto; flex: none; }
+  .gitb-filter { padding: 6px 10px; }
+  .gitb-filter .btn.icon { width: 40px; height: 40px; }
+  /* iOS zooms the page when an input is under 16px. */
+  .gitb-filter-input { height: 40px; font-size: 16px; }
+  .gitb-row { height: 40px; }
+  .gitb-row:focus-visible, .gitb-commit:focus-visible { outline-offset: 0; }
+
+  /* ── Diff pane: the head wraps, actions and hunks grow ───────────── */
+  .gitb-view-head { flex-wrap: wrap; row-gap: 4px; }
+  .gitb-hunks .btn.icon { width: 40px; height: 40px; }
+  .gitb-act { height: 40px; padding: 0 12px; font-size: var(--d-text-sm); }
+  /* The armed second step: rose fill, the label swap is git-browser.jsx's. */
+  .gitb-discard.armed {
+    color: var(--rose); border-color: var(--rose);
+    background: color-mix(in oklab, var(--rose) 14%, transparent);
+  }
+  .gitb-copy { height: 40px; min-height: 40px; padding: 0 10px; }
+  .gitb-copy::before { width: 1rem; height: 1rem; }
+  .gitb-copy::after { font-size: 0.6875rem; }
+  .gitb-view-body { font-size: 12px; }
+  .gitb-ln { padding-right: 6px; }
+  .gitb-line { grid-template-columns: 34px 34px 12px auto; }
+  .gitb-code { padding: 0 8px; overflow-wrap: anywhere; }
+
+  /* ── History pane: ≥40px rows ─────────────────────────────────────
+     history.jsx switches its row-height constant to 40px inside this
+     tier; the SVG graph and the absolute row grid share the constant,
+     so the CSS here adds nothing — this note documents the pairing. */
+}

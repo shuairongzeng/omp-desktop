@@ -46,9 +46,10 @@
        app/message-queue.js calls. -->
   <script src="marked.min.js"></script>
   <script src="highlight.min.js"></script>
-  <!-- qrcode-generator (vendored): the Remote settings section renders the
-       phone-pairing QR. Only settings/rows-remote.jsx calls it. -->
-  <script src="qrcode.js"></script>
+  <!-- qrcode-generator (vendored): NOT loaded eagerly — the Remote section's
+       pairing QR is the only consumer, so rows-remote.jsx's
+       _SRR_ensureQrcode() injects it on first open (the terminal's
+       ensureXterm pattern). 57 KB off every startup. -->
   <script src="app/marked-setup.js"></script>
 
   <!-- App constants. Dependency-free IIFE, loaded before the design
@@ -507,6 +508,10 @@
        calls window.OMP_TURN_STATUS and live.js reads it at its top-level
        init, so it must load before both. -->
   <script src="app/turn-status.js"></script>
+  <!-- OS notifications (turn done / approval needed while unfocused):
+       dependency-free IIFE over window.OMP_NOTIFY; app-live.jsx reads it at
+       effect time, so it must load before app-live.jsx. -->
+  <script src="app/notify.js"></script>
   <!-- Session behaviours (#37): reopen tabs, busy-close confirmation,
        auto-naming, auto-compaction / retry. IIFE (OMP_TURN_STATUS at call
        time); live.js reads window.OMP_SESSION_PREFS at its top-level init. -->
