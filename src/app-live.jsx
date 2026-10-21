@@ -30,7 +30,7 @@ const {
 } = window;
 const { routeSubmit: _routeSubmit } = window.OMP_SLASH;
 const { mergeIntoMessage: _mergeBrowserChips, browserCommand: _browserCommand, MIN_WIDTH: _AL_BROWSER_MIN } = window.OMP_BROWSER;
-const { recentRows, groupKey, moveGroup, moveMember, shiftGroup, basename: _AL_basename } = window.OMP_PROJECT_NAV;
+const { recentRows, groupKey, moveGroup, moveMember, moveTab, shiftGroup, basename: _AL_basename } = window.OMP_PROJECT_NAV;
 const {
   entryOf, updateEntry, pruneEntries, seedEntries,
   PLAN_IDLE, togglePlan, enterPlan, approvePlan, annotatePlan, markPlanSent,
@@ -949,8 +949,10 @@ React.useEffect(() => {
   // registry's reverse, so a drop above a row is a registry move behind it.
   const handleReorder = (list, id, targetId, after) => {
     const order = list === "projects"
-      ? moveGroup(sessions, id, targetId, after)
-      : moveMember(sessions, id, targetId, !after);
+      ? moveTab(sessions, id, targetId, after)
+      : list === "side-projects"
+        ? moveGroup(sessions, id, targetId, after)
+        : moveMember(sessions, id, targetId, !after);
     if (order) bridge?.reorderTabs(order);
   };
   // Keyboard move: the active tab's project, one place along the tab bar.
@@ -1142,7 +1144,6 @@ React.useEffect(() => {
             onNew={handleNewProject}
             onClose={handleCloseTab}
             onRename={handleRenameTab}
-            onNewInProject={handleNewInProject}
             onReorder={handleReorder}
             sidebarOpen={showSidebar}
             onToggleSidebar={toggleSidebar}

@@ -1303,8 +1303,8 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
             <div className="cmp-sheet-sep" />
             {/* App-level rows: "new conversation" follows the shared
                 omp:mobile contract (the app root owns tab creation — the
-                same handler the tab bar's "+" and the tab-group popover's
-                "new conversation" row use); "prompt history" drills into
+                same handler the tab bar's "+" and the sidebar's "new
+                conversation" row use); "prompt history" drills into
                 the in-sheet list above instead of leaving the composer. */}
             <button className="cmp-sheet-row" onClick={() => dispatchMobile("open-new")}>
               <span className="cmp-sheet-ic"><Icon name="plus" size={14} /></span>

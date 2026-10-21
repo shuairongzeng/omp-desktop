@@ -441,7 +441,7 @@
   // The array itself is reused when every element is unchanged; otherwise a
   // new one is built from exactly those cached references. Referential
   // stability across unchanged notifies is what React.memo'd tab rows
-  // (chrome.jsx, project-sidebar.jsx, tab-group-chip.jsx) need to skip
+  // (chrome.jsx, project-sidebar.jsx) need to skip
   // re-rendering while a tab streams.
   const _sessionsViewCache = new Map(); // id → { entry, view }
   let _lastSessionsView = [];

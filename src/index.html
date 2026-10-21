@@ -156,7 +156,7 @@
 
   <!-- Project navigation (issue #27): pure tab grouping/lookup helpers, plus
        the history panel's per-project filter chips (#35). Dependency-free
-       IIFE; design/chrome.jsx, design/tab-group-chip.jsx,
+       IIFE; design/chrome.jsx, design/ui/tab-bits.jsx,
        design/project-sidebar.jsx and design/history-modal.jsx destructure
        window.OMP_PROJECT_NAV at top level and live.js calls it, so it must
        load before all of them. -->
@@ -316,13 +316,13 @@
        OMP_TWEAKS_STORE reader live.js uses at its top-level init. IIFE. -->
   <script src="design/tweaks/use-tweaks.js"></script>
   <!-- Outside-click / Escape dismissal shared by the dropdown menus
-       (profile-menu.jsx, tab-group-chip.jsx, thinking-menu.jsx,
+       (profile-menu.jsx, thinking-menu.jsx,
        path-setting.jsx's PathPicker). -->
   <script src="design/ui/use-popover-dismiss.js"></script>
-  <!-- Pointer drag-to-reorder (#40) for the tab bar, the group chip's
-       dropdown and the project sidebar: chrome.jsx and project-sidebar.jsx
-       call window.useDragReorder at render time, tab-group-chip.jsx gets
-       TabBar's. Destructures window.OMP_DRAG_REORDER at load. -->
+  <!-- Pointer drag-to-reorder (#40) for the tab bar and the project
+       sidebar: chrome.jsx and project-sidebar.jsx call
+       window.useDragReorder at render time. Destructures
+       window.OMP_DRAG_REORDER at load. -->
   <script src="design/ui/use-drag-reorder.js"></script>
   <!-- A panel edge dragged to resize it: terminal-panel.jsx,
        browser-dock.jsx and app/use-pane-widths.jsx call window.useEdgeDrag
@@ -430,17 +430,17 @@
   <!-- Per-tab profile selector — chrome.jsx destructures window.ProfileMenu
        at top level, so this must load before it. -->
   <script type="text/babel" src="design/profile-menu.jsx"></script>
-  <!-- Inline conversation-name editor (#32) — tab-group-chip.jsx, chrome.jsx
-       and project-sidebar.jsx destructure window.RenameField at top level,
-       so this must load before all three. -->
+  <!-- Inline conversation-name editor (#32) — chrome.jsx and
+       project-sidebar.jsx destructure window.RenameField at top level,
+       so this must load before both. -->
   <script type="text/babel" src="design/rename-field.jsx"></script>
-  <!-- Grouped tab-bar chip (#27) — chrome.jsx destructures
-       window.TabGroupChip / window.TabRunDot / window.TabLabel at top level,
-       so this must load before it. -->
-  <script type="text/babel" src="design/tab-group-chip.jsx"></script>
+  <!-- Tab name and run-state bits — chrome.jsx and project-sidebar.jsx
+       destructure window.TabRunDot / window.TabLabel at top level, so
+       this must load before both. -->
+  <script type="text/babel" src="design/ui/tab-bits.jsx"></script>
   <script type="text/babel" src="design/chrome.jsx"></script>
   <!-- Project sidebar (#27); reads window.TabRunDot / window.TabLabel
-       (tab-group-chip.jsx) and window.OMP_PROJECT_NAV at top level. -->
+       (design/ui/tab-bits.jsx) and window.OMP_PROJECT_NAV at top level. -->
   <script type="text/babel" src="design/project-sidebar.jsx"></script>
   <!-- Session column with no tab open; destructures window.MarkdownContent
        and window.OMP_MATRIX at top level. -->

@@ -98,20 +98,18 @@
 .psb-foot:hover { color: var(--accent); background: var(--bg-hover); }
 .psb-foot:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-/* ── Drag to reorder (#40): tab bar, group dropdown and sidebar ─────────
+/* ── Drag to reorder (#40): tab bar and sidebar ─────────────────────────
    `ui/use-drag-reorder.js` tags items with their axis and marks the
    dragged one and the slot's neighbour. The slot is an accent edge on the
    side the item will land, drawn above the item's children (an inset
    shadow would sit under a sidebar row's own background). */
 body.reordering, body.reordering * { cursor: grabbing !important; user-select: none; }
-/* The children, not the item: opacity on a chip would make it a stacking
-   context and paint its open dropdown under the stage while it is dragged. */
-.reorder-src > :not(.tab-group-pop) { opacity: 0.5; }
+/* The children, not the item itself. */
+.reorder-src > * { opacity: 0.5; }
 .drop-before, .drop-after { position: relative; }
 /* #11: the slot opens a 4px gap the dragged item will visually land in,
    transitioned so the gap grows/shrinks as the pointer crosses rows
-   instead of snapping. Only while reordering: these classes also appear
-   on the bar's chips, whose margin is a plain base style. */
+   instead of snapping. */
 body.reordering .drop-before { margin-block-start: 4px; }
 body.reordering .drop-after  { margin-block-end: 4px; }
 body.reordering [data-reorder-axis="x"].drop-before,

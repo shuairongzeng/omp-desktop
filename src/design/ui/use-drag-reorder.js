@@ -30,7 +30,7 @@
   // Controls inside an item that keep their own press. `data-no-reorder`
   // marks a region inside an item (a dropdown) that only its own nested
   // items may drag from.
-  const NO_DRAG = "input, textarea, .tab-close, .tab-group-trigger, .psb-act, .psb-chev, [data-no-reorder]";
+  const NO_DRAG = "input, textarea, .tab-close, .psb-act, .psb-chev, [data-no-reorder]";
 
   function span(el, axis) {
     const r = el.getBoundingClientRect();

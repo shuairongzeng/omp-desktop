@@ -124,8 +124,8 @@ function ProjectSidebar({
             : [group.tabs[0].name, group.path].filter(Boolean).join("\n");
           const members = `members:${group.key}`;
           return (
-            <div key={group.key} {...reorder.itemProps("projects", group.key, "y")}
-              className={`psb-group${reorder.dropClass("projects", group.key)}`}>
+            <div key={group.key} {...reorder.itemProps("side-projects", group.key, "y")}
+              className={`psb-group${reorder.dropClass("side-projects", group.key)}`}>
               {/* A multi-tab project row is only highlighted through its
                   active member row, as in the mockup; a single-tab one is
                   that tab. */}

@@ -6,8 +6,8 @@
    - Ambient rail: TokenGauge, ActivityRadar, subagents card, Minimap
    ═════════════════════════════════════════════════════════════════════ */
 
-const { Icon, TokenGauge, ActivityRadar, Sparkline, TOOL_META, ProfileMenu, DEFAULT_PROFILE_ID, SubagentRailCard, TabGroupChip, TabRunDot, TabLabel, RenameField } = window;
-const { groupTabs, sessionStrip } = window.OMP_PROJECT_NAV;
+const { Icon, TokenGauge, ActivityRadar, Sparkline, TOOL_META, ProfileMenu, DEFAULT_PROFILE_ID, SubagentRailCard, TabRunDot, TabLabel, RenameField } = window;
+const { sessionStrip } = window.OMP_PROJECT_NAV;
 
 // Thin wrappers around the shared `OMP_KEYMAP.hintFor`/`hintKeyFor` — same
 // guard and rationale as composer.jsx's copy (kept local rather than a
@@ -254,7 +254,7 @@ function tablistKeyNav(e, onSelect) {
 }
 
 function TabBar({
-  projects, activeId, onSelect, onClose, onRename, onNew, onHistory, onNewInProject, onReorder,
+  projects, activeId, onSelect, onClose, onRename, onNew, onHistory, onReorder,
   sidebarOpen, onToggleSidebar,
   profiles = [], appVersion, updateVersion, onUpdate, onCheckUpdate,
   settings, onSelectSettings, onCloseSettings,
@@ -268,8 +268,8 @@ function TabBar({
     id === DEFAULT_PROFILE_ID ? null : (profiles.find(p => p.id === id)?.name ?? id);
   // Tab whose name is being edited inline (#32); double-click enters it.
   const [renaming, setRenaming] = React.useState(null);
-  // Drag to reorder (#40): projects along the bar ("projects", keyed by
-  // group), and a group chip's members in its dropdown (see TabGroupChip).
+  // Drag to reorder (#40): one list ("projects", keyed by tab id) along
+  // the bar; the sidebar keeps its own project/member lists.
   const reorder = window.useDragReorder(onReorder);
   // Scroll the selected tab into view: picking a tab off-screen (keyboard,
   // minimap, sidebar) must not leave it hidden behind the bar's overflow.
@@ -298,40 +298,30 @@ function TabBar({
         onClick={onToggleSidebar}>
         <Icon name="sidebar" size={11} />
       </button>
-      {/* Tabs on one folder + profile share a chip (#27); a project with a
-          single tab renders as a plain tab. */}
-      {groupTabs(projects).map((group) => {
-        if (group.tabs.length > 1) {
-          return (
-            <TabGroupChip key={group.key}
-              group={group}
-              activeId={activeId}
-              profileLabel={profileLabel}
-              onSelect={onSelect}
-              onClose={onClose}
-              onNewInProject={onNewInProject}
-              onRename={onRename}
-              reorder={reorder}
-              terminalDirty={terminalDirty}
-            />
-          );
-        }
-        const p = group.tabs[0];
+      {/* One item per conversation: the bar never folds a project's tabs
+          into a chip, so every open session stays a visible, clickable,
+          closeable tab of its own. Tabs of the same folder + profile sit
+          where the registry (and drag reorder, #40) put them and read as
+          related through `.tab-same-project` (chrome.css). */}
+      {projects.map((p, i) => {
         const active = p.id === activeId;
         const profile = profileLabel(p.profile);
+        const prev = projects[i - 1];
+        const sameProject = !!prev && prev.path === p.path && prev.profile === p.profile && !!p.path;
         return (
           <div key={p.id}
-            {...reorder.itemProps("projects", group.key, "x")}
-            className={`tab ${active ? "active" : ""}${reorder.dropClass("projects", group.key)}`}
+            {...reorder.itemProps("projects", p.id, "x")}
+            className={`tab ${active ? "active" : ""}${sameProject ? " tab-same-project" : ""}${reorder.dropClass("projects", p.id)}`}
             role="tab"
             tabIndex={active ? 0 : -1}
             data-tab-id={p.id}
             aria-selected={active}
+            style={sameProject ? { "--tab-seam": p.color } : undefined}
             {...tabClickProps(() => onSelect(p.id), () => onClose?.(p.id))}
             // The first click of the pair already selected the tab.
             onDoubleClick={e => { if (onRename && !e.target.closest(".tab-close")) setRenaming(p.id); }}>
             <span className="tab-bar-mark" style={{ background: active ? p.color : "transparent" }} />
-            <Icon name="folder" size={11} color={active ? p.color : "var(--fg-4)"} />
+            {!sameProject && <Icon name="folder" size={11} color={active ? p.color : "var(--fg-4)"} />}
             <TabRunDot state={p.runState} />
             {terminalDirty?.[p.id] && <span className="tab-run-dot term-dirty" title="terminal has new output" />}
             {renaming === p.id ? (

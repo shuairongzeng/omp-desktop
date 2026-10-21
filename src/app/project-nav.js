@@ -130,6 +130,19 @@
     return changedOrder(tabs, groups);
   }
 
+  /** Tab ids in the order that puts tab `id` before (or, with `after`,
+   *  behind) tab `targetId` anywhere in the bar — the tab bar is flat
+   *  (one item per conversation), so a drop never has to keep a
+   *  project's tabs contiguous. `null` for unknown ids or no change. */
+  function moveTab(tabs, id, targetId, after) {
+    if (id === targetId) return null;
+    const ids = tabs.map(t => t.id);
+    if (!ids.includes(id) || !ids.includes(targetId)) return null;
+    const rest = ids.filter(x => x !== id);
+    rest.splice(rest.indexOf(targetId) + (after ? 1 : 0), 0, id);
+    return rest.every((x, i) => x === ids[i]) ? null : rest;
+  }
+
   /** Tab ids with project `key` swapped one place left (`delta` -1) or right
    *  (+1) in the tab bar, for the keyboard move (#40); `null` at either end. */
   function shiftGroup(tabs, key, delta) {
@@ -317,6 +330,7 @@
     membersNewestFirst,
     moveGroup,
     moveMember,
+    moveTab,
     shiftGroup,
     isReorderOf,
     tabLabel,

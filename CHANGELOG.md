@@ -153,6 +153,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **The tab bar is flat: one tab per conversation** — a project's sessions no longer fold into a single chip with a dropdown; every open conversation is its own visible, clickable, closeable tab (consecutive tabs of one project read as related through a 2px project-colour seam and no repeated folder icon). Resuming a second conversation of an open project from the history panel or the sidebar therefore shows up as a second tab instead of looking like it replaced the first. Drag reorder moves single tabs anywhere along the bar (`OMP_PROJECT_NAV.moveTab`); the sidebar keeps its project-level drag. The tab's hover × now sits flush against the tab's right padding and lost its green brand dot, which had read as an off-centre speck
+
 - Copy unification: buttons, tooltips, empty states and inline errors are lowercase without trailing periods, matching the app's majority convention
 
 - Dead weight removed: the unused per-theme `--syntax-*` ladder (42 definitions), sakura's unused `--magenta-fg`/`--lilac-fg`, phosphor's `.glow-text`, and the never-wired `.ass-text` rules

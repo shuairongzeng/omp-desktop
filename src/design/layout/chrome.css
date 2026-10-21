@@ -55,10 +55,10 @@
 .profile-menu { position: relative; display: flex; align-items: center; }
 .profile-trigger { display: flex; align-items: center; gap: 6px; max-width: 220px; }
 .profile-trigger-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Dropdown chrome shared by the profile, tab-group and thinking menus
+/* Dropdown chrome shared by the profile and thinking menus
    (thinking-menu.jsx, positioned in composer.css) and the browser panel's
    annotate popover (positioned in browser.css). */
-.profile-pop, .tab-group-pop, .thinking-pop, .browser-popover {
+.profile-pop, .thinking-pop, .browser-popover {
   position: absolute; z-index: 40;
   padding: 4px;
   display: flex; flex-direction: column; gap: 1px;
@@ -219,6 +219,15 @@
 }
 .tab:hover { color: var(--fg-2); background: var(--bg-hover); }
 .tab.active { color: var(--fg); background: var(--bg-surface); }
+/* Consecutive tabs of one project read as related: the repeated folder
+   icon is dropped in markup (chrome.jsx) and a 2px project-colour seam
+   replaces the divider, so a run of sessions on one folder hangs
+   together without folding into a chip. */
+.tab-same-project { border-right-color: transparent; }
+.tab-same-project::before {
+  content: ""; position: absolute; left: 0; top: 6px; bottom: 6px;
+  width: 2px; border-radius: 1px; background: var(--tab-seam, var(--line));
+}
 .tab-bar-mark {
   position: absolute; top: 0; left: 0; right: 0; height: 2px;
   transition: background 200ms var(--ease-out);
@@ -244,11 +253,10 @@
 .tab-prefix { flex: 0 100000 auto; color: var(--fg-4); }
 .tab-sep { flex: none; margin: 0 5px; color: var(--fg-5); }
 .tab-title { flex: 0 1 auto; min-width: 0; }
-/* Inline conversation-name editor (#32): tab bar, group popover, sidebar. */
+/* Inline conversation-name editor (#32): tab bar and sidebar. */
 .rename-field { height: 20px; padding: 0 5px; border-color: var(--accent); }
 /* In the tab bar: same footprint as the .tab-name it replaces. */
 .tab > .rename-field { flex: none; width: 200px; }
-.tab-group-editing { cursor: default; }
 .tab-profile {
   /* `.chip` is inline-flex, on which `text-overflow` is inert - the label
      would hard-clip mid-glyph at max-width instead of ellipsizing. Single
@@ -269,22 +277,20 @@
    dot and says so — the amber pill 待审批 (mobile-draft frame 4's
    vocabulary; .chat-jump-latest.needs-approval uses the same fill).
    `content` rather than new markup: the dot span is rendered by
-   TabRunDot (tab-group-chip.jsx) in four places (tab bar, group chip,
-   group dropdown rows, sidebar rows); CSS text upgrades all of them
-   without touching the component. The group dropdown's 10px fixed
-   gutter (.tab-group-dot) keeps the small dot — its rows are dense
-   list items, not attention surfaces. Running and every other state
+   TabRunDot (design/ui/tab-bits.jsx) in three places (tab bar, sidebar
+   rows, composer background note); CSS text upgrades all of them
+   without touching the component. Running and every other state
    keep the original dot: only "your input blocks the run" earns text.
    Same rule on a phone (the tab bar itself is hidden ≤760px, so this
    is desktop-only in practice, as the slice notes). */
-.tab-run-dot.waiting-user:not(.tab-group-dot >) {
+.tab-run-dot.waiting-user {
   width: auto; height: 15px; padding: 1px 6px;
   background: var(--amber); border-radius: var(--r-pill);
   color: var(--amber-fg, #06241B);
   font-family: var(--font-sans); font-size: var(--d-text-xs); font-weight: 600;
   line-height: 1; white-space: nowrap;
 }
-.tab-run-dot.waiting-user:not(.tab-group-dot >)::after { content: "待审批"; }
+.tab-run-dot.waiting-user::after { content: "待审批"; }
 .tab-run-dot.failed { background: var(--rose); }
 .tab-run-dot.term-dirty { background: var(--accent); }
 /* omp is retrying a failed request: an amber ring that spins. */
@@ -299,11 +305,15 @@
   border-radius: 4px; opacity: 0; background: transparent; border: 0;
   color: var(--fg-3);
   transition: opacity 120ms, background 120ms;
+  /* Right-anchored: the auto margin eats the row's free space, so the ×
+     sits against the tab's right padding whatever the title's length. */
+  margin-left: auto;
 }
-/* Child combinator: a grouped chip's popover rows are descendants of the
-   `.tab` too, and must reveal their own × per row, not all at once. */
+/* The brand dot every Icon carries reads as an off-centre speck on a
+   9px ×; the close affordance is pure stroke. */
+.tab-close .ui-icon circle { display: none; }
+/* The × reveals on hover or keyboard focus, never on its own. */
 .tab:hover > .tab-close { opacity: 1; }
-/* Not a `.btn`, so no global focus ring. */
 .tab > .tab-close:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: -1px; }
 .tab-close:hover { background: var(--bg-active); color: var(--fg); }
 
@@ -319,51 +329,14 @@
 .tab-add:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-/* ── Grouped tab chip (#27) ──────────────────────────────────────────── */
+/* The Settings app tab's changed-count badge; the grouped chip (#27) that
+   used to share this block is gone — the bar is flat, one tab per
+   conversation. */
 .tab-count {
   font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-4);
   padding: 0 5px; border-radius: 8px; background: var(--bg-hover); line-height: 15px;
 }
 .tab.active .tab-count { color: var(--fg-3); background: var(--bg-active); }
-/* Always visible, unlike .tab-close: it is the only way into the group. */
-.tab-group-trigger {
-  width: 1rem; height: 1rem; padding: 0; margin-left: -4px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 4px; background: transparent; border: 0; color: var(--fg-3);
-}
-.tab-group-trigger:hover,
-.tab-group-trigger[aria-expanded="true"] { background: var(--bg-active); color: var(--fg); }
-/* #8: not a `.btn`, so no global focus ring. */
-.tab-group-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Left-anchored, unlike .profile-pop: tabs start at the window's left edge,
-   so growing rightward from the chip never runs into `.window`'s clipping. */
-.tab-group-pop {
-  top: 100%; left: 0;
-  min-width: 220px; max-width: 320px;
-  cursor: default;
-}
-.tab-group-row { display: flex; align-items: center; gap: 2px; padding-right: 4px; border-radius: var(--r-1); }
-.tab-group-row:hover { background: var(--bg-hover); }
-.tab-group-row.active { background: var(--bg-surface); }
-.tab-group-item {
-  appearance: none; border: 0; background: transparent;
-  flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 5px 8px; border-radius: var(--r-1);
-  font-size: var(--d-text-sm); color: var(--fg-2);
-  text-align: left; cursor: pointer;
-}
-.tab-group-item:hover, .tab-group-row:hover .tab-group-item, .tab-group-row.active .tab-group-item { color: var(--fg); }
-.tab-group-pop > .tab-group-item:hover { background: var(--bg-hover); }
-/* Not a `.btn`: same missing-focus-ring fix as .profile-item. */
-.tab-group-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
-.tab-group-item .tab-name { flex: 1; }
-/* Fixed gutter so names align whether or not a row has a run dot. */
-.tab-group-dot { width: 10px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
-.tab-group-row:hover .tab-close { opacity: 1; }
-/* Not a `.btn` either, so no global focus ring. */
-.tab-group-row .tab-close:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: -1px; }
-.tab-group-sep { height: 1px; margin: 4px 2px; background: var(--line); }
 
 .tabs-right {
   display: flex; align-items: center; gap: 8px; padding: 0 12px;
@@ -483,9 +456,7 @@
      hosts the profile chip is display:none above). Their 5px vertical
      padding makes ~25px rows — half a finger. 40px is the minimum the
      drawer's rows (sidebar.css) already use; the thinking menu keeps
-     its hint sub-line, so it grows by padding, not a fixed height.
-     The group-dropdown member rows (.tab-group-item) are session
-     pickers, not menu settings — they stay dense. */
+     its hint sub-line, so it grows by padding, not a fixed height. */
   .profile-item, .thinking-item {
     min-height: 40px; padding-top: 10px; padding-bottom: 10px;
   }

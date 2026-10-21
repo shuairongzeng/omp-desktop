@@ -154,7 +154,7 @@
   pointer-events: none;
 }
 /* Surface (background, border, radius, shadow) from the shared menu rule
-   `.profile-pop, .tab-group-pop, .thinking-pop, .browser-popover` (chrome.css). */
+   `.profile-pop, .thinking-pop, .browser-popover` (chrome.css). */
 .browser-popover {
   z-index: 3;
   gap: 6px;

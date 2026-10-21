@@ -163,6 +163,17 @@ check("moveMember never moves a tab into another project", () => {
   assert.equal(N.moveMember(split(), "a1", "a1", true), null);
 });
 
+check("moveTab drops a tab anywhere in the flat bar, across projects", () => {
+  // The bar is one item per conversation: a1 (of /p) lands behind r, and
+  // a2 in front of q — no project contiguity to preserve.
+  assert.deepEqual(N.moveTab(split(), "a1", "r", true), ["q", "a2", "r", "a1"]);
+  assert.deepEqual(N.moveTab(split(), "a2", "q", false), ["a1", "a2", "q", "r"]);
+  // A drop next to itself, or an unknown id, is no change.
+  assert.equal(N.moveTab(split(), "a1", "a1", false), null);
+  assert.equal(N.moveTab(split(), "a1", "q", false), null);
+  assert.equal(N.moveTab(split(), "missing", "q", true), null);
+});
+
 check("a newest-first drop above a row is a registry move behind it", () => {
   // Dropdown shows [c b a]; dropping a above c must list [a c b].
   const tabs = [tab("a", "/p"), tab("b", "/p"), tab("c", "/p")];
