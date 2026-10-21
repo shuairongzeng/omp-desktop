@@ -141,9 +141,25 @@
   max-width: 320px; padding: 20px; text-align: center;
 }
 .remote-qr-title { font-weight: 600; }
+.remote-qr-title.copied { color: var(--accent); }
+.remote-qr-copy {
+  padding: 0; border: 1px solid transparent; border-radius: var(--r-2);
+  background: none; cursor: pointer; line-height: 0;
+}
+.remote-qr-copy:hover { border-color: var(--line-bright); background: var(--bg-hover); }
+.remote-qr-url {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-3);
+  cursor: pointer; padding: 2px 6px; border-radius: var(--r-1);
+}
+.remote-qr-url:hover { color: var(--fg); background: var(--bg-hover); }
 .remote-qr-svg { border-radius: var(--r-2); }
 .remote-qr-code { font-size: var(--d-text-sm); }
-.remote-qr-code code { font-family: var(--font-mono); color: var(--accent); letter-spacing: 1px; }
+.remote-qr-code code {
+  font-family: var(--font-mono); color: var(--accent); letter-spacing: 1px;
+  cursor: pointer; padding: 1px 6px; border-radius: var(--r-1);
+}
+.remote-qr-code code:hover { background: var(--bg-hover); }
 .remote-pair-modal { max-width: 360px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
 .remote-pair-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: var(--d-text); }
 .remote-pair-agent { color: var(--fg-3); font-size: var(--d-text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

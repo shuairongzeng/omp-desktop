@@ -179,6 +179,17 @@ function _SRR_Pair({ row, query }) {
   const [phones, setPhones] = React.useState(null);
   const [error, setError] = React.useState(null);
   const [st, setSt] = React.useState(null);
+  // Click-to-copy feedback for the pairing modal: "url" | "code" for 1.5s.
+  const [copied, setCopied] = React.useState(null);
+  const copyTimer = React.useRef(null);
+  React.useEffect(() => () => clearTimeout(copyTimer.current), []);
+  const copyPairText = (text, what) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(what);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(null), 1500);
+    }, () => setError("复制失败：剪贴板不可用"));
+  };
 
   React.useEffect(() => {
     window.OMP_BRIDGE?.remoteGetState().then(setSt);
@@ -205,6 +216,7 @@ function _SRR_Pair({ row, query }) {
   const pair = () => {
     setError(null);
     setQr(null);
+    setCopied(null);
     window.OMP_BRIDGE?.remoteSend({ t: "pair_begin" }).catch((e) => setError(String(e?.message || e)));
   };
 
@@ -243,10 +255,18 @@ function _SRR_Pair({ row, query }) {
       {qr && (
         <div className="bridge-scrim" onClick={() => setQr(null)}>
           <div className="bridge remote-qr-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="remote-qr-title">用手机相机扫码配对</div>
-            <_SRR_QrSvg text={qr.url} />
-            <div className="remote-qr-code">或输入配对码：<code>{qr.code}</code></div>
-            <div className="remote-hint">配对码 5 分钟内有效、只能用一次。打开链接后需要在这台电脑上点“允许”。</div>
+            <div className={`remote-qr-title${copied ? " copied" : ""}`}>
+              {copied === "url" ? "✓ 链接已复制，发给手机打开即可"
+                : copied === "code" ? "✓ 配对码已复制"
+                : "扫码配对，或复制链接发给手机"}
+            </div>
+            <button type="button" className="remote-qr-copy" title="点击复制配对链接"
+              onClick={() => copyPairText(qr.url, "url")}>
+              <_SRR_QrSvg text={qr.url} />
+            </button>
+            <div className="remote-qr-url" title="点击复制配对链接" onClick={() => copyPairText(qr.url, "url")}>{qr.url}</div>
+            <div className="remote-qr-code">配对码：<code title="点击复制" onClick={() => copyPairText(qr.code, "code")}>{qr.code}</code>（点码复制）</div>
+            <div className="remote-hint">配对码 5 分钟内有效、只能用一次。打开链接后需要在这台电脑上点“允许”。微信内收到链接请选择在浏览器中打开。</div>
             <Button onClick={() => setQr(null)}>关闭</Button>
           </div>
         </div>
