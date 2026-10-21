@@ -67,6 +67,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Sending a message no longer blacks out the whole window**: the new OS-notification module exported itself as `window.OMP_NOTIFY`, a name `live.js` had owned since the notify-coalescing change — live.js's later assignment overwrote the notification pair at load, so the first run-state flip (a send) threw `shouldNotify is not a function` and, with no error boundary, unmounted the entire React tree. The notification module now exports `window.OMP_OSNOTIFY`, and a new `test-global-names.mjs` scans every script the document loads and fails the suite if any `window.*` global is assigned by two files, so this class of accident dies in CI instead of on a user's Enter key
+
 - **Settings no longer blacks out the whole window when leaving the Remote section**: the pairing component's unmount cleanup referenced two state variables (`copied`, `copyTimer`) whose declarations were lost in a parallel-edit accident — leaving Remote threw a `ReferenceError`, and with no error boundary React unmounted the entire tree. Both declarations are restored; every section tab now switches cleanly (verified on desktop and phone by clicking through all 12 sections)
 
 - **Two phones in one room no longer receive each other's command replies**: the relay stamped every phone frame with its connection id but broadcast every response, so colliding per-phone request ids resolved against the wrong phone's pending call — responses now carry the origin id and are unicast to it (broadcast only as the legacy fallback)

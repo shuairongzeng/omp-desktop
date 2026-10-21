@@ -509,7 +509,7 @@
        init, so it must load before both. -->
   <script src="app/turn-status.js"></script>
   <!-- OS notifications (turn done / approval needed while unfocused):
-       dependency-free IIFE over window.OMP_NOTIFY; app-live.jsx reads it at
+       dependency-free IIFE over window.OMP_OSNOTIFY; app-live.jsx reads it at
        effect time, so it must load before app-live.jsx. -->
   <script src="app/notify.js"></script>
   <!-- Session behaviours (#37): reopen tabs, busy-close confirmation,

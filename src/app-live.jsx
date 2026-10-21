@@ -271,7 +271,7 @@ React.useEffect(() => {
   // holds the decision matrix; tested in tests/test-notify.mjs.
   const notifyPrevRef = React.useRef(new Map()); // sessionId → runState
   React.useEffect(() => {
-    const N = window.OMP_NOTIFY;
+    const N = window.OMP_OSNOTIFY;
     if (!N) return;
     const prev = notifyPrevRef.current;
     const next = new Map();

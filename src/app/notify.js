@@ -3,7 +3,7 @@
  * The pure half (`shouldNotify`) decides whether a run-state transition
  * deserves a desktop notification; the effect half (`fire`) talks to the
  * Tauri notification plugin (src-tauri: tauri-plugin-notification, capability
- * `notification:default`). Exposed as `window.OMP_NOTIFY` per the IIFE rule
+ * `notification:default`). Exposed as `window.OMP_OSNOTIFY` per the IIFE rule
  * for plain <script> tags; the App root wires the runState listener, this
  * file never touches live.js state.
  *
@@ -111,5 +111,5 @@
     }
   }
 
-  Object.assign(window, { OMP_NOTIFY: { shouldNotify, fire } });
+  Object.assign(window, { OMP_OSNOTIFY: { shouldNotify, fire } });
 })();

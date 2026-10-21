@@ -11,12 +11,12 @@ import { test } from "node:test";
 
 const src = readFileSync(new URL("../src/app/notify.js", import.meta.url), "utf8");
 
-/** The module against a fresh window stub; returns its OMP_NOTIFY export. */
+/** The module against a fresh window stub; returns its OMP_OSNOTIFY export. */
 function load() {
   const win = {};
   // eslint-disable-next-line no-new-func
   new Function("window", src)(win);
-  return win.OMP_NOTIFY;
+  return win.OMP_OSNOTIFY;
 }
 
 const T = load();
