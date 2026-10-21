@@ -3359,7 +3359,7 @@
     // windowed reply's cursor drives _handleResponse's window branch; a tab
     // with no file yet (fresh session) has no history to page: an empty
     // window, no round trip at all.
-    if (cmd.type === "get_messages") {
+    if (cmd.type === "get_messages" && window.__OMP_REMOTE__) {
       // The desktop executor resolves the tab's session file from its own
       // registry (always complete; the phone's registry copy can lag the
       // attach that triggered this fetch) and slices one window in Rust.
