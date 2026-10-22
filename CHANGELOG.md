@@ -67,6 +67,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The phone's browser panel now opens and navigates**: `browser_open_panel` carries a Tauri Channel for screencast frames that the phone's WebSocket shim could neither build nor receive — the open threw before a frame reached the wire, and every address submit answered "panel not open" behind an unchanged bar. The desktop's remote-agent now opens the panel with its own Channel and re-emits each frame as a `browser://frame/{session}` room event; the phone shim hands a stand-in Channel to the panel and feeds those events back into it, so the canvas paints and the address bar loads pages
+
+
 - **Sending a message no longer blacks out the whole window**: the new OS-notification module exported itself as `window.OMP_NOTIFY`, a name `live.js` had owned since the notify-coalescing change — live.js's later assignment overwrote the notification pair at load, so the first run-state flip (a send) threw `shouldNotify is not a function` and, with no error boundary, unmounted the entire React tree. The notification module now exports `window.OMP_OSNOTIFY`, and a new `test-global-names.mjs` scans every script the document loads and fails the suite if any `window.*` global is assigned by two files, so this class of accident dies in CI instead of on a user's Enter key
 
 - **Settings no longer blacks out the whole window when leaving the Remote section**: the pairing component's unmount cleanup referenced two state variables (`copied`, `copyTimer`) whose declarations were lost in a parallel-edit accident — leaving Remote threw a `ReferenceError`, and with no error boundary React unmounted the entire tree. Both declarations are restored; every section tab now switches cleanly (verified on desktop and phone by clicking through all 12 sections)

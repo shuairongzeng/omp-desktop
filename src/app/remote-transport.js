@@ -41,6 +41,11 @@
   let connDevice = null; // the room the live socket belongs to
   const pending = new Map(); // id → { resolve, reject, timer }
   const listeners = new Map(); // event name → Set<cb>
+  // Stand-in Channels (sessionId → Channel): the desktop opens the browser
+  // panel with its own Tauri Channel and re-emits every screencast frame as
+  // a `browser://frame/{sid}` evt; live.js's stand-in Channel is what the
+  // panel's onMessage sees. A session holds one panel at a time.
+  const panelChannels = new Map();
   let overlay = null;
   let remoteCaps = null; // the desktop's hello caps, null before one arrives
 
@@ -256,6 +261,18 @@
               : new Error("unsupported frame encoding")));
         } else p.reject(new Error(frame.error || "remote command failed"));
       } else if (frame.t === "evt") {
+        // Screencast frames (the desktop's open-panel Channel re-emitted as
+        // `browser://frame/{sid}`) belong to the stand-in Channel the panel
+        // holds, not to any event listener.
+        if (typeof frame.name === "string" && frame.name.startsWith("browser://frame/")) {
+          // `{bin}` is a base64 screencast frame (the desktop's Channel
+          // carries Raw binary, which JSON cannot): hand the screen the
+          // ArrayBuffer it expects; anything else rides verbatim.
+          const p = frame.payload;
+          const msg = p && typeof p.bin === "string" ? binToBuffer(p.bin) : p;
+          panelChannels.get(frame.name.slice("browser://frame/".length))?.onmessage?.(msg);
+          return;
+        }
         const set = listeners.get(frame.name);
         if (set) for (const cb of set) cb({ event: frame.name, payload: frame.payload });
       } else if (frame.t === "hello") {
@@ -371,6 +388,22 @@
     "remote_send",
   ]);
 
+  /** Stand-in for Tauri's IPC Channel: live.js builds one for the browser
+   *  panel's screencast callback. The wire carries only a placeholder; the
+   *  desktop's remote-agent opens the panel with its own real Channel and
+   *  re-emits each frame as a `browser://frame/{sid}` evt, which the frame
+   *  dispatch above feeds back into this object's onmessage. */
+  function binToBuffer(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes.buffer;
+  }
+
+  class Channel {
+    constructor() { this.onmessage = null; }
+  }
+
   function invoke(name, args) {
     if (name in NOOP) return Promise.resolve(NOOP[name]());
     if (UNSUPPORTED.has(name)) return Promise.reject(new Error(`${name} is unsupported on remote`));
@@ -378,6 +411,23 @@
     // can ever reach a desktop, so fail at once instead of hanging the
     // caller to the 30s timeout.
     if (!currentEntry()) return Promise.reject(new Error("not paired"));
+    // A Channel cannot cross the wire: the desktop's open-panel branch
+    // builds its own and ignores the placeholder.
+    let wire = args;
+    if (args && typeof args === "object") {
+      wire = { ...args };
+      for (const [k, v] of Object.entries(wire)) {
+        if (v instanceof Channel) wire[k] = { __remoteChannel: true };
+      }
+    }
+    if (name === "browser_open_panel" && args?.events instanceof Channel) {
+      panelChannels.set(args.sessionId, args.events);
+      frameSub(args.sessionId);
+    }
+    if (name === "browser_close_panel" && typeof args?.sessionId === "string") {
+      panelChannels.delete(args.sessionId);
+      frameUnsub(args.sessionId);
+    }
     return new Promise((resolve, reject) => {
       const id = ++seq;
       const timer = setTimeout(() => {
@@ -385,8 +435,24 @@
         reject(new Error(`${name}: timed out waiting for the desktop`));
       }, 30000);
       pending.set(id, { resolve, reject, timer });
-      sendFrame({ t: "cmd", id, name, args: args || {} });
+      sendFrame({ t: "cmd", id, name, args: wire || {} });
     });
+  }
+
+  // Frame-name sub/unsub, synchronous: the desktop's agent ignores these
+  // (screencast frames ride its own Channel, re-emitted as evt frames), but
+  // the wire bookkeeping mirrors every other subscription and the close
+  // must land before the caller's next line observes the socket.
+  function frameSub(sid) {
+    const name = `browser://frame/${sid}`;
+    if (listeners.has(name)) return;
+    listeners.set(name, new Set()); // frames route to the Channel, never here
+    sendFrame({ t: "cmd", id: ++seq, name: "sub", args: { name } });
+  }
+  function frameUnsub(sid) {
+    const name = `browser://frame/${sid}`;
+    if (!listeners.delete(name)) return;
+    sendFrame({ t: "cmd", id: ++seq, name: "unsub", args: { name } });
   }
 
   function listen(name, cb) {
@@ -409,7 +475,7 @@
   window.__TAURI__ = {
     __remoteShim: true,
     __remoteCaps: null,
-    core: { invoke },
+    core: { invoke, Channel },
     event: { listen },
   };
   window.__OMP_REMOTE__ = true;

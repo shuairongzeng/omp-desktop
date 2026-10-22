@@ -57,6 +57,13 @@ function makeEnv() {
     },
   };
 
+  // Tauri's IPC Channel: the agent opens the browser panel with one and
+  // re-emits the frames it receives. The stub only needs the callback slot.
+  class Channel {
+    constructor() { this.onmessage = null; }
+  }
+  core.Channel = Channel;
+
   const win = {
     __TAURI__: { core, event },
     OMP_BRIDGE: { _remoteHandlers: {} },
@@ -677,6 +684,94 @@ await check("non-agent://line events are never coalesced (evt rides immediately)
     { t: "evt", name: "tab_update", payload: { id: "t1", state: "done" } },
   ]);
   assert.equal(E.timerCount(), 0);
+});
+
+// ── browser panel channel (phone screencast) ──────────────────────────────
+
+await check("browser_open_panel swaps the phone's placeholder for the desktop's real Channel", async () => {
+  const E = load();
+  E.setInvoke(() => null);
+  E.phone({
+    t: "cmd", id: 90, from: "p1", name: "browser_open_panel",
+    args: { sessionId: "s1", width: 10, height: 10, dpr: 2, events: { __remoteChannel: true } },
+  });
+  await drain();
+  const call = E.invokeCalls.find((c) => c.name === "browser_open_panel");
+  assert.ok(call, "browser_open_panel was invoked");
+  assert.ok(call.args.events instanceof E.win.__TAURI__.core.Channel, "placeholder replaced by a real Channel");
+  // the rest of the phone's args ride verbatim
+  assert.equal(call.args.sessionId, "s1");
+  assert.equal(call.args.width, 10);
+  assert.equal(call.args.height, 10);
+  assert.equal(call.args.dpr, 2);
+  assert.deepEqual(lastRes(E), { t: "res", id: 90, ok: true, value: null, from: "p1" });
+});
+
+await check("every frame the desktop's Channel receives rides out as one browser://frame evt", async () => {
+  const E = load();
+  E.setInvoke(() => null);
+  E.phone({
+    t: "cmd", id: 91, name: "browser_open_panel",
+    args: { sessionId: "s1", width: 10, height: 10, dpr: 2, events: { __remoteChannel: true } },
+  });
+  await drain();
+  const ch = E.invokeCalls.find((c) => c.name === "browser_open_panel").args.events;
+  E.sent.length = 0;
+  ch.onmessage({ seq: 1, data: "x" });
+  assert.deepEqual(E.sent, [{ t: "evt", name: "browser://frame/s1", payload: { seq: 1, data: "x" } }]);
+});
+
+await check("browser_close_panel drops the mapping: the dead channel sends nothing more", async () => {
+  const E = load();
+  E.setInvoke(() => null);
+  E.phone({
+    t: "cmd", id: 92, name: "browser_open_panel",
+    args: { sessionId: "s1", events: { __remoteChannel: true } },
+  });
+  await drain();
+  const ch = E.invokeCalls.find((c) => c.name === "browser_open_panel").args.events;
+
+  E.phone({ t: "cmd", id: 93, name: "browser_close_panel", args: { sessionId: "s1" } });
+  await drain();
+  const close = E.invokeCalls.find((c) => c.name === "browser_close_panel");
+  assert.ok(close, "browser_close_panel was invoked");
+  assert.deepEqual(close.args, { sessionId: "s1" });
+  assert.deepEqual(lastRes(E), { t: "res", id: 93, ok: true, value: null });
+
+  E.sent.length = 0;
+  ch.onmessage({ seq: 2, data: "late" });
+  assert.deepEqual(E.sent, []);
+});
+
+await check("a browser://frame sub registers no Tauri listener and still acks", async () => {
+  const E = load();
+  E.phone({ t: "cmd", id: 94, from: "p1", name: "sub", args: { name: "browser://frame/s1" } });
+  await drain();
+  assert.ok(!E.subscribed().includes("browser://frame/s1"));
+  assert.deepEqual(lastRes(E), { t: "res", id: 94, ok: true, value: null, from: "p1" });
+
+  // and the matching unsub stays inert (nothing was ever counted)
+  E.phone({ t: "cmd", id: 95, from: "p1", name: "unsub", args: { name: "browser://frame/s1" } });
+  await drain();
+  assert.deepEqual(E.unlistens, []);
+  assert.deepEqual(lastRes(E), { t: "res", id: 95, ok: true, value: null, from: "p1" });
+});
+
+// ── binary screencast frames ───────────────────────────────────────────────
+await check("a binary channel message rides the evt as base64 and decodes back", async () => {
+  const E = load({});
+  E.phone({ t: "cmd", id: 90, name: "browser_open_panel", args: { sessionId: "s9", width: 1, height: 1, dpr: 1, events: { __remoteChannel: true } } });
+  await drain();
+  const ch = E.channels && E.channels.length ? E.channels[E.channels.length - 1] : null;
+  // harness may not expose channels; find it through the invoke stub instead
+  const call = E.invokeCalls.find(c => c.name === "browser_open_panel");
+  const channel = call.args.events;
+  const bytes = new Uint8Array([1, 2, 3, 250]);
+  channel.onmessage(bytes.buffer);
+  const evt = E.sent.filter(f => f.t === "evt" && f.name === "browser://frame/s9").pop();
+  assert.ok(evt.payload.bin);
+  const bin = atob(evt.payload.bin);
+  assert.deepEqual([...bin].map(c => c.charCodeAt(0)), [1, 2, 3, 250]);
 });
 
 // ── summary ────────────────────────────────────────────────────────────────

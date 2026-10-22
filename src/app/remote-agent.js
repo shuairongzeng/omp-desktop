@@ -52,6 +52,10 @@
   // name → { count, unlisten }; phoneId → Map(name → count)
   const active = new Map();
   const byPhone = new Map();
+  // sessionId → Channel: the open browser panel's screencast channel. The
+  // phone cannot receive Rust's frames itself (its shim has no Channel),
+  // so this webview opens the panel with its own and re-emits the frames.
+  const panelChannels = new Map();
 
   function send(frame) {
     window.__OMP_REMOTE_AGENT.sent = (window.__OMP_REMOTE_AGENT.sent || 0) + 1;
@@ -197,6 +201,11 @@
 
   function addSub(phoneId, name) {
     if (typeof name !== "string" || name.length > 200) return;
+    // Screencast frames never ride Tauri events: the desktop pushes them
+    // straight from the open panel's own Channel (`browser_open_panel`
+    // below), so a listener here would never fire. `delSub` is already
+    // inert for a name it has not counted, so an unsub stays harmless.
+    if (name.startsWith("browser://frame/")) return;
     let perPhone = byPhone.get(phoneId);
     if (!perPhone) { perPhone = new Map(); byPhone.set(phoneId, perPhone); }
     perPhone.set(name, (perPhone.get(name) || 0) + 1);
@@ -305,6 +314,51 @@
       if (name === "replay_events" && jsHandlers) {
         const replay = await jsHandlers.remoteReplay(args || {});
         respond(id, true, replay, frame.from);
+        return;
+      }
+
+      // The phone's browser panel calls `browser_open_panel` with a Tauri
+      // Channel, but nothing on the handset can receive Rust's frames: the
+      // Rust side pushes them into the Channel it was handed, which lives
+      // in THIS webview. So the phone sends a placeholder (`events`), we
+      // open the panel with a real Channel, and re-emit every frame as a
+      // room event the phone shim feeds back into its stand-in Channel.
+      if (name === "browser_open_panel") {
+        const sid = args?.sessionId;
+        const ch = new window.__TAURI__.core.Channel();
+        ch.onmessage = (msg) => {
+          // Liveness guard: a closed (or replaced) panel's channel must
+          // not keep pushing frames into the room.
+          if (panelChannels.get(sid) !== ch) return;
+          // Screencast frames ride the Channel as Raw binary (an
+          // ArrayBuffer) — JSON.stringify would flatten one to {}. Base64
+          // keeps the bytes intact across the room; the phone shim decodes
+          // them back into an ArrayBuffer for the screen.
+          let payload = msg ?? null;
+          if (msg instanceof ArrayBuffer || ArrayBuffer.isView(msg)) {
+            const bytes = ArrayBuffer.isView(msg) ? new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength) : new Uint8Array(msg);
+            let bin = "";
+            for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            payload = { bin: btoa(bin) };
+          }
+          send({ t: "evt", name: `browser://frame/${sid}`, payload });
+        };
+        panelChannels.set(sid, ch);
+        try {
+          const value = await invoke("browser_open_panel", { ...args, events: ch });
+          respond(id, true, value === undefined ? null : value, frame.from);
+        } catch (e) {
+          panelChannels.delete(sid);
+          respond(id, false, (e && e.message) || String(e), frame.from);
+        }
+        return;
+      }
+      // Closing drops the mapping; the channel's onmessage guard above then
+      // makes any in-flight frame from the dead panel a no-op.
+      if (name === "browser_close_panel") {
+        panelChannels.delete(args?.sessionId);
+        const value = await invoke("browser_close_panel", args || {});
+        respond(id, true, value === undefined ? null : value, frame.from);
         return;
       }
 

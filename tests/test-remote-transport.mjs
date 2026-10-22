@@ -836,6 +836,67 @@ await check("the pair connection URL carries the phone's friendly name (UA-Data 
   assert.equal(E2.sockets[0].url, "wss://relay.example.com/ws?role=phone&device=d1&token=t1&name=iPhone");
 });
 
+// ── browser panel channel (phone screencast) ──────────────────────────────
+// The desktop opens the panel with its own Tauri Channel and re-emits every
+// screencast frame as a `browser://frame/{sid}` evt; the shim's stand-in
+// Channel is what live.js hands to the panel, so frames must land on its
+// onmessage — and the stand-in must ride the wire as a plain placeholder.
+await check("browser_open_panel: the Channel arg rides as a placeholder and subscribes the frame name", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const T = E.win.__TAURI__;
+  const sock = E.sockets[0];
+  sock.open();
+  sock.sent.length = 0;
+  const ch = new T.core.Channel();
+  const got = [];
+  ch.onmessage = (m) => got.push(m);
+  const p = T.core.invoke("browser_open_panel", { sessionId: "s1", width: 10, height: 10, dpr: 2, events: ch });
+  const cmd = sock.sent.find(f => f.t === "cmd" && f.name === "browser_open_panel");
+  assert.deepEqual(cmd.args.events, { __remoteChannel: true });
+  assert.deepEqual(sock.sent.filter(f => f.t === "cmd" && f.name === "sub").map(f => f.args.name), ["browser://frame/s1"]);
+  sock.message({ t: "res", id: cmd.id, ok: true, value: null });
+  assert.equal(await p, null);
+  // a frame evt reaches the stand-in Channel, not the event listeners
+  sock.message({ t: "evt", name: "browser://frame/s1", payload: { seq: 3, data: "abc" } });
+  assert.deepEqual(got, [{ seq: 3, data: "abc" }]);
+  // closing unsubscribes the frame name and detaches the channel
+  const pc = T.core.invoke("browser_close_panel", { sessionId: "s1" });
+  const cc = sock.sent.find(f => f.t === "cmd" && f.name === "browser_close_panel");
+  assert.ok(cc);
+  assert.deepEqual(sock.sent.filter(f => f.t === "cmd" && f.name === "unsub").map(f => f.args.name), ["browser://frame/s1"]);
+  sock.message({ t: "res", id: cc.id, ok: true, value: null });
+  await pc;
+  sock.message({ t: "evt", name: "browser://frame/s1", payload: { seq: 4 } });
+  assert.deepEqual(got, [{ seq: 3, data: "abc" }]);
+});
+await check("a frame evt for an unknown session reaches no channel", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const sock = E.sockets[0];
+  sock.open();
+  sock.message({ t: "evt", name: "browser://frame/zzz", payload: { seq: 1 } });
+  assert.equal(sock.sent.filter(f => f.t === "cmd" && f.name === "unsub").length, 0);
+});
+
+await check("a base64 frame evt reaches the stand-in Channel as an ArrayBuffer", async () => {
+  const E = makeEnv({ auth: { device: "d1", token: "t1" } });
+  const T = E.win.__TAURI__;
+  const sock = E.sockets[0];
+  sock.open();
+  const ch = new T.core.Channel();
+  const got = [];
+  ch.onmessage = (m) => got.push(m);
+  const cmd = sock.sent.find(f => f.t === "cmd" && f.name === "sub") ? null : null;
+  const p = T.core.invoke("browser_open_panel", { sessionId: "s2", width: 1, height: 1, dpr: 1, events: ch });
+  const c = sock.sent.find(f => f.t === "cmd" && f.name === "browser_open_panel");
+  sock.message({ t: "res", id: c.id, ok: true, value: null });
+  await p;
+  // base64 of [9, 8, 7]
+  sock.message({ t: "evt", name: "browser://frame/s2", payload: { bin: E.win.atob ? btoa(String.fromCharCode(9, 8, 7)) : btoa(String.fromCharCode(9, 8, 7)) } });
+  assert.equal(got.length, 1);
+  assert.ok(got[0] instanceof ArrayBuffer || got[0] instanceof E.win.ArrayBuffer || (got[0] && got[0].byteLength === 3));
+  assert.deepEqual([...new Uint8Array(got[0])], [9, 8, 7]);
+});
+
 // ── summary ────────────────────────────────────────────────────────────────
 
 if (failures.length) {
