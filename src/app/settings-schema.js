@@ -168,6 +168,7 @@
       ] },
       { name: "Links", rows: [
         tweak("browserLocalhostInPanel", "toggle", "Open localhost links in the panel", "A click on a `localhost` link in the chat opens it here instead of your system browser.", "dev server url"),
+        tweak("browserAutoOpenOnAgentUse", "toggle", "Show the panel when the agent browses", "The tab's agent driving its browser opens the panel by itself, on desktop and on a paired phone.", "browser use agent"),
       ] },
     ] },
     { id: "agent", icon: "agent", title: "Agent", blurb: "Which omp profile new tabs use and how omp behaves in them.", groups: [

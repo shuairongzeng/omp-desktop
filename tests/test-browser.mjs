@@ -591,4 +591,13 @@ check("pathMenu: browsers sharing a name are told apart by their folder", () => 
   ]);
 });
 
+// ── agent-use auto-open (browser://agent-use) ──────────────────────────────
+check("agentUseOpens: on by default, never while already open", () => {
+  assert.equal(B.agentUseOpens(false, undefined), true);
+  assert.equal(B.agentUseOpens(false, true), true);
+  assert.equal(B.agentUseOpens(true, true), false); // open already: no-op
+  assert.equal(B.agentUseOpens(false, false), false); // tweak off
+  assert.equal(B.agentUseOpens(true, false), false);
+});
+
 console.log(`test-browser: ${passed} checks passed`);

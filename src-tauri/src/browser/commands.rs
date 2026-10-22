@@ -4,6 +4,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Manager, State};
@@ -20,6 +21,24 @@ const PANEL_CLOSED: &str = "panel closed";
 
 /// What an open that a newer open of the same session superseded says.
 const REOPENED: &str = "panel reopened";
+
+/// Silence that ends an agent browser-use episode: the next report after a
+/// gap this long tells the frontend to open the panel again.
+const AGENT_USE_QUIET: Duration = Duration::from_secs(30);
+
+/// Say whether `now` starts a new agent browser-use episode, and if so start
+/// it.
+///
+/// One episode is one stretch of the agent working in a session's browser:
+/// the frontend is told once when it begins, not once per report, and a gap
+/// of `quiet` without reports makes the next one a new episode.
+fn episode_due(last: &mut Option<Instant>, now: Instant, quiet: Duration) -> bool {
+    let due = last.is_none_or(|previous| now.saturating_duration_since(previous) >= quiet);
+    if due {
+        *last = Some(now);
+    }
+    due
+}
 
 /// One open's sink: its messages reach the panel until a newer open of the
 /// same session supersedes it. A restart reopens on the same webview
@@ -76,6 +95,9 @@ pub(super) struct PanelSlot {
     /// What the proxy last reported (`tap.rs`); a panel opened later starts
     /// there.
     last_agent_target: Option<String>,
+    /// When the agent's browser use last started an episode (see
+    /// [`episode_due`]); `None` before the first report.
+    last_agent_use: Option<Instant>,
 }
 
 impl PanelSlot {
@@ -86,12 +108,17 @@ impl PanelSlot {
     }
 
     /// The agent worked in page `target` (reported from a proxy thread):
-    /// remember it, and let the open view follow.
-    pub fn agent_worked_in(&mut self, target: &str) {
+    /// remember it, let the open view follow, and say whether the frontend
+    /// must be told to open the panel — only while it is closed, and only
+    /// once per episode ([`episode_due`]).
+    #[must_use]
+    pub fn agent_worked_in(&mut self, target: &str) -> bool {
         target.clone_into(self.last_agent_target.get_or_insert_with(String::new));
         if let Some(view) = &self.view {
             view.follow_agent(target);
+            return false;
         }
+        episode_due(&mut self.last_agent_use, Instant::now(), AGENT_USE_QUIET)
     }
 }
 
@@ -372,4 +399,120 @@ pub async fn browser_scroll_to(
     app: AppHandle,
 ) -> Result<(), String> {
     with_view(app, session_id, move |v| v.scroll_to(&rect)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_report_starts_an_episode() {
+        let mut last = None;
+        let now = Instant::now();
+        assert!(episode_due(&mut last, now, AGENT_USE_QUIET));
+        assert_eq!(last, Some(now), "the episode starts where it was reported");
+    }
+
+    #[test]
+    fn reports_quietly_inside_the_window_are_the_same_episode() {
+        let start = Instant::now();
+        let mut last = None;
+        assert!(episode_due(&mut last, start, AGENT_USE_QUIET));
+        assert!(!episode_due(
+            &mut last,
+            start + Duration::from_secs(29),
+            AGENT_USE_QUIET
+        ));
+        assert_eq!(
+            last,
+            Some(start),
+            "a report inside the window does not move the episode's start"
+        );
+        assert!(
+            episode_due(&mut last, start + AGENT_USE_QUIET, AGENT_USE_QUIET),
+            "silence of exactly `quiet` starts a new episode"
+        );
+        assert_eq!(last, Some(start + AGENT_USE_QUIET));
+    }
+
+    #[test]
+    fn a_long_stretch_of_reports_is_one_event_per_quiet_window() {
+        let start = Instant::now();
+        let mut last = None;
+        let mut episodes = 0;
+        for second in 0..120 {
+            if episode_due(
+                &mut last,
+                start + Duration::from_secs(second),
+                AGENT_USE_QUIET,
+            ) {
+                episodes += 1;
+            }
+        }
+        assert_eq!(episodes, 4, "seconds 0, 30, 60 and 90 started one each");
+    }
+
+    #[test]
+    fn a_closed_panel_is_offered_once_per_episode() {
+        let mut slot = PanelSlot::default();
+        assert!(slot.agent_worked_in("page-a"));
+        assert_eq!(slot.last_agent_target.as_deref(), Some("page-a"));
+        assert!(!slot.agent_worked_in("page-b"));
+        assert_eq!(
+            slot.last_agent_target.as_deref(),
+            Some("page-b"),
+            "a report inside the episode is still recorded"
+        );
+        slot.last_agent_use = Some(
+            Instant::now()
+                .checked_sub(AGENT_USE_QUIET + Duration::from_secs(1))
+                .expect("a long time ago"),
+        );
+        assert!(
+            slot.agent_worked_in("page-c"),
+            "silence started a new episode"
+        );
+        assert_eq!(slot.last_agent_target.as_deref(), Some("page-c"));
+    }
+
+    /// Records nothing; a view only needs a sink to connect to.
+    struct Silent;
+
+    impl BrowserEmit for Silent {
+        fn frame(&self, _: &str, _: &Frame) {}
+        fn tabs(&self, _: &str, _: &[TabInfo]) {}
+        fn state(&self, _: &str, _: &ViewState) {}
+        fn pick(&self, _: &str, _: &Pick) {}
+    }
+
+    #[test]
+    fn an_open_panel_follows_the_agent_but_is_never_offered() {
+        // A browser stand-in: no Chromium on the far end, and a view that
+        // never opened follows nothing, so no CDP round trip here.
+        let broker = crate::browser::broker::fake::fake_browser(|request| {
+            Some(vec![crate::browser::tests::cdp_result(
+                request,
+                serde_json::json!({}),
+            )])
+        });
+        let view = Arc::new(
+            View::connect("s1", &broker, Arc::new(Silent)).expect("a view on the stand-in"),
+        );
+        let mut slot = PanelSlot {
+            view: Some(Arc::clone(&view)),
+            ..PanelSlot::default()
+        };
+        assert!(!slot.agent_worked_in("page-a"));
+        assert!(!slot.agent_worked_in("page-b"));
+        assert_eq!(
+            slot.last_agent_target.as_deref(),
+            Some("page-b"),
+            "the open panel still records the agent's page"
+        );
+        assert_eq!(
+            slot.last_agent_use, None,
+            "an open panel starts no episode: the user already sees it"
+        );
+        view.close();
+    }
 }

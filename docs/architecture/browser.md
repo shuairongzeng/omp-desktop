@@ -205,6 +205,28 @@ Saved chips are per desktop tab, held by `useBrowser` (the panel draws their mar
 
 Where a submit goes is decided on the typed draft (`OMP_SLASH.routeSubmit`), before annotations merge in; a command carries no chips. Merging never changes that classification, so `live.js` `steer` / `followUp` classify the text they send as for any other caller. Page-derived fields are labeled as untrusted data and wrapped with `OMP_MARKDOWN.fenceCode`, using a backtick fence longer than any run inside those fields. `/skill:` tokens and line-leading slash commands are escaped in the page fields and in the user's comment (which stays outside the fence) because omp's command parser does not honor Markdown fences. Every `@` in the page fields (URL, selector, tag, text, HTML) becomes `\@`, since omp reads each `@path` mention (at the start or after whitespace, a bracket, a quote or a backtick) into the turn regardless of fences; the user's comment keeps its `@`, which may be a real file mention.
 
+## Agent-use auto-open
+
+The proxy tap's follow reports name the page the agent works in. While the
+panel is closed they only filled the slot's follow memory — the webview never
+learned the agent was browsing. `PanelSlot::agent_worked_in` (commands.rs) now
+also answers "this report starts an episode the user has not seen": true only
+while no view is open and at least `AGENT_USE_QUIET` (30 s) passed since the
+previous such report, so one agent browsing spell emits one
+`browser://agent-use {sessionId}` Tauri event (emitted outside the slot lock,
+from the proxy callback in mod.rs) instead of one per command. A user who
+closes the panel mid-episode is not nagged back; the next spell (silence, then
+a report) opens it again.
+
+Frontend: `useBrowser` listens to the event for the active tab and switches
+the side column to the panel when Settings → Browser's
+`browserAutoOpenOnAgentUse` is on (`OMP_BROWSER.agentUseOpens` decides:
+enabled and not already open). The phone gets the same report as
+the same `browser://agent-use` name over the room's evt channel (payload carries the sessionId) (the desktop
+agent forwards any subscribed event name) and opens its panel unconditionally
+— a remote user watches the agent browse. Background desktop tabs never open
+themselves: the listener compares the report's sessionId to the hook's own.
+
 ## Lifecycle
 
 - Startup prepares `<app cache>/browser/<pid>/`. Unix directories are created with `0700`, overlay and pid files with `0600` and exclusive creation (`instance.rs::create_private_file`); session ids are restricted before becoming filenames. The cache root and instance path must be real directories, not symlinks. A directory with the app's own pid that already exists is a crashed earlier run's: its browsers are reaped and it is recreated empty. Each launch attempt uses `profiles/<session_id>-<n>` and records its browser PID next to the profile as `<profile>.pid`, removed after reaping.

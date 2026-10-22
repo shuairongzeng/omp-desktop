@@ -27,6 +27,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use tauri::{AppHandle, Emitter};
+
 use crate::private_fs::private_dirs;
 use broker::Broker;
 use process::{prepare_instance_dir, prune_dead, remove_dir_retrying, write_overlay, Chromium};
@@ -42,6 +44,17 @@ const MAX_ID_LEN: usize = 64;
 /// What a call for a session that was never allocated a browser (or no
 /// longer has one) says. The caller knows the session it named.
 const NO_BROWSER: &str = "no browser for session";
+
+/// The frontend event telling it the agent works in a session's browser
+/// while its panel is closed; the desktop opens the panel on it.
+const AGENT_USE_EVENT: &str = "browser://agent-use";
+
+/// [`AGENT_USE_EVENT`]'s payload.
+#[derive(Clone, serde::Serialize)]
+struct AgentUsePayload<'a> {
+    #[serde(rename = "sessionId")]
+    session_id: &'a str,
+}
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -184,6 +197,11 @@ pub struct BrowserManager {
     /// then [`allocate`](Self::allocate) always fails.
     instance: Result<Instance, String>,
     state: Mutex<State>,
+    /// The app handle [`allocate`](Self::allocate) tells
+    /// [`AGENT_USE_EVENT`] through, once [`attach_app`](Self::attach_app)
+    /// gave it one; headless managers (the tests') have none and stay
+    /// silent.
+    app: Mutex<Option<AppHandle>>,
 }
 
 impl BrowserManager {
@@ -198,6 +216,7 @@ impl BrowserManager {
         Ok(Self {
             instance: Ok(Instance { dir, settings }),
             state: Mutex::new(State::default()),
+            app: Mutex::new(None),
         })
     }
 
@@ -208,7 +227,16 @@ impl BrowserManager {
         Self {
             instance: Err(reason),
             state: Mutex::new(State::default()),
+            app: Mutex::new(None),
         }
+    }
+
+    /// Give the manager the app handle it tells the frontend through: the
+    /// proxy then emits [`AGENT_USE_EVENT`] when the agent works in a
+    /// session's browser while its panel is closed. A manager without one
+    /// (the tests') only records the reports.
+    pub fn attach_app(&self, app: AppHandle) {
+        *lock(&self.app) = Some(app);
     }
 
     /// Delete what crashed earlier app runs left under the root, after
@@ -253,9 +281,25 @@ impl BrowserManager {
         let launcher = Arc::clone(&slot);
         let view = Arc::new(commands::ViewSlot::default());
         let reporter = Arc::clone(&view);
+        let app = lock(&self.app).clone();
+        // Owned by the proxy's tap threads until the proxy is dropped.
+        let reported_id = session_id.to_owned();
         let proxy = Proxy::bind(
             Arc::new(move || launcher.ensure()),
-            Arc::new(move |target| lock(&reporter).agent_worked_in(target)),
+            Arc::new(move |target| {
+                let due = lock(&reporter).agent_worked_in(target);
+                // Outside the slot lock: the frontend must not wait on it.
+                if due {
+                    if let Some(app) = &app {
+                        let _ = app.emit(
+                            AGENT_USE_EVENT,
+                            AgentUsePayload {
+                                session_id: &reported_id,
+                            },
+                        );
+                    }
+                }
+            }),
         )
         .map_err(|e| format!("browser proxy: {e}"))?;
         let overlay = instance.dir.join(format!("{session_id}.yml"));

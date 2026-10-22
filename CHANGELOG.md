@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **The browser panel opens by itself when the tab's agent starts browsing** — Rust emits one `browser://agent-use` event per episode (a report after ≥30 s of silence, and only while the panel is closed), the desktop switches the active tab's side column to the panel and a paired phone opens its panel on the same report over the room, so the agent's browsing is visible wherever you are; Settings → Browser → "Show the panel when the agent browses" turns it off
+
 - **Notifications when a tab needs you** (Settings → Session): a turn finishing or a tool approval arriving fires an OS notification while the window is hidden or the tab is in the background (tauri-plugin-notification, `app/notify.js` — `notifyDone`/`notifyAsk` toggles, both on by default), and the window title now carries a "(N 待审批)" count across all tabs, not just the active one
 
 - **Cross-session prompt history**: prompts are now archived to `prompt-history.json` (newest first, deduplicated, 200 cap) — the prompt history modal (Ctrl+↑) gains a "this tab / all sessions" toggle, so a prompt polished in one project is recallable in any other, across restarts

@@ -4738,6 +4738,11 @@
     },
     /** `{ok}` | `{ok: false, error}` — a refused load (connection refused …)
      *  is the user's page, not a bridge fault, so nothing is logged. */
+    /** Subscribe to a Tauri event (desktop: the app's own; phone: the room's
+     *  evt channel through the shim). Resolves to the unlisten fn. */
+    eventListen(name, cb) {
+      return window.__TAURI__.event.listen(name, cb);
+    },
     browserNavigate(sid, url) {
       return _invokeResult("browser_navigate", { sessionId: sid, url });
     },

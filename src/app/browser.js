@@ -363,12 +363,20 @@
     });
   }
 
+  /** Whether an agent-use report should open the panel: the tweak is on
+   *  and the panel is not already open. The hook gates the session (the
+   *  report names the tab the agent worked in) and Rust gates the episode. */
+  function agentUseOpens(open, enabled) {
+    return enabled !== false && !open;
+  }
+
   window.OMP_BROWSER = {
     MAX_IMAGES,
     normalizeUrl,
     browserCommand,
     localUrl,
     linkClick,
+    agentUseOpens,
     annotationText,
     chipLabel,
     mergeIntoMessage,

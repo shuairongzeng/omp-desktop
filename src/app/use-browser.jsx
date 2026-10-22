@@ -185,6 +185,30 @@ function useBrowser({ bridge, activeSessionId, sessionIds, open: shown, setOpen,
     };
   }, [bridge, sid, open, setAnnotate, showAnnotate]);
 
+  // The tab's agent started driving its browser (Rust `browser://agent-use`,
+  // episode-gated there): show it. Desktop: the active tab's side column
+  // switches to the panel when the tweak is on. Phone (remote shim): the
+  // same report rides the room as `browser://agent-use/{sid}` and opens the
+  // handset's panel, so a remote user watches the agent browse too.
+  React.useEffect(() => {
+    if (!bridge || !sid) return undefined;
+    let live = true;
+    let off = null;
+    // One event name on both sides: the desktop's own Tauri event, and the
+    // room's evt frame of it (the phone's shim subscribes like any other
+    // event). The payload names the tab, so a background tab's report never
+    // opens this one. The phone opens unconditionally — a remote user wants
+    // to watch; the desktop honours the Settings toggle and stays put when
+    // the panel is already open.
+    bridge.eventListen("browser://agent-use", (ev) => {
+      if (!live || ev?.payload?.sessionId !== sid) return;
+      if (window.__OMP_REMOTE__ || _UB.agentUseOpens(openRef.current, tweaks?.browserAutoOpenOnAgentUse)) setOpen(true);
+    }).then((fn) => { if (live) off = fn; else fn(); });
+    return () => { live = false; if (off) off(); };
+  }, [bridge, sid, setOpen, tweaks?.browserAutoOpenOnAgentUse]);
+  const openRef = React.useRef(shown);
+  openRef.current = shown;
+
   const close = React.useCallback(() => setOpen(false), [setOpen]);
 
   // A plain click on a localhost link in the chat opens it here (when the

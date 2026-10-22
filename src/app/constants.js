@@ -14,6 +14,9 @@
   // `browserWidth`: px of the browser panel, 0 = half the stage (OMP_BROWSER.clampWidth).
   // `sidebarWidth` / `splitWidth` / `railWidth` / `treeWidth`: px of those
   // columns, 0 = the default (OMP_LAYOUT_WIDTHS.fit).
+  // `browserAutoOpenOnAgentUse`: the panel opens by itself when the tab's
+  // agent starts driving its browser (Rust emits `browser://agent-use`);
+  // off keeps the panel exactly where the user left it.
   // `browserLocalhostInPanel`: a plain click on a localhost chat link opens
   // the panel instead of the system browser. (The Chromium path is a Rust
   // setting, browser.json — never a tweak.)
@@ -63,6 +66,7 @@
     "terminalScrollback": 5000,
     "browserWidth": 0,
     "browserLocalhostInPanel": true,
+    "browserAutoOpenOnAgentUse": true,
     "submitKey": "enter",
     "pasteCollapseLines": 5,
     "restoreTabs": true,

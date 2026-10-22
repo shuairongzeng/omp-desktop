@@ -351,6 +351,7 @@ test("hook: a stale open completion cannot release the newer tab's queued resize
   window.OMP_IMAGES.normalizeImage = async (img) => img; // DOM canvas work, covered by the app
   const useBrowser = runInNewContext(source("src/app/use-browser.jsx") + "\nuseBrowser", { window, React });
   const bridge = {
+    eventListen: () => Promise.resolve(() => {}),
     browserOpenPanel(sid, _w, _h, _dpr, onMessage) {
       channels.set(sid, onMessage);
       picks.set(sid, (value) => onMessage({ type: "pick", value }));
@@ -458,13 +459,45 @@ test("hook: a stale open completion cannot release the newer tab's queued resize
   assert.deepEqual(closed, ["old", "new"]);
 });
 
+test("hook: an agent-use report opens the active tab's panel, gated by the tweak and the session", async () => {
+  const { React, render, unmount } = fakeReact();
+  const window = { OMP_BROWSER_SCREEN: { createScreen: () => ({ frame() {}, destroy() {}, size: () => ({ width: 1, height: 1, dpr: 1 }) }) } };
+  loadHelpers(window);
+  const useBrowser = runInNewContext(source("src/app/use-browser.jsx") + "\nuseBrowser", { window, React });
+  const listeners = new Map();
+  const bridge = { eventListen: (name, cb) => { listeners.set(name, cb); return Promise.resolve(() => listeners.delete(name)); } };
+  const openBy = {};
+  const show = (tweaks) => render(() => useBrowser({
+    bridge, activeSessionId: "s", sessionIds: ["s"], tweaks,
+    open: Boolean(openBy.s), setOpen: (on) => { openBy.s = on; },
+  }));
+  show({});
+  await Promise.resolve(); // the effect's eventListen promise installs the cb
+  const fire = (sid) => listeners.get("browser://agent-use")({ payload: { sessionId: sid } });
+  fire("s");
+  assert.equal(openBy.s, true, "the active tab's report opens its panel");
+  unmount();
+  openBy.s = false;
+  show({ browserAutoOpenOnAgentUse: false });
+  await Promise.resolve();
+  fire("s");
+  assert.equal(openBy.s, false, "the tweak off keeps the panel where the user left it");
+  unmount();
+  openBy.s = false;
+  show({});
+  await Promise.resolve();
+  fire("another-tab");
+  assert.equal(openBy.s, false, "another tab's report never opens this one");
+  unmount();
+});
+
 test("hook: a localhost chat link opens in the panel; a modifier click goes to the system browser", () => {
   const { React, render } = fakeReact();
   const window = { OMP_BROWSER_SCREEN: { createScreen: () => ({ frame() {}, destroy() {}, size: () => ({ width: 1, height: 1, dpr: 1 }) }) } };
   loadHelpers(window);
   const useBrowser = runInNewContext(source("src/app/use-browser.jsx") + "\nuseBrowser", { window, React });
   const external = [];
-  const bridge = { openExternalUrl: (url) => { external.push(url); return Promise.resolve({ ok: true }); } };
+  const bridge = { eventListen: () => Promise.resolve(() => {}), openExternalUrl: (url) => { external.push(url); return Promise.resolve({ ok: true }); } };
   const openBy = {};
   const show = (tweaks) => render(() => useBrowser({
     bridge, activeSessionId: "s", sessionIds: ["s"], tweaks,

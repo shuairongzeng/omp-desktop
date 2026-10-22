@@ -1522,6 +1522,8 @@ fn setup(app: &tauri::App) {
             eprintln!("[omp-desktop] managed browser disabled: {reason}");
             browser::BrowserManager::unavailable(reason)
         });
+    // What tells the frontend the agent works in a closed panel's browser.
+    browser.attach_app(app.handle().clone());
     app.manage(browser);
     // What crashed earlier runs left under the browser root: reaping their
     // browsers can take seconds, so not on the main thread.
