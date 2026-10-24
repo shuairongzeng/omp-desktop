@@ -21,7 +21,7 @@ const {
   Icon, ChatView, Composer, CommandBridge, WindowChrome, TabBar, TabMenu, SubagentPane, ProjectSidebar, EmptyWorkspace,
   StatusBar, AmbientRail, ConversationTree, PlanKanban, HistoryModal, GitBrowser, FilePreview, ApprovalRulesPanel, UsageStatsPanel, PromptHistoryModal, UpdateModal, useTweaks, QuotePopover,
   SettingsPage, ConfirmCloseDialog, RemotePairDialog,
-  useWidgets, WidgetCard, WidgetErrorCard, WidgetApprovalCard, WidgetBoundary,
+  useWidgets, WidgetCard, WidgetErrorCard, WidgetApprovalCard, WidgetBoundary, PanelBoundary, AppBoundary,
   TWEAK_DEFAULTS, NULL_MODEL, EMPTY_PROJECT, DEFAULT_PROFILE_ID,
   INTENT_FRAMING, APPROVAL_PROMPT,
   useBridgeSnapshot, useThemeEffect, useBackgroundImage, useSubagentManager, useUpdater, useConversationTree, useGoalMode, useTerminal, TerminalPanels, timeNow,
@@ -1135,6 +1135,7 @@ React.useEffect(() => {
       <div className="app-backdrop" />
       <div className="app">
         <div className={`window scanlines ${showSplit ? "is-split" : ""}`}>
+          <PanelBoundary label="titlebar">
           <WindowChrome
             project={activeProject}
             onCmd={() => setBridgeOpen(true)}
@@ -1152,6 +1153,8 @@ React.useEffect(() => {
             sessions={sessions}
             activeId={stab.active ? null : activeSessionId}
           />
+          </PanelBoundary>
+          <PanelBoundary label="tabs">
           <TabBar
             profiles={profiles}
             projects={sessions}
@@ -1174,9 +1177,11 @@ React.useEffect(() => {
             onSelectSettings={() => openSettings()}
             onCloseSettings={closeSettings}
           />
+          </PanelBoundary>
 
           <div ref={workspaceRef} className="workspace" style={panes.style}>
             {showSidebar && (
+              <PanelBoundary label="sidebar">
               <ProjectSidebar
                 tabs={sessions}
                 activeId={stab.active ? null : activeSessionId}
@@ -1204,13 +1209,15 @@ React.useEffect(() => {
                 onDeleteProfile={handleDeleteProfile}
                 onSetStartupProfile={handleSetStartupProfile}
               />
+              </PanelBoundary>
             )}
             {showSidebar && <ResizeHandle className="at-sidebar" {...panes.handle("sidebar")} />}
             <div ref={stageRef} className={`stage ${side === "browser" ? `with-browser${browserFull ? " browser-full" : ""}` : sideRail ? `with-${sideRail}` : ""}`}>
               <main className="session">
                 {noTab ? (
-                  <EmptyWorkspace notes={workspaceNotes} />
+                  <PanelBoundary label="empty workspace"><EmptyWorkspace notes={workspaceNotes} /></PanelBoundary>
                 ) : (<>
+                  <PanelBoundary label="chat" resetKey={activeSessionId}>
                   <ChatView key={activeSessionId} messages={messages}
                     planMode={plan.mode}
                     annotations={plan.annotations}
@@ -1240,6 +1247,8 @@ React.useEffect(() => {
                     onLoadOlder={handleLoadOlder}
                   />
                   <TerminalPanels sessions={sessions} activeId={planKey} terminal={terminal} />
+                  </PanelBoundary>
+                  <PanelBoundary label="composer" resetKey={activeSessionId}>
                   <Composer
                     sessionId={planKey}
                     sessionIds={sessionIds}
@@ -1283,12 +1292,14 @@ React.useEffect(() => {
                     exitReason={exitReason}
                     onRestart={() => bridge?.restartSession?.().then(r => { if (r && r.ok === false) console.error("[app] restart failed:", r.error); })}
                   />
+                  </PanelBoundary>
                 </>)}
               </main>
 
               {splitShown && <ResizeHandle className="at-split" {...panes.handle("split")} />}
               {sideRail && <ResizeHandle key={sideRail} className="at-side" {...panes.handle(sideRail)} />}
               {showSplit && (
+                <PanelBoundary label="subagents">
                 <SubagentPane
                   state={subagents}
                   filter={subagentUi.filter} onFilter={subagentUi.setFilter}
@@ -1302,11 +1313,15 @@ React.useEffect(() => {
                   onJumpToCall={subagentUi.jumpToCall}
                   submitKey={t.submitKey}
                 />
+                </PanelBoundary>
               )}
 
               {side === "browser" ? (
+                <PanelBoundary label="browser">
                 <BrowserDock ui={browser} stageRef={stageRef} room={panes.browserRoom} />
+                </PanelBoundary>
               ) : side === "tree" ? (
+                <PanelBoundary label="tree">
                 <ConversationTree
                   model={convTree.model} currentFile={convTree.currentFile} error={convTree.error}
                   loading={convTree.loading} treeKey={convTree.key} now={convTree.now} since={convTree.since}
@@ -1314,7 +1329,9 @@ React.useEffect(() => {
                   onRefresh={convTree.refresh} onClose={() => setSide("rail")}
                   onBranch={convTree.branch} onFork={convTree.fork} onOpenFile={convTree.openFile}
                 />
+                </PanelBoundary>
               ) : showRail && (
+                <PanelBoundary label="rail">
                 <AmbientRail
                   ctx={liveCtx}
                   activity={activity}
@@ -1358,16 +1375,20 @@ React.useEffect(() => {
                     </WidgetBoundary>
                   ))}
                 </AmbientRail>
+                </PanelBoundary>
               )}
               {settingsCtx && (
                 <div className="st-host" hidden={!stab.active}>
+                  <PanelBoundary label="settings">
                   <SettingsPage ctx={settingsCtx} onClose={closeSettings} />
+                  </PanelBoundary>
                 </div>
               )}
             </div>
           </div>
           {/* Full window width under the workspace: no side column (rail,
               tree, browser panel, subagent split) ever narrows it. */}
+          <PanelBoundary label="status">
           <StatusBar
             ctx={liveCtx}
             todoDone={todoCounts.done}
@@ -1389,19 +1410,23 @@ React.useEffect(() => {
             showRailToggle={t.layout === "focus"}
             onToggleRail={toggleRail}
           />
+          </PanelBoundary>
         </div>
       </div>
 
       {planOpen && (
+        <PanelBoundary label="plan kanban">
         <PlanKanban
           kanban={kanban}
           planMeta={planMeta}
           onClose={() => setPlanOpen(false)}
           onAbort={handleAbort}
         />
+        </PanelBoundary>
       )}
 
       {historyOpen && (
+        <PanelBoundary label="history">
         <HistoryModal
           open={historyOpen}
           onClose={() => setHistoryOpen(false)}
@@ -1409,31 +1434,38 @@ React.useEffect(() => {
           activeCwd={activeProject?.path}
           initialCwd={historyCwd}
         />
+        </PanelBoundary>
       )}
 
-      {quote && <QuotePopover x={quote.x} y={quote.y} onPick={handleQuotePick} />}
+      {quote && (<PanelBoundary label="quote"><QuotePopover x={quote.x} y={quote.y} onPick={handleQuotePick} /></PanelBoundary>)}
 
       {gitOpen && (
         // Remounted per project, so no view state carries across; an
         // edit-card path preselects only in the project it came from. The
         // branch and the finished-edit count drive its refetches
         // (app/use-git-browser.jsx).
+        <PanelBoundary label="git browser">
         <GitBrowser key={gitProject ?? ""} bridge={bridge}
           initialPath={gitOpen.project === gitProject ? gitOpen.path : null}
           onClose={closeGit} branch={activeProject.branch ?? null} edits={gitEdits} />
+        </PanelBoundary>
       )}
 
       {preview && preview.key === planKey && (
+        <PanelBoundary label="file preview">
         <FilePreview target={preview.target} onClose={closePreview} onOpenGit={previewToGit} />
+        </PanelBoundary>
       )}
 
       {rulesOpen && (
+        <PanelBoundary label="approval rules">
         <ApprovalRulesPanel
           onClose={() => setRulesOpen(false)}
           activeProject={activeProject.id ? activeProject : null}
           sessions={sessions}
           approvalModes={approvalModes}
         />
+        </PanelBoundary>
       )}
 
       {statsOpen && (
@@ -1442,10 +1474,13 @@ React.useEffect(() => {
         // switch to a different profile while the panel is open would
         // update the header's profileLabel but leave the previous
         // profile's numbers showing underneath it.
+        <PanelBoundary label="usage stats">
         <UsageStatsPanel key={activeProfileId} onClose={() => setStatsOpen(false)} profileLabel={activeProfileLabel} />
+        </PanelBoundary>
       )}
 
       {promptHistoryOpen && (
+        <PanelBoundary label="prompt history">
         <PromptHistoryModal
           open={promptHistoryOpen}
           entries={promptHistory}
@@ -1453,10 +1488,13 @@ React.useEffect(() => {
           onClose={() => setPromptHistoryOpen(false)}
           onPick={handlePickHistoryPrompt}
         />
+        </PanelBoundary>
       )}
 
       {updater.open && (
+        <PanelBoundary label="update">
         <UpdateModal updater={updater} busyTabs={window.OMP_UPDATER.busyTabCount(sessions)} />
+        </PanelBoundary>
       )}
 
       {/* The command bridge renders after the other z-100 overlays (kanban,
@@ -1468,6 +1506,7 @@ React.useEffect(() => {
           useEscClose lifts it to the top only when it *opens*, so a modal
           opened later is the topmost and Esc closes that one first; after the
           move visuals and Esc finally say the same thing. */}
+      <PanelBoundary label="command bridge">
       <CommandBridge
         open={bridgeOpen}
         initialView={bridgeView}
@@ -1480,21 +1519,27 @@ React.useEffect(() => {
         currentModelId={model.id}
         profileId={activeProfileId}
       />
+      </PanelBoundary>
 
       {closeConfirm && (
+        <PanelBoundary label="close dialog">
         <ConfirmCloseDialog confirm={closeConfirm} onAnswer={handleCloseAnswer} />
+        </PanelBoundary>
       )}
       {tabMenu && (
+        <PanelBoundary label="tab menu">
         <TabMenu menu={tabMenu} onAction={handleTabMenuAction} onClose={() => setTabMenu(null)} />
-      )}
+        </PanelBoundary>
       )}
 
+      <PanelBoundary label="remote pairing">
       <RemotePairDialog />
+      </PanelBoundary>
 
       {/* Phone folder sheet (remote control): recent folders + a typed
           path, submitted as `open_project_at` — see openRemoteProject.
           Mounted only on a touch device, like the composer's sheet. */}
-      {window.OMP_MOBILE?.isTouch?.() && folderSheet && (() => {
+      {window.OMP_MOBILE?.isTouch?.() && folderSheet && (<PanelBoundary label="folder sheet">{(() => {
         const MobileSheet = window.MobileSheet;
         if (!MobileSheet) return null;
         const rows = recentRows(recentProjects, sessions, activeProfileId);
@@ -1550,11 +1595,14 @@ React.useEffect(() => {
             {folderError && <div className="cmp-sheet-notice" role="alert">{folderError}</div>}
           </MobileSheet>
         );
-      })()}
+      })()}</PanelBoundary>)}
 
     </_AL_MdLinkCtx.Provider>
   );
 }
 
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// The root boundary is outside App: if App itself throws (a missing
+// global, a corrupt tweak), the user gets the recovery card with a reload
+// button instead of an empty #root and a black window.
+ReactDOM.createRoot(document.getElementById("root")).render(<AppBoundary><App /></AppBoundary>);

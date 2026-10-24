@@ -48,6 +48,7 @@ User-facing rail widget contract (`widgets.json`, approval, output schema v1, li
 |All JS regression scripts|`npm test`|
 |One JS regression|`node tests/test-<name>.mjs` (or `npm run test:<name>`)|
 |Probe omp RPC (needs a live omp, not in `npm test`)|`node tests/test-rpc.mjs`|
+|Smoke the real release build (launches the packaged app over CDP; no other instance may be running)|`npm run smoke` (or `node tests/smoke/run.mjs --exe <path>`; see `tests/smoke/SMOKE.md`)|
 
 Regression files are mostly named after the `src/app/<name>.js` module they cover (`app/turn-status.js` → `test-turn-status.mjs`); exceptions: `test-markdown.mjs` (`app/marked-setup.js`), `test-recent-models.mjs` (`adapter.js`), `test-tool-output.mjs` (bash tool card), `test-updater-json.mjs` (`.github/scripts/updater-json.mjs`), `test-widget-examples.mjs` (`examples/widgets/git.sh`, parsed with `app/widgets.js`), `test-browser-runtime.mjs` (`app/browser-screen.js` and `app/use-browser.jsx`, run against DOM/React stubs). A new test file must be added to the `npm test` chain in `package.json`, with its own `test:<name>` script.
 
@@ -105,6 +106,7 @@ Regression files are mostly named after the `src/app/<name>.js` module they cove
 |`src/index.html`|script load order = dependency graph|
 |`scripts/`|`build-frontend.mjs` (`dist/`), `vendor-react.mjs`, `vendor-xterm.mjs`|
 |`tests/`|JS regression scripts|
+|`tests/smoke/`|CDP smoke suite against the release exe: boots it with WebView2 remote debugging, asserts zero console errors, walks the main surfaces, fault-injects both error boundaries, measures a heap delta across modal/tab churn|
 |`.github/`|`workflows/{tests,ci,release}.yml`, `scripts/updater-json.mjs`|
 
 ## Architecture
@@ -185,6 +187,7 @@ Trigger: 6th major component in one file, or 4th unrelated concern in one Rust m
 ## Things easy to break
 
 - `omp --mode rpc-ui`, **not** `omp --rpc` (latter falls through to TUI, floods stdout with ANSI).
+- Error boundaries (`design/ui/error-boundary.jsx`): every top-level panel and modal in `app-live.jsx`'s render tree is wrapped in a `PanelBoundary`, and `AppBoundary` sits outside `App` at the `createRoot` call — a new panel/modal must be wrapped too, or its next render throw blanks the window again (the git-browser `_GH_WORKTREE` incident). The class names must stay unminified: `tests/smoke/run.mjs` finds instances via React 19's `__reactContainer$` key on `#root` and matches `constructor.name`, so renaming the classes or minifying the release bundle breaks fault injection. Fallback styles (`layout/boundary.css`) use hardcoded colors on purpose — the last-resort UI must stay readable when the theme system is what threw. Crashes are recorded into `window.OMP_ERRORS` (`app/error-watch.js`), a bounded in-memory ring that also captures window errors and unhandled rejections; `npm run smoke` asserts the real exe renders, walks the surfaces, injects both boundary layers and measures the heap delta (see `tests/smoke/SMOKE.md`).
 - Browser settings overlay: `agent/spawn.rs::omp_args` appends one `--config=<path>` token **last**, after `--approval-mode=<mode>` and profile/resume/cwd. Preserve this order and keep the overlay browser-only (`browser.cdpUrl` plus `browser.relay: false`, so an enabled omp relay can't outrank the panel's browser) so it does not change the tab's approval policy or replace its normal profile settings.
 - Browser annotation overlay (`docs/architecture/browser.md`): render with CSSOM (`element.style`) and `textContent` only, so strict page CSP/Trusted Types cannot block it. Install in the `omp-annotate` isolated world **per attached page target**, including the current document and later navigations; the binding belongs only to that world's tracked contexts, and a pick counts only right after a mouse release the panel itself sent.
 - Browser CDP endpoint (`docs/architecture/browser.md`): Chromium runs with `--remote-debugging-pipe` and opens no port; the broker (`browser/broker/`) is the only way into it, for the panel and the agent alike. Never add `--remote-debugging-port` or any other way into Chromium besides the broker: the placeholder port is the only listener, and it checks the peer's OS user (`proxy/peer.rs`) before reading anything, failing closed where it cannot tell. The proxy tap observes intent without changing transport: the pump threads only run the bounded queueing (`proxy/feed.rs`) before forwarding; JSON parsing and the follow callback stay on the observer thread, fed by a nonblocking bounded queue. Tap failure disables observation for that connection, never forwarding; the tap must never block or alter what is forwarded. Request admission (`proxy/http.rs::admit`) and routing run before anything can launch Chromium.

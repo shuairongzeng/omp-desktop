@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **A render crash no longer blacks out the window** — every panel (chat, composer, sidebar, rail, settings, status bar, each modal) is wrapped in an error boundary: a throw in one shows that panel's crash card with a retry button while the rest of the app keeps working, and a top-level failure shows a full-window recovery card (reload restores the tabs from the tab store) instead of an empty black window. All crashes are recorded in a bounded in-memory ring (`app/error-watch.js`, also capturing window errors and unhandled rejections) so the next smoke run or devtools session can see what broke
+
+- **`npm run smoke` — an automated CDP smoke test against the real release build** (`tests/smoke/`): launches the packaged app with WebView2 remote debugging, asserts zero console errors, walks the main surfaces (settings, command bridge, git browser), fault-injects both boundary layers and proves the window survives, and measures a heap delta across modal churn; see `tests/smoke/SMOKE.md`
+
 - **The browser panel opens by itself when the tab's agent starts browsing** — Rust emits one `browser://agent-use` event per episode (a report after ≥30 s of silence, and only while the panel is closed), the desktop switches the active tab's side column to the panel and a paired phone opens its panel on the same report over the room, so the agent's browsing is visible wherever you are; Settings → Browser → "Show the panel when the agent browses" turns it off
 
 - **Notifications when a tab needs you** (Settings → Session): a turn finishing or a tool approval arriving fires an OS notification while the window is hidden or the tab is in the background (tauri-plugin-notification, `app/notify.js` — `notifyDone`/`notifyAsk` toggles, both on by default), and the window title now carries a "(N 待审批)" count across all tabs, not just the active one

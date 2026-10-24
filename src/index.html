@@ -59,6 +59,12 @@
        app/extension-widgets.js and app/browser.js its truncateText, and
        app-live.jsx destructures the rest. -->
   <script src="app/constants.js"></script>
+  <!-- Global error visibility: window errors / unhandled rejections into a
+       bounded ring (window.OMP_ERRORS) that the error boundaries also feed.
+       Self-installs at load, so this sits as early as possible — every
+       later script's failures are recorded too. app/error-watch.js is
+       dependency-free; nothing destructures it (call-time reads only). -->
+  <script src="app/error-watch.js"></script>
   <!-- Keymap registry + chord algebra, and guestShouldBypass (which keys a
        focused guest — terminal, browser panel — leaves to the app).
        Dependency-free IIFE; must load before any Babel file (composer.jsx,
@@ -347,6 +353,11 @@
        app-live.jsx destructure ResizeHandle at top level. -->
   <script type="text/babel" src="design/ui/resize-handle.jsx"></script>
   <script type="text/babel" src="design/ui/icons.jsx"></script>
+  <!-- Fault containment: PanelBoundary / AppBoundary fallbacks instead of a
+       black window. Destructures window.Icon at top level (above);
+       app-live.jsx destructures both at top level, so this must load
+       before it. Records crashes into window.OMP_ERRORS (above). -->
+  <script type="text/babel" src="design/ui/error-boundary.jsx"></script>
   <!-- Copy buttons (issue #33); markdown.jsx and the
        chat/ components destructure its exports at top level. -->
   <script type="text/babel" src="design/ui/copy-button.jsx"></script>
