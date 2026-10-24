@@ -69,6 +69,7 @@ Regression files are mostly named after the `src/app/<name>.js` module they cove
 |`src-tauri/src/conversation_tree/`|`conversation_tree` command: session-file family + parsing|
 |`src-tauri/src/saved_sessions/`|omp's persisted session history (history panel, resume)|
 |`src-tauri/src/keybindings/`|omp's keybindings per profile (read-only) merged with the desktop overlay|
+|`src-tauri/src/{global_hotkey,tray}.rs`|the summon hotkey (chord from `<app config>/global-hotkey.json`, default `ctrl+alt+space`; emits `app://summon`) and the system tray (left-click toggles the window; quit goes through `kill_child_processes`) — both degrade to a logged warning, never to a startup failure|
 |`src-tauri/src/{profiles,open_tabs,recent_projects}.rs`|JSON stores in `<app config>/` (via `json_store.rs`: atomic write, snapshot/rollback; `config_file.rs` `ConfigFile`: the store's file, or its bytes in memory when there is no config folder — open tabs, recent projects, keybinding overlay)|
 |`src-tauri/src/{git,git_watcher,workspace,files}.rs`|branch/HEAD info, `.git/HEAD` watcher, `workspace.rs` = path validation + stage/discard (`workspace_accept`/`workspace_reject`) via the `git` binary, `@`-mention paths|
 |`src-tauri/src/git_browser/`|git browser reads via gix (`git_browser_*` commands): `status.rs` (status merge, file tree), `file.rs` (full-file inline diff, caps), `log.rs` (commit walk, refs, ahead/behind), `graph.rs` (lane layout), `commit.rs` (files a commit touched)|

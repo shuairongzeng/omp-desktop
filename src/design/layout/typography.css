@@ -1,0 +1,122 @@
+/* typography.css — the reading dial (#C): the font family, reading size
+   and compact-density tweaks of Settings → Appearance → Text.
+
+   Three custom properties, written on <html> by useThemeEffect
+   (app/use-bridge-snapshot.jsx) from the `uiFontFamily` / `uiFontSize`
+   / `uiDensity` tweaks:
+
+     --font-ui        the chosen UI font stack, CJK fallback included
+     --font-scale     the reading size as a unitless ratio (1 = today's
+                      size; the hook divides uiFontSize by 12.5), so a
+                      rule keeps its own ladder value and scales it
+     --row-h/--status-h the compact-density row/status bar heights,
+                      only written when the tweak is "compact" (unset
+                      otherwise, so the values here are the fallbacks)
+
+   The dial is deliberately narrow: `--font-scale` feeds exactly the
+   chat's message prose, the composer's textarea and the Settings page's
+   running text — NOT html's font-size (the px layout and every
+   `--d-text*` control size must not re-scale). Density's compact only
+   tightens the reading surfaces' own spacing vars; it never touches the
+   global `--d-*` ladder (that is the Density row's own, denser job).
+
+   Red line (verified by tests/test-typography.mjs): the terminal grid,
+   every code surface and the mono badge class keep the monospace stack
+   and their own sizes — no rule here names them. */
+
+:root {
+  /* Fallbacks only; useThemeEffect overwrites them on every tweak
+     change, and the defaults are the app's shipped look, so a page
+     rendered before the effect runs (or without JS) looks unchanged:
+     scale 1 keeps every rule below at exactly its pre-dial value. */
+  --font-ui: var(--font-sans);
+  --font-scale: 1;
+  --chat-gap: 18px;
+  --chat-pad-v: 24px;
+  --row-h: 26px;
+  --status-h: 26px;
+}
+
+/* ── The reading font stack, with its CJK fallback ──────────────────────
+   `default` maps to --font-sans (the app's own stack, already loaded as
+   the body font). The named picks each put their Latin face first so it
+   owns Latin/digits, then a CJK companion that matches its proportions
+   (Consolas → SimHei for a blockier mono-adjacent read), then the
+   generic escapes. useThemeEffect resolves the tweak id to one of
+   --font-ui-*; the `default` case writes `var(--font-sans)`. */
+:root {
+  --font-ui-segoe:   "Segoe UI", "Segoe UI Variable Text", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  --font-ui-yahei:   "Microsoft YaHei", "Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+  --font-ui-georgia: Georgia, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Serif CJK SC", "SimSun", serif;
+  /* A UI-sized Consolas (a code face, but requested as a reading pick):
+     a touch larger than its serif/sans peers so lowercase reads at the
+     same apparent size; SimHei carries the CJK glyphs it lacks. */
+  --font-ui-consolas: Consolas, "Cascadia Mono", "Microsoft YaHei", SimHei, "Noto Sans CJK SC", monospace;
+}
+
+/* ── Family: the body font, and the few surfaces that hardcode the old
+   default stack, are redirected to --font-ui. `font: inherit` /
+   `font-family: var(--font-sans)` everywhere else follow the body for
+   free. Code surfaces and the terminal never appear here — that stack
+   is load-bearing (grid alignment). */
+body { font-family: var(--font-ui); }
+.ask-editor-textarea, .ask-submit, .ask-other-input,
+.gitb-view-subject,
+.st-tab .tab-name, .tab.app-tab .tab-name { font-family: var(--font-ui); }
+
+/* ── Reading size: chat prose, the composer's textarea and the Settings
+   page's running text — each keeps its own ladder value and scales it,
+   so the dial multiplies whatever the zoom/density ladder already
+   chose: `calc(var(--d-text) * var(--font-scale))` with scale 1 is
+   exactly `var(--d-text)` at every ladder rung and zoom, which is the
+   zero-change default this whole dial must hold. */
+.ass-body > .md-content,
+.ass-failure-msg,
+.user-text,
+.composer-input textarea { font-size: calc(var(--d-text) * var(--font-scale)); }
+.st-rd { font-size: calc(var(--d-text-sm) * var(--font-scale)); }
+
+/* The composer's textarea is an input: it does not inherit the body's
+   family in every engine. Its size never drops below 16px on a phone
+   (iOS focus zoom) — the phone tier below re-asserts that. */
+.composer-input textarea { font-family: var(--font-ui); }
+.st-h1 { font-family: var(--font-ui); }
+
+/* ── Compact reading density: the reading surfaces' own spacing vars.
+   `--chat-gap`/`--chat-pad-v` sit on :root and apply unconditionally —
+   at their comfortable values they ARE today's .chat-pad numbers, so
+   only the compact rule changes anything. Row and status heights are
+   gated on a class (not set at comfortable) so the fallbacks above are
+   dead values, kept for the CSS parser's sake and the test's. */
+.chat-pad { gap: var(--chat-gap); padding: var(--chat-pad-v) 32px 12px; }
+.psb-row { height: var(--row-h); }
+.status { height: var(--status-h); }
+
+/* Compact: tighter message spacing, shorter sidebar rows, a shorter
+   status bar. 24→16px gap, 26→24px sidebar rows, 26→24px status bar —
+   small, deliberate steps, not a second density ladder. */
+html.ui-compact { --chat-gap: 16px; --chat-pad-v: 18px; }
+html.ui-compact { --row-h: 24px; --status-h: 24px; }
+html.ui-compact .status-cell { padding-top: 0; padding-bottom: 0; }
+
+/* ── Phone guards (≤760px): only what the phone tier already owns.
+   The composer's textarea keeps its 16px floor (mobile.css sets it for
+   iOS focus zoom) — the dial's scale calc must not drag an input below
+   that, so the floor re-asserts. Chat prose has NO phone override
+   today (it inherits the ladder), so it stays scaled: zero change.
+   Compact's chat spacing defers to the phone's own tighter pad (12px),
+   and the status bar's height:auto + safe-area padding wins over any
+   fixed height the dial could write. */
+@media (max-width: 760px) {
+  .composer-input textarea { font-size: 16px; }
+  .psb-row { height: auto; } /* sidebar.css's phone tier owns 48px auto rows */
+  html.ui-compact { --chat-gap: 12px; --chat-pad-v: 12px; }
+  .status { height: auto; min-height: 40px; }
+}
+
+/* The remote shim is the phone browser itself (remote-transport.js):
+   the whole dial is inert there — the phone tier above owns every
+   reading surface, and the desktop's dial has no business reaching
+   into a handset layout. Specificity (html + class) beats the compact
+   rules above; the :root fallbacks keep the shipped values. */
+html.remote-shim { --chat-gap: 12px; --chat-pad-v: 12px; --row-h: 26px; --status-h: 26px; }

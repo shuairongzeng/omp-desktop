@@ -190,6 +190,23 @@ function App() {
   // Behaviours live.js owns (app/session-prefs.js): it takes its keys from
   // the tweaks and acts only on a changed one.
   React.useEffect(() => { bridge?.setSessionPrefs(t); }, [bridge, t]);
+
+  // Summon (R7): the global hotkey / tray "show omp" focused the window and
+  // live.js relayed the app://summon event as OMP_BRIDGE.onSummon. If the
+  // Settings tab is what's showing, step back to the project tab it covers
+  // (the same OMP_SETTINGS_TAB.selectProject every tab pick goes through) —
+  // a summoned window whose stage is a settings page would otherwise leave
+  // the composer buried under it. Then focus the composer's textarea, the
+  // same window event desktop.composer.focus dispatches. `setStab`'s
+  // updater form reads the current state, so no ref is needed.
+  React.useEffect(() => {
+    if (!bridge?.onSummon) return undefined;
+    const off = bridge.onSummon(() => {
+      setStab(s => window.OMP_SETTINGS_TAB.selectProject(s));
+      window.dispatchEvent(new CustomEvent("omp:focus-composer"));
+    });
+    return off;
+  }, [bridge]);
   // Refuse a file or link drop no handler took (`refusesStrayDrop`), so the
   // webview never navigates to it. In the app, file drops never reach the
   // page — Tauri's native file drop claims them (composer.jsx) — so this
@@ -988,6 +1005,22 @@ React.useEffect(() => {
     if (r.sessionId && r.sessionId !== activeProject.id) bridge?.activateSession(r.sessionId);
   };
 
+  // Ctrl+1..9 (desktop.tab.jump): activate the Nth *project* tab, in the
+  // tab bar's own order — the settings tab is not a slot, exactly as in
+  // cycleTabs, so a jump's numbering never shifts when Settings opens.
+  // Stepping Settings back is explicit (not left to the activation effect,
+  // which never runs when the jump's target is already the active tab
+  // under it): Ctrl+2 while Settings covers tab 2 must still show tab 2.
+  // N past the end, or no tab at that index, is a no-op. `sessions`, the
+  // list the tab bar renders — order is the whole point.
+  const jumpToNthTab = n => {
+    const target = sessions[n - 1];
+    if (!target?.id) return;
+    setStab(s => window.OMP_SETTINGS_TAB.selectProject(s));
+    if (target.id === activeProject.id) return;
+    bridge?.activateSession(target.id);
+  };
+
   // ── Global keymap handler map ─────────────────────────────────────────────
   // Written into handlersRef every render so the dispatch hook always reads
   // the latest closures without re-subscribing to the window listener.
@@ -1031,6 +1064,9 @@ React.useEffect(() => {
     "desktop.tab.prev":        () => cycleTabs(-1),
     "desktop.tab.moveLeft":    () => shiftActiveProject(-1),
     "desktop.tab.moveRight":   () => shiftActiveProject(1),
+    // The event carries the pressed chord; N is its digit (not a lookup),
+    // so a rebind to another ctrl+digit still lands on the right tab.
+    "desktop.tab.jump":        e => jumpToNthTab(parseInt(e?.key, 10)),
     "desktop.panel.todo":      () => setPlanOpen(v => !v),
     "desktop.panel.changes":   () => setGitOpen(v => (v ? null : { path: null })),
     "desktop.panel.rules":     () => setRulesOpen(v => !v),
@@ -1252,6 +1288,7 @@ React.useEffect(() => {
                   <Composer
                     sessionId={planKey}
                     sessionIds={sessionIds}
+                    draftStoreKey={activeProject.sessionFile || activeProject.path || null}
                     onSend={handleSend}
                     planMode={plan.mode}
                     onTogglePlan={togglePlanMode}

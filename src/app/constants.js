@@ -41,6 +41,13 @@
     "showMinimap": true,
     "fontSize":  100,
     "chatWidth": "wide",
+    // Reading dial (#C): family/size/density of the chat's prose, applied
+    // by use-bridge-snapshot (font stack + scale on the root) and
+    // layout/typography.css (the target selectors). Defaults are the
+    // pixels the app ships at, so the dial's middle is "no change".
+    "uiFontFamily": "default",
+    "uiFontSize": 12.5,
+    "uiDensity": "comfortable",
     "textBrightness": 0,
     "bgImage": null,
     "bgImageDim": 40,

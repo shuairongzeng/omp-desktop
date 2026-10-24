@@ -322,6 +322,16 @@
   // ── Subscriber system ─────────────────────────────────────────────────────
   const subscribers = new Set();
 
+  // ── Summon (global hotkey / tray) ────────────────────────────────────────
+  // Rust's global hotkey (src-tauri/src/global_hotkey.rs) and the tray's
+  // "show omp" both emit `app://summon` after focusing the window. The
+  // listener is attached exactly once, at the bottom of this IIFE, with
+  // `window.__TAURI__.event.listen` called as a method (never a
+  // destructured alias — the alias loses the Tauri plugin's `this` and
+  // fails silently). app-live.jsx subscribes through OMP_BRIDGE.onSummon
+  // and reacts by leaving the Settings tab and focusing the composer.
+  const summonListeners = new Set();
+
   // Drop the oldest row of messages once the 13×13 grid is full and the
   // current turn is complete. Only called from notify() so the trim is
   // always reflected in the same snapshot that React receives.
@@ -5414,6 +5424,18 @@
       return () => subscribers.delete(cb);
     },
 
+    /** Subscribe to summon events (global hotkey / tray "show"): `cb()`
+     *  fires whenever the Rust side has focused this window and told the
+     *  webview about it. Returns an unsubscribe function; multiple
+     *  callbacks are supported. The event payload is ignored — Rust
+     *  emits `()` (global_hotkey.rs SUMMON_EVENT), so there is no second
+     *  contract to keep in sync. */
+    onSummon(cb) {
+      if (typeof cb !== "function") return () => {};
+      summonListeners.add(cb);
+      return () => summonListeners.delete(cb);
+    },
+
     getState() { return state; },
   };
 
@@ -5457,6 +5479,20 @@
     window.__TAURI__.event.listen("window://close-requested", () => { void _requestQuit(); })
       .catch(e => console.error("[live] failed to listen for window close requests:", e));
     _syncCloseGuard(_sessionsView());
+
+    // The summon hotkey / tray "show": Rust has already shown, unminimized
+    // and focused this window before emitting. Called as a method (`.listen`
+    // off `window.__TAURI__.event`, never a destructured alias — the alias
+    // drops the plugin's `this` and the registration silently fails). The
+    // listener lives for the whole document; app-live.jsx subscribes through
+    // OMP_BRIDGE.onSummon, a plain Set add, so no event is missed between
+    // this line and React mounting.
+    window.__TAURI__.event.listen("app://summon", () => {
+      for (const cb of summonListeners) {
+        try { cb(); } catch (e) { console.error("[live] summon listener failed:", e); }
+      }
+    }).catch(e => console.error("[live] failed to listen for summons:", e));
+
 
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", _setupWindowChrome);

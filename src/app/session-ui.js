@@ -230,11 +230,88 @@
     return { patch: { text, pastes, historyNav: null }, caret };
   }
 
+  // ── Draft persistence across restarts (R7) ──────────────────────────
+  // The per-tab draft is React state in composer.jsx, so a restart loses
+  // every open tab's half-typed text. The helpers below keep a plain
+  // `sessionKey → text` map in localStorage (debounced by the composer,
+  // which owns the timer) — text only, never attachments, pastes or a
+  // recall position: those reference in-flight state a fresh process
+  // cannot honor, and restoring text alone is the entire ask. Restored
+  // text is *never* sent: it only fills the textarea.
+
+  /** localStorage key of the persisted draft map. */
+  const DRAFTS_STORE_KEY = "omp-desktop:drafts";
+  /** Cap on stored drafts; above it the oldest entry (insertion order)
+   *  is dropped. */
+  const DRAFTS_MAX = 50;
+
+  /** Parse a raw localStorage value into the persisted map: `null`,
+   *  non-object JSON or a corrupted string all read as "nothing saved"
+   *  (the caller then leaves the composer empty — a bad store must never
+   *  break typing). Only own, string-valued, non-empty-text entries
+   *  survive; `__proto__`-like keys are dropped by the same own-check. */
+  function parseDraftsStore(raw) {
+    if (typeof raw !== "string" || !raw) return {};
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (_) {
+      return {};
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const key of Object.keys(parsed)) {
+      if (typeof parsed[key] === "string" && parsed[key] !== "") out[key] = parsed[key];
+    }
+    return out;
+  }
+
+  /** The persisted map to write for a `text` change on `sessionKey`:
+   *  empty text drops the entry (a cleared composer is not a draft), a
+   *  write to a known key keeps the map's insertion order (its position
+   *  is its recency), and a new key past the cap evicts the oldest entry
+   *  first. `store` is the previous parsed map, not the raw string. */
+  function draftStorePut(store, sessionKey, text) {
+    if (!sessionKey || typeof text !== "string") return store;
+    if (text === "") {
+      if (!Object.hasOwn(store, sessionKey)) return store;
+      const { [sessionKey]: _dropped, ...rest } = store;
+      return rest;
+    }
+    let out = store;
+    if (!Object.hasOwn(store, sessionKey) && Object.keys(store).length >= DRAFTS_MAX) {
+      const oldest = Object.keys(store)[0];
+      const { [oldest]: _evicted, ...rest } = store;
+      out = rest;
+    }
+    // Insertion order = recency order: a re-put of an existing key keeps
+    // its position only for the eviction walk above; a fresh key lands
+    // at the end, which is where the oldest-first walk starts counting.
+    return { ...out, [sessionKey]: text };
+  }
+
+  /** The draft text saved for `sessionKey`, or `""` when none. Used at
+   *  session init: only when no in-memory draft exists (a restart), so a
+   *  webview reload that still holds the live draft state is not
+   *  overwritten by a stale persisted copy. */
+  function savedDraftText(store, sessionKey) {
+    if (!sessionKey) return "";
+    return Object.hasOwn(store, sessionKey) ? store[sessionKey] : "";
+  }
+
+  /** The raw string to persist (JSON of the map), for the debounced
+   *  writer. `store` already came out of `draftStorePut`. */
+  function serializeDraftsStore(store) {
+    return JSON.stringify(store);
+  }
+
   window.OMP_SESSION_UI = {
     entryOf, updateEntry, pruneEntries, seedEntries,
     PLAN_IDLE, togglePlan, enterPlan, approvePlan, annotatePlan, markPlanSent,
     DRAFT_IDLE, recallInDraft,
     PASTE_LINES_MIN, PASTE_LINES_MAX,
     normalizePaste, shouldCollapsePaste, collapsePaste, pastesIn, expandPastes, inlinePaste,
+    DRAFTS_STORE_KEY, DRAFTS_MAX,
+    parseDraftsStore, draftStorePut, savedDraftText, serializeDraftsStore,
   };
 })();

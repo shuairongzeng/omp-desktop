@@ -53,6 +53,13 @@
     { id: "desktop.tab.prev",        label: "Previous tab",            group: "Tabs",    scope: "global",   defaultKeys: ["ctrl+shift+tab"], fromGuest: true },
     { id: "desktop.tab.moveLeft",    label: "Move tab left",           group: "Tabs",    scope: "global",   defaultKeys: ["ctrl+shift+pageup"] },
     { id: "desktop.tab.moveRight",   label: "Move tab right",          group: "Tabs",    scope: "global",   defaultKeys: ["ctrl+shift+pagedown"] },
+    // Ctrl+1..9 jumps to the Nth project tab (app-live.jsx derives N from
+    // the action's id suffix at dispatch time; rebinds move the whole
+    // block, since resolve() keeps every chord of one action together).
+    // `fromGuest` is false on purpose: a plain ctrl+digit chord typed into
+    // the terminal's xterm or the browser panel's page belongs to the
+    // guest (`guestShouldBypass`), matching ctrl+t/ctrl+w's rule.
+    { id: "desktop.tab.jump",        label: "Jump to tab 1–9",         group: "Tabs",    scope: "global",   defaultKeys: ["ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9"] },
     { id: "desktop.panel.todo",      label: "Plan kanban",             group: "View",    scope: "global",   defaultKeys: [] },
     { id: "desktop.panel.changes",   label: "Git browser",             group: "View",    scope: "global",   defaultKeys: ["ctrl+shift+g", "shift+super+g"] },
     { id: "desktop.panel.rules",     label: "Approvals",               group: "View",    scope: "global",   defaultKeys: [] },

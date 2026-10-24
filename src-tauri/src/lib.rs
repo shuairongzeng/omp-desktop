@@ -19,6 +19,7 @@ mod files;
 mod git;
 mod git_browser;
 mod git_watcher;
+mod global_hotkey;
 mod goal_config;
 mod json_store;
 mod keybindings;
@@ -46,6 +47,7 @@ mod terminal;
 #[cfg(test)]
 mod test_support;
 mod text;
+mod tray;
 mod updater;
 mod widgets;
 mod workspace;
@@ -1602,6 +1604,12 @@ fn setup(app: &tauri::App) {
         &std::env::current_dir().unwrap_or_default(),
         std::env::args_os().map(|arg| arg.to_string_lossy().into_owned()),
     );
+
+    // The summon hotkey and the tray, both after every store so a failure
+    // in either leaves an otherwise complete app (both log-only, see
+    // `global_hotkey.rs` / `tray.rs`).
+    global_hotkey::register(app.handle(), config_file("global-hotkey.json").as_deref());
+    tray::init(app);
 }
 
 /// Windows and Linux deliver a folder "Open with" by launching the
@@ -1643,6 +1651,7 @@ fn with_plugins_and_state(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AgentBridge::new())
         .manage(GitWatcherState::new())
         .manage(OpenProjectState::new())

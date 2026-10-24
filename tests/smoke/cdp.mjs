@@ -9,6 +9,8 @@
 //   on(event, cb)          protocol event subscription
 //   evaluate(expr)         Runtime.evaluate, awaitPromise + returnByValue
 //   waitExpr(expr, ms)     polls evaluate until truthy (or throws)
+//   t0                     Date.now() right before the spawn call — the
+//                          shared zero point for every startup timing
 //   close()                Browser.close, then taskkill /T /F as backstop
 
 import { spawn } from "node:child_process";
@@ -54,6 +56,10 @@ async function waitForTarget(port, timeoutMs = 20000) {
 
 export async function launch(exePath, { port } = {}) {
   const debugPort = port ?? (await freePort());
+  // Date.now() immediately before the spawn call: run.mjs's boot/timing
+  // step measures spawn→root/composer/bridge against this zero. Node and
+  // the webview share the same wall clock, so ms deltas are meaningful.
+  const t0 = Date.now();
   const child = spawn(exePath, [], {
     env: {
       ...process.env,
@@ -146,5 +152,5 @@ export async function launch(exePath, { port } = {}) {
     try { ws.close(); } catch { /* ignore */ }
   };
 
-  return { child, port: debugPort, target, send, on, evaluate, waitExpr, close };
+  return { child, port: debugPort, target, send, on, evaluate, waitExpr, close, t0 };
 }

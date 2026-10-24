@@ -211,6 +211,51 @@ try {
     return `root children: ${n}`;
   });
 
+  // b. boot/timing — the startup budget. All three phases measured from
+  // cdp.t0 (the Date.now() right before the spawn call, Node's clock):
+  //   root      — spawn → #root has children (React mounted)
+  //   composer  — spawn → the composer textarea exists (an active tab's
+  //               UI is usable; tab restore has produced something)
+  //   bridge    — spawn → window.OMP_BRIDGE?.isConnected === true
+  // Hard budget: composer < 8000 ms (the integrator's hot-machine baseline
+  // is 5161 ms; 8000 leaves headroom for a cold file cache, a first-boot
+  // WebView2 profile and heavier saved transcripts without flaking).
+  // > 6500 ms prints a WARN — a real machine should not sit that close to
+  // the cliff; regressions should surface here before the hard assert.
+  // Note the poll granularity (200 ms in cdp.waitExpr) and IPC latency
+  // both round these numbers up; they are upper bounds, not exact points.
+  await runStep("boot/timing", async () => {
+    const t0 = cdp.t0;
+    const ms = () => Date.now() - t0;
+
+    // root-rendered already passed, but re-derive its number from t0 for
+    // the table (cheap: one evaluate on the already-mounted tree).
+    await cdp.waitExpr(`document.getElementById("root")?.childElementCount > 0`, 15000);
+    const rootMs = ms();
+
+    const composerSel = ".composer-input textarea, .composer textarea";
+    await cdp.waitExpr(`!!document.querySelector(${JSON.stringify(composerSel)})`, 30000);
+    const composerMs = ms();
+
+    await cdp.waitExpr(`window.OMP_BRIDGE?.isConnected === true`, 30000);
+    const bridgeMs = ms();
+
+    const rows = [
+      ["spawn → root rendered", `${rootMs} ms`],
+      ["spawn → composer", `${composerMs} ms`],
+      ["spawn → bridge connected", `${bridgeMs} ms`],
+    ];
+    console.log(rows.map(([k, v]) => `[smoke] timing ${k.padEnd(28)} ${v}`).join("\n"));
+
+    if (composerMs >= 8000) {
+      throw new Error(`startup budget blown: spawn → composer ${composerMs} ms (budget 8000 ms, baseline 5161 ms)`);
+    }
+    if (composerMs > 6500) {
+      console.log(`[smoke] WARN spawn → composer ${composerMs} ms is over the 6500 ms soft budget — within the 8000 ms assert but drifting from the 5161 ms baseline`);
+    }
+    return `root ${rootMs} composer ${composerMs} bridge ${bridgeMs} ms (budget: composer < 8000)`;
+  });
+
   // A module-eval failure (a missing top-level global, a script that died
   // half-loaded) never reaches a React boundary — error-watch is the only
   // sentinel for that class, so the ring must be empty once the app boots.

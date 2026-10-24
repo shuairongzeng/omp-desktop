@@ -49,6 +49,34 @@ function useBridgeSnapshot(bridge, setters) {
   }, [bridge]);
 }
 
+// Reading dial (#C): the `uiFontFamily` / `uiFontSize` / `uiDensity`
+// tweaks as three <html> writes, applied inside useThemeEffect so a
+// `tweakchange` (use-tweaks.js dispatches one per setTweak) re-runs it
+// through the same effect. Values live in layout/typography.css:
+// --font-ui picks the stack (a var reference into that file's table),
+// --font-scale is the reading size as a ratio over the app's own 12.5px
+// (1 = unchanged, so the ladder and zoom keep their say), and
+// `ui-compact` is the class (not a var) so the comfortable default
+// writes nothing at all.
+const READING_FONTS = {
+  default: "var(--font-sans)",
+  segoe: "var(--font-ui-segoe)",
+  yahei: "var(--font-ui-yahei)",
+  consolas: "var(--font-ui-consolas)",
+  georgia: "var(--font-ui-georgia)",
+};
+const READING_BASE_PX = 12.5; // --d-text @ density-compact, the shipped prose size
+
+function applyReadingDial(root, t) {
+  root.style.setProperty("--font-ui", READING_FONTS[t.uiFontFamily] ?? READING_FONTS.default);
+  const size = Number(t.uiFontSize);
+  // The ratio, clamped sane: a malformed stored value (NaN, string)
+  // falls back to 1 — the shipped look — never to 0 or a negative scale.
+  const scale = Number.isFinite(size) && size > 0 ? size / READING_BASE_PX : 1;
+  root.style.setProperty("--font-scale", String(Math.round(scale * 1000) / 1000));
+  root.classList.toggle("ui-compact", t.uiDensity === "compact");
+}
+
 function useThemeEffect(t) {
   React.useEffect(() => {
     const root = document.documentElement;
@@ -100,7 +128,10 @@ function useThemeEffect(t) {
     root.classList.toggle("glass-root", glass);
     root.style.setProperty("--glass-alpha", `${t.glassOpacity ?? 85}%`);
     root.style.setProperty("--glass-blur", `${t.glassBlur ?? 12}px`);
+
+    applyReadingDial(root, t);
   }, [t.theme, t.density, t.accent, t.monoChat, t.fontSize, t.chatWidth,
+      t.uiFontFamily, t.uiFontSize, t.uiDensity,
       t.textBrightness, t.glassEffect, t.glassOpacity, t.glassBlur]);
 }
 

@@ -11,7 +11,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
+# The summon hotkey (src/global_hotkey.rs): global, i.e. works while the
+# window is unfocused or hidden behind the tray entry. Same 2.x line as the
+# other plugins; reuses the `global_hotkey` and `keyboard-types` crates the
+# tray feature already pulls in.
+tauri-plugin-global-shortcut = "2"
 tauri-plugin-dialog = "2"
 # 2.13: `check()` no longer sets SSL_CERT_FILE/SSL_CERT_DIR process-wide on
 # Linux, which every omp child would have inherited.

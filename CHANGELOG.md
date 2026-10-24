@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Summon the app from anywhere** — a global hotkey (Ctrl+Alt+Space by default; override in `<app config>/global-hotkey.json`, e.g. `{ "chord": "ctrl+shift+o" }`) shows and focuses the window and drops the cursor into the composer, switching back from the Settings tab if it was covering your project. A new system tray icon toggles the window with a left click, and its menu can show or quit the app (quit goes through the full child-process cleanup)
+
+- **Ctrl+1…9 jumps straight to a tab** (project tabs only; rebindable in Settings → Shortcuts), and **composer drafts now survive a restart** — unsent text is kept per conversation (`omp-desktop:drafts`, 50-entry cap) and restored into the right box when you reopen the tab; sending clears it
+
+- **Reading comfort settings** (Settings → Appearance → Text): UI font family (five stacks, all with CJK fallbacks), UI font size (12–18, proportionally scaled), and density (comfortable/compact). The defaults are pixel-identical to the old look, and terminals, code blocks and diffs keep their monospace stacks
+
+- **Startup timing is now a tested budget** — the smoke suite measures spawn → root rendered / composer ready / bridge connected on the real release build and fails if composer-ready regresses past 8 s (measured baseline ≈ 1.6–1.8 s warm); see `tests/smoke/SMOKE.md`
+
 - **A render crash no longer blacks out the window** — every panel (chat, composer, sidebar, rail, settings, status bar, each modal) is wrapped in an error boundary: a throw in one shows that panel's crash card with a retry button while the rest of the app keeps working, and a top-level failure shows a full-window recovery card (reload restores the tabs from the tab store) instead of an empty black window. All crashes are recorded in a bounded in-memory ring (`app/error-watch.js`, also capturing window errors and unhandled rejections) so the next smoke run or devtools session can see what broke
 
 - **`npm run smoke` — an automated CDP smoke test against the real release build** (`tests/smoke/`): launches the packaged app with WebView2 remote debugging, asserts zero console errors, walks the main surfaces (settings, command bridge, git browser), fault-injects both boundary layers and proves the window survives, and measures a heap delta across modal churn; see `tests/smoke/SMOKE.md`

@@ -158,17 +158,17 @@ check("resetEdits resets only changed rows; theme brings its accent", () => {
 });
 
 check("resetRows resets only the given rows (the search matches)", () => {
-  const v = vals({ fontSize: 120, monoChat: !D.monoChat, showRadar: false });
+  const v = vals({ fontSize: 120, monoChat: !D.monoChat, showRadar: false, uiFontSize: 15 });
   const matched = S.search("font", v).groups.flatMap(g => g.rows);
-  assert.deepEqual(S.resetRows(matched, v), { fontSize: D.fontSize, monoChat: D.monoChat });
+  assert.deepEqual(S.resetRows(matched, v), { fontSize: D.fontSize, monoChat: D.monoChat, uiFontSize: D.uiFontSize });
   assert.deepEqual(S.resetRows([], v), {});
 });
 
 check("search matches label, desc text and keywords, grouped in page order", () => {
   const r = S.search("font", vals());
-  assert.deepEqual(r.groups.flatMap(g => g.rows.map(x => x.id)), ["fontSize", "monoChat"]);
-  assert.equal(r.total, 2);
-  assert.equal(r.bySection.appearance, 2);
+  assert.deepEqual(r.groups.flatMap(g => g.rows.map(x => x.id)), ["fontSize", "monoChat", "uiFontFamily", "uiFontSize"]);
+  assert.equal(r.total, 4);
+  assert.equal(r.bySection.appearance, 4);
   assert.equal(r.bySection.chat, 0);
   assert.deepEqual(r.groups.map(g => [g.sectionId, g.sectionTitle, g.groupName]), [["appearance", "Appearance", "Text"]]);
   assert.equal(S.search("POWERSHELL", vals()).groups[0].src, "terminal.json", "keywords, case-insensitive");
@@ -194,18 +194,19 @@ check("search skips hidden rows and counts them as hiddenCount", () => {
 });
 
 check("search matches every whitespace-separated token (tokenised AND)", () => {
-  // "font mono" needs both tokens: label "Font size" + label "Monospace chat"
+  // "font mono" needs both tokens: monoChat ("Font size"/"Monospace chat")
+  // and uiFontFamily (label "Font family", desc "monospaced") match.
   const both = S.search("font mono", vals());
-  assert.equal(both.total, 1);
+  assert.equal(both.total, 2);
   assert.equal(both.groups[0].rows[0].id, "monoChat", "label token + label token");
   // Order does not matter.
-  assert.equal(S.search("mono font", vals()).total, 1);
+  assert.equal(S.search("mono font", vals()).total, 2);
   // A keyword token and a desc token AND together on one row.
   assert.equal(S.search("spacing compact", vals()).groups[0].rows[0].id, "density", "kw + desc");
   // One token missing: no match.
   assert.equal(S.search("font nonexistent", vals()).total, 0);
   // Repeated whitespace is one separator.
-  assert.equal(S.search("  font   mono  ", vals()).total, 1);
+  assert.equal(S.search("  font   mono  ", vals()).total, 2);
 });
 
 check("the key bindings row is found by any shortcut action's name or id", () => {
@@ -220,7 +221,7 @@ check("the corpus merges the section title, group name and src file name", () =>
   // Section title: "appearance" hits every visible row of that section.
   const app = S.search("appearance", vals());
   assert.deepEqual(app.groups.flatMap(g => g.rows.map(r => r.id)),
-    ["theme", "accent", "density", "fontSize", "monoChat", "chatWidth", "textBrightness", "custom:bgImage", "glassEffect"]);
+    ["theme", "accent", "density", "fontSize", "monoChat", "uiFontFamily", "uiFontSize", "uiDensity", "chatWidth", "textBrightness", "custom:bgImage", "glassEffect"]);
   // Group name: "updates" is not on any row's own text.
   assert.ok(S.search("updates", vals()).groups.flatMap(g => g.rows).some(r => r.id === "updateCheck"));
   // The src file name, verbatim and without ".json".

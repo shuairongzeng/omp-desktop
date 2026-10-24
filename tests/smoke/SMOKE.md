@@ -43,7 +43,7 @@ the run leaves the tab layout byte-identical to how it found it.
 | step | what it proves |
 |---|---|
 | `boot/cdp-connect` | the exe launches, WebView2 accepts the debug port, the tauri.localhost page target answers |
-| `boot/root-rendered` | React mounted: `#root` has children (a black window fails here, not everywhere) |
+| `boot/timing` | the startup budget: spawn → root / composer / bridge in ms, hard assert composer < 8000 ms, WARN over 6500 ms (see below) |
 | `boot/no-recorded-errors` | `window.OMP_ERRORS` ring is empty once the app boots — the only sentinel for module-eval failures (a missing top-level global kills a script before React exists, so no boundary can catch it) |
 | `ui/settings-open-close` | status-bar settings button → `.settings` visible → tab close works |
 | `ui/command-bridge-open-close` | composer bridge button → `.bridge[aria-label="command bridge"]` → Escape through the real esc stack |
@@ -58,6 +58,44 @@ exe predates the boundaries (no `PanelBoundary`/`AppBoundary` in the react
 tree) the two fault steps FAIL with "exe lacks boundaries" — that is the
 documented verdict for an old build, not a suite bug; `--skip-fault` omits
 them.
+
+## startup budget (boot/timing)
+
+every phase is measured from `cdp.t0` — the `Date.now()` right before the
+spawn call in `cdp.mjs`. Node and the webview share the wall clock, so the
+deltas are honest wall time:
+
+- **spawn → root rendered** — `#root` has children (React committed)
+- **spawn → composer** — `.composer-input textarea, .composer textarea`
+  exists: an active tab's UI is usable
+- **spawn → bridge connected** — `window.OMP_BRIDGE?.isConnected === true`
+
+the step prints a `[smoke] timing` table, then:
+
+- **hard assert: composer < 8000 ms** — the budget. the integrator's
+  hot-machine baseline is 5161 ms; 8000 leaves headroom for a cold file
+  cache, a first-boot WebView2 profile and heavier saved transcripts
+  without flaking
+- **WARN at > 6500 ms** — inside the assert but drifting from baseline;
+  regressions should surface here first, as a signal before they become
+  failures
+
+the numbers are **upper bounds**: `cdp.waitExpr` polls at 200 ms and each
+probe is an IPC round-trip, so the printed value can sit up to ~200 ms
+past the true moment. watch trends across runs, not single milliseconds.
+
+baseline (release exe @270ce01, same machine, hot cache; the integrator's
+colder baseline in parentheses):
+
+| phase | this machine | integrator baseline |
+|---|---|---|
+| spawn → root | 1336–2441 ms | 4922 ms |
+| spawn → composer | 1564–2718 ms | 5161 ms |
+| spawn → bridge | 1571–2729 ms | 5379 ms |
+
+what sits between DCL and the first React commit (and where the startup
+wall actually goes) is broken down in `startup-notes.md`, produced with
+`tests/smoke/startup-probe.mjs`.
 
 ## console whitelist
 

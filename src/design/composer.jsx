@@ -30,7 +30,12 @@ const { isDesktop, slashMenu, midPromptSlashToken, skillMenu, matchesQuery, inse
 const {
   entryOf: draftEntryOf, updateEntry: updateDraftEntry, pruneEntries: pruneDrafts, DRAFT_IDLE, recallInDraft,
   normalizePaste, shouldCollapsePaste, collapsePaste, pastesIn, expandPastes, inlinePaste,
+  DRAFTS_STORE_KEY, parseDraftsStore, draftStorePut, savedDraftText, serializeDraftsStore,
 } = window.OMP_SESSION_UI;
+// How long a draft edit waits before its text reaches localStorage
+// (session-ui.js's store helpers hold the pure half; the timer lives
+// here, with the draft itself).
+const _CMP_DRAFT_SAVE_MS = 300;
 const { restoredDraft: restoredQueueDraft } = window.OMP_QUEUE;
 // The footer's send/newline chord labels per `submitKey` tweak
 // (constants.js isSubmitKey decides what actually sends).
@@ -59,7 +64,7 @@ function hintKeyFor(actionId, fallback) {
 // ── The composer (input + plan/steer modes + send) ────────────────────
 // `submitKey` ("enter" | "ctrl+enter") and `pasteCollapseLines` come from the
 // tweaks (Settings › Composer); the defaults match TWEAK_DEFAULTS.
-function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePlan, planBlocked = "", goalMode = false, goalTint = false, onToggleGoal, goalBlocked = "", goalStrip = null, onOpenCmd, onOpenModel, currentModel, thinking, onLoadThinkingLevels, onSetThinking, isStreaming, backgroundWork = false, onAbort, onApprove, annotationCount = 0, microcopy, onFollowUp, draftInsert, promptHistory = [], promptInsert, queue, queueSending, onRemoveQueued, onPromoteQueued, onSendQueuedNow, browserChips = [], onRemoveBrowserChip, onBrowserChipClick, submitKey = "enter", pasteCollapseLines = 5, approvalCell = null, exitReason = null, onRestart = null }) {
+function Composer({ sessionId, sessionIds, draftStoreKey = null, onSend, onPick, planMode, onTogglePlan, planBlocked = "", goalMode = false, goalTint = false, onToggleGoal, goalBlocked = "", goalStrip = null, onOpenCmd, onOpenModel, currentModel, thinking, onLoadThinkingLevels, onSetThinking, isStreaming, backgroundWork = false, onAbort, onApprove, annotationCount = 0, microcopy, onFollowUp, draftInsert, promptHistory = [], promptInsert, queue, queueSending, onRemoveQueued, onPromoteQueued, onSendQueuedNow, browserChips = [], onRemoveBrowserChip, onBrowserChipClick, submitKey = "enter", pasteCollapseLines = 5, approvalCell = null, exitReason = null, onRestart = null }) {
   // Drafts are per tab (issue #28). The composer stays mounted across tab
   // switches and keeps one draft per session id (app/session-ui.js
   // DRAFT_IDLE): text, pending image attachments (sent alongside the next
@@ -94,6 +99,97 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
   const sessionIdRef = React.useRef(sessionId);
   sessionIdRef.current = sessionId;
   React.useEffect(() => { setDrafts(m => pruneDrafts(m, sessionIds)); }, [sessionIds]);
+
+  // ── Draft persistence across restarts (R7) ────────────────────────────
+  // Text only, in localStorage key OMP_SESSION_UI.DRAFTS_STORE_KEY, written
+  // 300 ms after the last edit. A send removes the entry so a restart after
+  // sending does not resurrect the message. Never sends, never restores
+  // attachments, pastes or a recall position — the restored value is only
+  // textarea text. A write failure (quota, privacy mode) is logged once per
+  // document and never breaks typing.
+  //
+  // The store key is `draftStoreKey`, NOT `sessionId`: live.js mints
+  // `session-<ms>` ids per launch, so a restart never sees the same id and
+  // an id-keyed store would restore nothing. app-live.jsx passes the tab's
+  // stable identity — its conversation file, else its folder (a fresh tab
+  // with no conversation yet) — so a restored draft lands on the tab it
+  // was typed in. null (no file, no folder: a pathless resumed tab) is not
+  // persisted at all.
+  const draftsStoreRef = React.useRef(null); // parsed map, or null = unread
+  // Set once a localStorage write threw: every later write is skipped, so
+  // a hostile store cannot spam the console per keystroke.
+  const draftsBrokenRef = React.useRef(false);
+  const loadDraftsStore = () => {
+    if (draftsStoreRef.current === null) {
+      draftsStoreRef.current = parseDraftsStore(
+        typeof localStorage !== "undefined" ? localStorage.getItem(DRAFTS_STORE_KEY) : null
+      );
+    }
+    return draftsStoreRef.current;
+  };
+  const saveDraftText = (storeKey, nextText) => {
+    if (draftsBrokenRef.current || !storeKey) return;
+    const store = draftStorePut(loadDraftsStore(), storeKey, nextText);
+    draftsStoreRef.current = store;
+    try {
+      localStorage.setItem(DRAFTS_STORE_KEY, serializeDraftsStore(store));
+    } catch (e) {
+      draftsBrokenRef.current = true;
+      console.error("[composer] persisting the draft failed:", e);
+    }
+  };
+  // Store keys this document has saved (the session they were written for
+  // is remembered for the restore side): the tab-close prune below needs
+  // it, because the in-memory drafts map is keyed by session id, not by
+  // store key — the only place both meet is this map.
+  const draftKeyOwners = React.useRef(new Map()); // storeKey → sessionId
+  const rememberKeyOwner = (storeKey, id) => {
+    if (storeKey && id) draftKeyOwners.current.set(storeKey, id);
+  };
+  // Debounced save of the active tab's draft text.
+  const draftSaveTimer = React.useRef(null);
+  React.useEffect(() => {
+    rememberKeyOwner(draftStoreKey, sessionId);
+    if (!draftStoreKey) return undefined;
+    clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = setTimeout(() => {
+      draftSaveTimer.current = null;
+      saveDraftText(draftStoreKey, text);
+    }, _CMP_DRAFT_SAVE_MS);
+    return () => clearTimeout(draftSaveTimer.current);
+  }, [draftStoreKey, text]);
+  // A closed tab drops its stored draft: the prune effect above removed the
+  // in-memory entry, and nothing else would write the removal.
+  React.useEffect(() => {
+    clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = setTimeout(() => {
+      draftSaveTimer.current = null;
+      for (const [storeKey, id] of draftKeyOwners.current) {
+        if (sessionIdsRef.current?.includes(id)) continue;
+        draftKeyOwners.current.delete(storeKey);
+        saveDraftText(storeKey, "");
+      }
+    }, _CMP_DRAFT_SAVE_MS);
+    return () => clearTimeout(draftSaveTimer.current);
+  }, [sessionIds]);
+  // Restore: only for a session this document has never held a draft for
+  // (the restart case — composer.jsx mounts fresh, `drafts` starts `{}`),
+  // and only while it still owns the same store key (a conversation
+  // switched files mid-document keeps what was typed; the new file's own
+  // saved draft is not fetched over it). A webview reload while React
+  // state survives, or a draft already typed, is left alone: the live text
+  // is newer than anything on disk.
+  React.useEffect(() => {
+    if (!sessionId || !draftStoreKey) return;
+    rememberKeyOwner(draftStoreKey, sessionId);
+    let saved;
+    setDrafts(m => {
+      if (Object.hasOwn(m, sessionId)) return m;
+      saved ??= savedDraftText(loadDraftsStore(), draftStoreKey);
+      if (saved === "") return m;
+      return { ...m, [sessionId]: { ...DRAFT_IDLE, text: saved } };
+    });
+  }, [sessionId, draftStoreKey]);
   const [activeIdx, setActiveIdx] = React.useState(0);
   const taRef   = React.useRef(null);
   // Global "focus the composer" chord (desktop.composer.focus): app-live
@@ -546,6 +642,11 @@ function Composer({ sessionId, sessionIds, onSend, onPick, planMode, onTogglePla
     // can have queued its increment after the render this send read, and
     // its decrement still lands later.
     updateDraft(sessionId, d => (d.pendingImages ? { ...DRAFT_IDLE, pendingImages: d.pendingImages } : DRAFT_IDLE));
+    // The sent text leaves the persisted store too (session-ui.js's
+    // draftStorePut drops the entry on empty text): a restart after a
+    // send must not resurrect the message into the composer. Immediate,
+    // not debounced — a quit racing the timer would otherwise re-show it.
+    saveDraftText(draftStoreKey, "");
     setMentionDismissedKey(null);
     setSlashDismissedKey(null);
     // Phone: no refocus after send — the keyboard is only up when the

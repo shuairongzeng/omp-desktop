@@ -501,6 +501,112 @@ check("guest: AltGr (reported as ctrl+alt) types, even on a bound chord", () => 
   });
 });
 
+// ── desktop.tab.jump (Ctrl+1..9, R7) ─────────────────────────────────────────
+//
+// The action is registered with nine digit chords; app-live.jsx derives N
+// from the pressed event's key. These pin the registry rows and the two
+// dispatch-level guards the handler relies on: `allowedInInput` (the chord
+// fires from inside a text field — ctrl+ carries a command, it is not
+// typing) and `guestShouldBypass` (the chord does NOT leave the terminal's
+// xterm or the browser panel's page, matching plain ctrl+t/ctrl+w's rule).
+
+check("tab jump: the action is registered under Tabs with exactly the nine digit chords", () => {
+  const action = K.KEYMAP_ACTIONS.find(a => a.id === "desktop.tab.jump");
+  assert.ok(action, "desktop.tab.jump missing from KEYMAP_ACTIONS");
+  assert.equal(action.group, "Tabs");
+  assert.equal(action.scope, "global");
+  assert.equal(action.fromGuest, undefined, "a plain ctrl+digit chord stays the guest's");
+  assert.deepEqual(action.defaultKeys, [
+    "ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5",
+    "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9",
+  ]);
+});
+
+check("tab jump: ctrl+digit events resolve to the action (chordFromEvent + lookup)", () => {
+  for (const digit of "123456789") {
+    const chord = K.chordFromEvent({ key: digit, ctrlKey: true, shiftKey: false, altKey: false, metaKey: false, isComposing: false });
+    assert.equal(chord, `ctrl+${digit}`);
+    assert.equal(K.lookup(chord), "desktop.tab.jump", `ctrl+${digit}`);
+  }
+  // Nothing beyond 9 is bound.
+  assert.equal(K.lookup("ctrl+0"), null);
+});
+
+check("tab jump: a chordFromEvent shift+1 is ctrl+shift+1, which is not the jump chord", () => {
+  // Shift+1 produces "!" on most layouts; the non-alpha branch clears shift
+  // so the chord is "ctrl+!". Either way it must not resolve to the action.
+  const shifted = K.chordFromEvent({ key: "!", ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, isComposing: false });
+  assert.notEqual(shifted, null);
+  assert.notEqual(K.lookup(shifted), "desktop.tab.jump");
+});
+
+check("tab jump: every chord is allowed in a typing target (allowedInInput)", () => {
+  for (const k of K.keysFor("desktop.tab.jump")) {
+    assert.equal(K.allowedInInput(k), true, k);
+  }
+});
+
+check("tab jump: an IME-composing ctrl+digit never fires", () => {
+  const e = { key: "3", ctrlKey: true, shiftKey: false, altKey: false, metaKey: false, isComposing: true };
+  assert.equal(K.chordFromEvent(e), null);
+});
+
+check("tab jump: a composing dispatch guard runs the dispatcher's own order", () => {
+  // The dispatcher (use-keymap.jsx) bails before the handler when the target
+  // is a typing target and the chord is not allowedInInput. Mirror it, so a
+  // regression in either predicate fails here, not in a user's textarea.
+  const dispatches = (e) => {
+    const chord = K.chordFromEvent(e);
+    if (!chord) return false;
+    const id = K.lookup(chord);
+    if (!id) return false;
+    if (e.target && K.isTypingTarget(e.target) && !K.allowedInInput(chord)) return false;
+    return true;
+  };
+  const ctrl5 = { key: "5", ctrlKey: true, shiftKey: false, altKey: false, metaKey: false, isComposing: false };
+  assert.equal(dispatches(ctrl5), true, "anywhere");
+  assert.equal(dispatches({ ...ctrl5, target: { tagName: "TEXTAREA" } }), true, "in the composer's textarea");
+  assert.equal(dispatches({ ...ctrl5, target: { tagName: "INPUT" } }), true, "in an input");
+  assert.equal(dispatches({ ...ctrl5, isComposing: true }), false, "while composing");
+});
+
+check("tab jump: the chords stay the guest's in xterm and the browser panel", () => {
+  for (const isMac of [LINUX, MAC]) {
+    for (const digit of ["1", "5", "9"]) {
+      assert.equal(bypass(ev(digit, "c"), isMac), false, `ctrl+${digit} isMac=${isMac} — plain ctrl chords belong to the guest`);
+    }
+  }
+});
+
+check("tab jump: rebinding the block moves all nine chords together", () => {
+  withBindings({ "desktop.tab.jump": ["super+1", "super+2"] }, () => {
+    assert.equal(K.lookup("super+1"), "desktop.tab.jump");
+    assert.equal(K.lookup("super+2"), "desktop.tab.jump");
+    assert.equal(K.lookup("ctrl+1"), null, "the old default chord is unbound");
+    // super+ chords do bypass a guest, so a rebound block still works in xterm.
+    assert.equal(bypass(ev("1", "m"), LINUX), true);
+  });
+  // Restored by withBindings' finally.
+  assert.equal(K.lookup("ctrl+1"), "desktop.tab.jump");
+});
+
+check("tab jump: unbinding the action frees all nine chords", () => {
+  withBindings({ "desktop.tab.jump": [] }, () => {
+    for (const digit of "123456789") assert.equal(K.lookup(`ctrl+${digit}`), null);
+    assert.equal(bypass(ev("1", "c"), LINUX), false);
+  });
+});
+
+check("registry: tab jump's default chords collide with nothing else in the default set", () => {
+  // Redundant with the global no-duplicate check above, but names the new
+  // action explicitly: ctrl+1..9 were previously unclaimed.
+  const others = K.KEYMAP_ACTIONS.filter(a => a.id !== "desktop.tab.jump");
+  const claimed = new Set(others.flatMap(a => a.defaultKeys));
+  for (const chord of K.KEYMAP_ACTIONS.find(a => a.id === "desktop.tab.jump").defaultKeys) {
+    assert.equal(claimed.has(chord), false, `${chord} already claimed`);
+  }
+});
+
 // ── Done ──────────────────────────────────────────────────────────────────────
 
 console.log(`keymap: ${passed} checks passed`);

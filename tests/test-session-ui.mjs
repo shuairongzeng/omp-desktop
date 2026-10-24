@@ -347,4 +347,118 @@ check("a null comment removes the annotation without mutating the old plan", () 
   assert.deepEqual(PLAN_IDLE.annotations, {});
 });
 
+// ── Draft persistence across restarts (R7) ────────────────────────────
+// session-ui.js holds the pure half: parse/put/serialize the localStorage
+// map. The composer owns the timer and the actual DOM writes; these cover
+// the store algebra — the cap, eviction order, corrupt-JSON tolerance and
+// the send's removal — without a fake localStorage.
+
+check("store key and cap are the specified constants", () => {
+  assert.equal(S.DRAFTS_STORE_KEY, "omp-desktop:drafts");
+  assert.equal(S.DRAFTS_MAX, 50);
+});
+
+check("parseDraftsStore: valid JSON object round-trips (own string entries only)", () => {
+  assert.deepEqual(S.parseDraftsStore(S.serializeDraftsStore({ a: "text a", b: "" })), { a: "text a" });
+});
+
+check("parseDraftsStore: corrupt JSON, non-object and empty all read as nothing saved", () => {
+  assert.deepEqual(S.parseDraftsStore("{not json"), {});
+  assert.deepEqual(S.parseDraftsStore(""), {});
+  assert.deepEqual(S.parseDraftsStore(null), {});
+  assert.deepEqual(S.parseDraftsStore(JSON.stringify(["a", "b"])), {});
+  assert.deepEqual(S.parseDraftsStore(JSON.stringify(null)), {});
+  assert.deepEqual(S.parseDraftsStore(JSON.stringify("str")), {});
+});
+
+check("parseDraftsStore: non-string values are dropped; prototype-named keys are ordinary own keys", () => {
+  // A JSON key like "toString" or "__proto__" lands as a plain own property
+  // of the parsed object; own-checks (Object.hasOwn) see it, so it is kept
+  // like any other entry when its value is a string, and dropped when not.
+  assert.deepEqual(S.parseDraftsStore('{"a":"ok","b":3,"c":null,"d":true}'), { a: "ok" });
+  const withToString = S.parseDraftsStore('{"a":"ok","toString":"x"}');
+  assert.deepEqual(withToString, { a: "ok", toString: "x" });
+  assert.equal(Object.keys(withToString).length, 2);
+});
+
+check("draftStorePut: a new text lands in the map, empty text is not stored", () => {
+  const store = S.draftStorePut({}, "session-1", "half-typed");
+  assert.deepEqual(store, { "session-1": "half-typed" });
+  assert.deepEqual(S.draftStorePut(store, "session-1", ""), {});
+  assert.deepEqual(S.draftStorePut({}, "session-1", ""), {});
+});
+
+check("draftStorePut: empty text drops only that entry, keeps the others", () => {
+  const store = S.draftStorePut(S.draftStorePut({}, "a", "A"), "b", "B");
+  assert.deepEqual(S.draftStorePut(store, "a", ""), { b: "B" });
+  // Dropping a missing entry keeps the same map reference.
+  assert.equal(S.draftStorePut(store, "c", ""), store);
+});
+
+check("draftStorePut: eviction keeps the 50 newest, dropping the oldest first", () => {
+  let store = {};
+  for (let i = 1; i <= 50; i++) store = S.draftStorePut(store, `k${i}`, `t${i}`);
+  assert.equal(Object.keys(store).length, 50);
+  assert.equal(store.k1, "t1");
+  // A 51st new entry evicts k1 (the oldest), not k50.
+  store = S.draftStorePut(store, "k51", "t51");
+  assert.equal(Object.keys(store).length, 50);
+  assert.equal(Object.hasOwn(store, "k1"), false);
+  assert.equal(store.k2, "t2");
+  assert.equal(store.k51, "t51");
+});
+
+check("draftStorePut: re-putting an existing key never evicts anything", () => {
+  let store = {};
+  for (let i = 1; i <= 50; i++) store = S.draftStorePut(store, `k${i}`, `t${i}`);
+  const next = S.draftStorePut(store, "k1", "rewritten");
+  assert.equal(Object.keys(next).length, 50);
+  assert.equal(next.k1, "rewritten");
+  assert.equal(next.k50, "t50");
+});
+
+check("draftStorePut: a bad key or non-string text is a no-op", () => {
+  const store = { a: "A" };
+  assert.equal(S.draftStorePut(store, "", "x"), store);
+  assert.equal(S.draftStorePut(store, null, "x"), store);
+  assert.equal(S.draftStorePut(store, "a", undefined), store);
+  assert.equal(S.draftStorePut(store, "a", 7), store);
+});
+
+check("draftStorePut never mutates the store it was handed", () => {
+  const store = Object.freeze({ a: "A" });
+  const next = S.draftStorePut(store, "b", "B");
+  assert.deepEqual(store, { a: "A" });
+  assert.deepEqual(next, { a: "A", b: "B" });
+});
+
+check("savedDraftText: the stored text for a key, empty for the rest", () => {
+  const store = S.parseDraftsStore(S.serializeDraftsStore({ "session-9": "draft text" }));
+  assert.equal(S.savedDraftText(store, "session-9"), "draft text");
+  assert.equal(S.savedDraftText(store, "session-8"), "");
+  assert.equal(S.savedDraftText(store, ""), "");
+  assert.equal(S.savedDraftText(store, "toString"), "");
+});
+
+check("serializeDraftsStore + parseDraftsStore round-trip preserves insertion order (eviction order)", () => {
+  const store = { b: "2nd", a: "1st", c: "3rd" };
+  const back = S.parseDraftsStore(S.serializeDraftsStore(store));
+  assert.deepEqual(Object.keys(back), ["b", "a", "c"]);
+});
+
+check("a restored draft is plain textarea text: no send, no attachments, no pastes", () => {
+  // The restore path (composer.jsx) seeds { ...DRAFT_IDLE, text: saved }:
+  // nothing else survives a restart. This pins the shape it must keep —
+  // DRAFT_IDLE's own attachments/pastes/historyNav, so a restored draft
+  // can never send itself (sendable needs text AND a dispatcher).
+  const saved = S.savedDraftText(S.parseDraftsStore('{"s1":"hello"}'), "s1");
+  const restored = { ...DRAFT_IDLE, text: saved };
+  assert.equal(restored.text, "hello");
+  assert.deepEqual(restored.attachments, []);
+  assert.deepEqual(restored.pastes, {});
+  assert.equal(restored.pasteCounter, 0);
+  assert.equal(restored.pendingImages, 0);
+  assert.equal(restored.historyNav, null);
+});
+
 console.log(`test-session-ui: ${passed} passed`);
