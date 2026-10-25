@@ -458,60 +458,7 @@
     z-index: 30;
   }
 
-  /* Sheet rows (the ＋ panel body). */
-  .cmp-sheet-notice {
-    display: block;
-    color: var(--rose);
-    font-size: var(--d-text-sm);
-    padding: 2px 12px 6px;
-  }
-  .cmp-sheet-row {
-    display: flex; align-items: center; gap: 13px;
-    width: 100%;
-    min-height: 48px;
-    padding: 6px 10px;
-    border: 0; border-radius: var(--r-2);
-    background: transparent;
-    color: var(--fg-2);
-    font: inherit; font-size: 15px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .cmp-sheet-row:active { background: var(--bg-hover); }
-  .cmp-sheet-row.on { color: var(--fg); background: var(--bg-hover); }
-  .cmp-sheet-ic {
-    flex: none;
-    width: 34px; height: 34px;
-    display: flex; align-items: center; justify-content: center;
-    border-radius: 9px;
-    background: color-mix(in oklab, var(--bg-hover) 60%, transparent);
-  }
-  .cmp-sheet-tx { flex: 1; min-width: 0; }
-  .cmp-sheet-tx .s { display: block; font-size: 11.5px; color: var(--fg-4); }
-  .cmp-sheet-val { color: var(--accent); font-size: 13px; flex: none; }
-  .cmp-sheet-sep { height: 1px; background: var(--line); margin: 6px 10px; }
-  /* The prompt-history drill-in (composer.jsx sheetView "history"): a
-     scroll box under the back row, the same shape as app-live's
-     directory browser (.mob-dir-list) — the sheet itself caps at
-     --vvh, this caps the list so the back row stays pinned. Rows are
-     prompt text only (no 34px icon slot): clamped to two lines, the
-     modal's own row density. The empty state reuses the row chrome
-     without being a button. */
-  .cmp-sheet-list {
-    max-height: 38vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    padding: 0 4px;
-  }
-  .cmp-sheet-list .cmp-sheet-row { min-height: 44px; align-items: flex-start; padding: 9px 10px; }
-  .cmp-sheet-pt {
-    font-size: 13px; line-height: 1.35; color: var(--fg-2);
-    white-space: pre-wrap;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-  .cmp-sheet-list .cmp-sheet-row:active .cmp-sheet-pt { color: var(--fg); }
-  .cmp-sheet-empty { cursor: default; color: var(--fg-4); font-size: 13px; }
+
 }
 
 /* MobileSheet (design/mobile-sheet.jsx) — global, not composer-scoped,
@@ -595,4 +542,76 @@
     font-size: var(--d-text-xs);
     padding: 0 0 6px;
   }
+}
+
+/* Sheet content rows — unconditional, scoped to the sheet root. Every
+   consumer (composer ＋ panel, remote folder sheet) renders inside
+   MobileSheet/.ms-root, so these never touch the desktop app. Values are
+   the phone tier's; wide remote clients override below. */
+/* Sheet rows (the ＋ panel body). */
+.ms-root .cmp-sheet-notice {
+    display: block;
+    color: var(--rose);
+    font-size: var(--d-text-sm);
+    padding: 2px 12px 6px;
+  }
+.ms-root .cmp-sheet-row {
+    display: flex; align-items: center; gap: 13px;
+    width: 100%;
+    min-height: 48px;
+    padding: 6px 10px;
+    border: 0; border-radius: var(--r-2);
+    background: transparent;
+    color: var(--fg-2);
+    font: inherit; font-size: 15px;
+    text-align: left;
+    cursor: pointer;
+  }
+.ms-root .cmp-sheet-row:active { background: var(--bg-hover); }
+.ms-root .cmp-sheet-row.on { color: var(--fg); background: var(--bg-hover); }
+.ms-root .cmp-sheet-ic {
+    flex: none;
+    width: 34px; height: 34px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 9px;
+    background: color-mix(in oklab, var(--bg-hover) 60%, transparent);
+  }
+.ms-root .cmp-sheet-tx { flex: 1; min-width: 0; }
+.ms-root .cmp-sheet-tx .s { display: block; font-size: 11.5px; color: var(--fg-4); }
+.ms-root .cmp-sheet-val { color: var(--accent); font-size: 13px; flex: none; }
+.ms-root .cmp-sheet-sep { height: 1px; background: var(--line); margin: 6px 10px; }
+/* The prompt-history drill-in (composer.jsx sheetView "history"): a
+     scroll box under the back row, the same shape as app-live's
+     directory browser (.mob-dir-list) — the sheet itself caps at
+     --vvh, this caps the list so the back row stays pinned. Rows are
+     prompt text only (no 34px icon slot): clamped to two lines, the
+     modal's own row density. The empty state reuses the row chrome
+     without being a button. */
+.ms-root .cmp-sheet-list {
+    max-height: 38vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 0 4px;
+  }
+.ms-root .cmp-sheet-list .cmp-sheet-row { min-height: 44px; align-items: flex-start; padding: 9px 10px; }
+.ms-root .cmp-sheet-pt {
+    font-size: 13px; line-height: 1.35; color: var(--fg-2);
+    white-space: pre-wrap;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+.ms-root .cmp-sheet-list .cmp-sheet-row:active .cmp-sheet-pt { color: var(--fg); }
+.ms-root .cmp-sheet-empty { cursor: default; color: var(--fg-4); font-size: 13px; }
+
+@media (min-width: 761px) {
+  html.remote-shim .ms-root .cmp-sheet-row { min-height: 36px; gap: 10px; font-size: 14px; }
+  html.remote-shim .ms-root .cmp-sheet-row:hover { background: var(--bg-hover); color: var(--fg); }
+  html.remote-shim .ms-root .cmp-sheet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  html.remote-shim .ms-root .cmp-sheet-ic { width: 28px; height: 28px; border-radius: 7px; }
+  html.remote-shim .ms-root .mob-dir-head { min-height: 36px; }
+  html.remote-shim .ms-root .mob-dir-head .btn { height: 36px; }
+  html.remote-shim .ms-root .mob-dir-list { max-height: 50vh; }
+  html.remote-shim .ms-root .mob-dir-list .cmp-sheet-row { min-height: 32px; }
+  html.remote-shim .ms-root .mob-folder-input input,
+  html.remote-shim .ms-root .mob-folder-input .btn { height: 36px; }
 }

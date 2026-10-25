@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The remote folder sheet rendered as an unreadable chip cloud on tablets and desktop browsers** — every content-row style (`cmp-sheet-*`, `mob-dir-*`, the typed-path row) was locked inside the ≤760px media tier. The base layout now lives under `.ms-root` (sheets mount only on touch devices and remote clients, so the desktop app is untouched), with compact density + hover/focus states for wide remote clients
 - **"open folder…" and the tab-bar "+" did nothing on a phone in desktop-mode UA** (or any remote client reporting a fine pointer) — the folder sheet's opener routed by `isRemote()` but its render gate required `isTouch()`, and the sheet CSS was display:none above 760px. The gate now follows the opener, and on wide/fine-pointer remote clients the sheet presents as a centered card
 - **Phones could stay on a stale page for a day after a same-version redeploy** — the relay served JS with `max-age=86400` and the `?v=` stamp only changes with the app version, so a fixed phone page never reached a cached handset (this is why a re-pair seemed to "do nothing" after the E2E upgrade). All static responses now revalidate (`no-cache`) with an etag → 304 when nothing changed
 
