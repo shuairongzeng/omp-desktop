@@ -103,6 +103,10 @@ pub struct Pairing {
     pub friendly_name: Option<String>,
     /// Pair-token expiry (from `pair_begin`, 5 min).
     pub expires_at: Instant,
+    /// The phone's E2E pairing key from its `pair_hello` (base64 X25519
+    /// public key, opaque to the relay). In-memory only — never
+    /// persisted, never logged.
+    pub phone_pk: Option<String>,
     /// Set once the phone connects; carries the grant/deny verdict to it.
     pub phone_tx: Option<Outbox>,
 }
@@ -443,6 +447,7 @@ mod tests {
             user_agent: String::new(),
             friendly_name: None,
             expires_at: Instant::now() + std::time::Duration::from_secs(300),
+            phone_pk: None,
             phone_tx: None,
         };
         let tok = s.pair_token.clone();
@@ -466,6 +471,7 @@ mod tests {
             user_agent: String::new(),
             friendly_name: None,
             expires_at: Instant::now() - std::time::Duration::from_secs(1),
+            phone_pk: None,
             phone_tx: None,
         };
         let tok2 = s2.pair_token.clone();
@@ -491,6 +497,7 @@ mod tests {
             user_agent: String::new(),
             friendly_name: None,
             expires_at: Instant::now() + std::time::Duration::from_secs(60),
+            phone_pk: None,
             phone_tx: None,
         };
         let stale = Pairing {
@@ -501,6 +508,7 @@ mod tests {
             user_agent: String::new(),
             friendly_name: None,
             expires_at: Instant::now() - std::time::Duration::from_secs(1),
+            phone_pk: None,
             phone_tx: None,
         };
         let stale_id = stale.pair_id.clone();

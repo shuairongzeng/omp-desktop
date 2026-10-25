@@ -1,10 +1,12 @@
 # omp-relay
 
 The self-hosted relay for OMP Desktop's phone remote control
-(`../docs/architecture/remote-control.md`). One static binary: serves the
-phone UI from `../src` (or any `static_dir`), authenticates and joins
+(`../docs/architecture/remote-control.md`; E2E extension:
+`../docs/architecture/remote-e2e-contract.md`). One static binary: serves
+the phone UI from `../src` (or any `static_dir`), authenticates and joins
 WebSocket rooms, and forwards frames verbatim between a desktop and its
-paired phones. It never parses payloads.
+paired phones. It never parses payloads — including the v2 `enc` frame's
+ciphertext, which stays opaque end to end.
 
 ## Build
 
@@ -105,9 +107,31 @@ ReadWritePaths=/etc/omp-relay
 WantedBy=multi-user.target
 ```
 
+## Protocol frames
+
+Control frames (see `../docs/architecture/remote-e2e-contract.md` for the
+authoritative list). E2E-relevant additions:
+
+| Frame | Direction | Fields (envelope-checked by the relay) |
+|---|---|---|
+| `pair_hello` | phone -> relay (pre-auth pair socket) | `pk` (string, required) — the phone's X25519 pairing key |
+| `pair_request` | relay -> desktop | `pair_id`, `agent`, `pk` (the phone's key, when it sent one) |
+| `pair_grant` | desktop -> relay | `pair_id` (required), `pk` (optional — the desktop's key) |
+| `paired` | relay -> phone | `device`, `token`, `pk` (the desktop's key, when granted) |
+| `pair_done` | relay -> desktop | `pair_id`, `ph` (sha256-hex of the fresh phone token) |
+| `hs` | phone <-> desktop | `pk` + `mac` (strings, required), `v`/`ph` optional; desktop's reply carries `to` (phone conn id) |
+| `enc` | phone <-> desktop | `seq` (integer) + `d` (string), required; `to` (phone conn id) optional on desktop->phone |
+| `peer` (phone) | relay -> desktop | `phone`/`conn` (conn id), `name`, `online`, `ph` (the phone's token hash) |
+
+Routing: phone `hs`/`enc` go to the desktop `from`-tagged (same as `cmd`);
+desktop `hs`/`enc` with `to` unicast that phone (dropped when gone — the
+ciphertext is keyed to one phone, a broadcast would only leak); `enc`
+without `to` broadcasts (v1 compatibility). The relay reads nothing inside
+`d` — it cannot, by design.
+
 ## Test
 
 ```bash
-cargo test            # unit + integration (rooms, pairing, revoke, oversize, res unicast, hello, phone names)
+cargo test            # unit + integration (rooms, pairing, revoke, oversize, res unicast, hello, phone names, E2E)
 curl -s http://127.0.0.1:8787/healthz   # ok
 ```

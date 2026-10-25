@@ -10,6 +10,12 @@
 //! Pairing: the pre-auth phone's socket is owned by a dedicated wait task;
 //! the desktop's `pair_grant`/`pair_deny` reaches it through the pairing's
 //! stored outbox (`Outbound::Text` verdict, then `Outbound::Close`).
+//!
+//! E2E (v2, `docs/architecture/remote-e2e-contract.md`): the relay routes
+//! `hs` handshakes and `enc` ciphertext envelopes without ever looking
+//! inside them. `pair_hello`'s key is stashed in the pairing session and
+//! rides `pair_request`; the desktop's grant key rides `paired`, and the
+//! fresh phone token's hash goes back to the desktop in `pair_done`.
 
 use crate::config::{clean_phone_name, phone_name, sha256_hex};
 use crate::frame::{self, Inbound};
@@ -187,8 +193,14 @@ async fn register_phone(app: &SharedApp, device: &str, hash: &str, name: &str) -
             .phones
             .insert(conn.id.clone(), (conn.clone(), tx));
     }
-    // The desktop refcounts per-phone subscriptions from these peer frames.
-    tell_desktop(app, device, &frame::emit::peer_phone(&conn.id, name, true)).await;
+    // The desktop refcounts per-phone subscriptions from these peer frames
+    // and (v2) maps conn id ↔ token hash for E2E session keys.
+    tell_desktop(
+        app,
+        device,
+        &frame::emit::peer_phone(&conn.id, name, true, Some(hash)),
+    )
+    .await;
     conn
 }
 
@@ -199,6 +211,13 @@ async fn register_phone(app: &SharedApp, device: &str, hash: &str, name: &str) -
 /// Hold the pre-auth phone's socket while the desktop decides: the pairing
 /// carries the phone's outbox; the desktop's grant/deny handler writes the
 /// verdict into it. 60 s with no verdict = denied by timeout.
+///
+/// E2E: the phone's first frame is `pair_hello` (its X25519 pairing key).
+/// The pair_request is held back for a short grace window so the key can
+/// ride it (the key IS the request's pairing identity); the window ends
+/// early the moment the hello lands, so the common case is keyless
+/// wait-free. A hello arriving after the request went out updates the
+/// session and re-sends the request with the key (idempotent).
 async fn pairing_wait(
     app: SharedApp,
     ws: WebSocketUpgrade,
@@ -215,15 +234,9 @@ async fn pairing_wait(
     // Capability handshake: the phone learns the relay's caps immediately,
     // even while it waits for the verdict.
     phone_tx.send(Outbound::Text(frame::emit::hello()));
-    // Tell the room's desktop a phone wants in (it shows the approve/deny
-    // dialog). No desktop → immediate denial.
-    if let Some(dtx) = desktop_sender(&app, &device).await {
-        dtx.send(Outbound::Text(frame::emit::pair_request(
-            &pair_id,
-            &session.user_agent,
-        )));
-    } else {
-        // No desktop in the room: the wait task denies immediately.
+    // No desktop in the room: the wait task denies immediately — no point
+    // waiting for a hello that has nobody to pair with.
+    if desktop_sender(&app, &device).await.is_none() {
         phone_tx.send(Outbound::Text(frame::emit::pair_denied()));
         phone_tx.send(Outbound::Close(close_code::PAIR_DENIED));
     }
@@ -233,10 +246,20 @@ async fn pairing_wait(
         let (mut sink, mut stream) = socket.split();
         let mut phone_rx = phone_rx;
         let deadline = Instant::now() + Duration::from_secs(crate::state::PAIR_DECISION_SECS);
-        // Pin-safe timeout: created once outside the select loop
+        // Short grace window for the phone's `pair_hello` before the
+        // pair_request goes out keyless (a v2 phone sends it as its very
+        // first frame, so the wait is one RTT at most in practice).
+        let hello_deadline = Instant::now() + HELLO_GRACE;
+        // Pin-safe timeouts: created once outside the select loop
         // (`Sleep` is !Unpin, so it cannot be a `&mut` select arm).
         let timeout = tokio::time::sleep_until(deadline.into());
         tokio::pin!(timeout);
+        let hello_window = tokio::time::sleep_until(hello_deadline.into());
+        tokio::pin!(hello_window);
+        // The pair_request is emitted at most twice: once after the grace
+        // window (or the hello, whichever comes first) and again if a
+        // late hello upgrades the session with its key.
+        let mut requested = false;
         loop {
             tokio::select! {
                 out = phone_rx.recv() => {
@@ -253,14 +276,34 @@ async fn pairing_wait(
                         None => break,
                     }
                 }
-                // A pre-auth phone can only await its verdict; its frames
-                // (if any) are ignored.
+                // A pre-auth phone can only await its verdict — except the
+                // single E2E `pair_hello`, which carries the key the
+                // desktop needs to approve. Anything else is ignored.
                 msg = stream.next() => {
                     match msg {
                         Some(Ok(Message::Close(_))) | None => break,
+                        Some(Ok(Message::Text(t))) => {
+                            if let Inbound::Valid(f) = frame::parse(t.as_str()) {
+                                if f.t == "pair_hello" {
+                                    pair_request_update(&app, &pair_id, f.pk).await;
+                                    // The request went out (with the key):
+                                    // the grace arm must never fire a
+                                    // keyless duplicate on top.
+                                    requested = true;
+                                }
+                            }
+                            continue;
+                        }
                         Some(Ok(_)) => continue,
                         Some(Err(_)) => break,
                     }
+                }
+                _ = &mut hello_window, if !requested => {
+                    // Grace over and no hello arrived: the request goes
+                    // out keyless (a v1 phone has no key to send). The
+                    // guard disables this arm permanently afterwards.
+                    requested = true;
+                    send_pair_request(&app, &pair_id).await;
                 }
                 _ = &mut timeout => break,
             }
@@ -269,6 +312,63 @@ async fn pairing_wait(
         // is enough — its receiver is gone with this task.
         app.remove_pairing(&pair_id).await;
     })
+}
+
+/// How long the pairing wait holds the `pair_request` back hoping for the
+/// phone's `pair_hello` (its E2E key). Generous vs an RTT, tiny vs the
+/// 60 s decision window.
+const HELLO_GRACE: Duration = Duration::from_millis(1500);
+
+/// Emit the pair_request for a pairing from its session state (UA + any
+/// stashed phone key). The first emission is the grace-window deadline —
+/// by then a v2 phone's `pair_hello` has normally landed, so the key
+/// rides the request.
+async fn send_pair_request(app: &SharedApp, pair_id: &str) {
+    let (device, request) = {
+        let pairings = app.pairings.lock().await;
+        let Some(session) = pairings.get(pair_id) else {
+            return;
+        };
+        (
+            session.device.clone(),
+            frame::emit::pair_request(
+                pair_id,
+                &session.user_agent,
+                session.phone_pk.as_deref(),
+            ),
+        )
+    };
+    if let Some(dtx) = desktop_sender(app, &device).await {
+        dtx.send(Outbound::Text(request));
+    } else {
+        // Desktop left while the phone waited: deny now (the phone's
+        // socket closes and the UI says why).
+        if let Some(ptx) = pair_phone_tx(app, pair_id).await {
+            ptx.send(Outbound::Text(frame::emit::pair_denied()));
+            ptx.send(Outbound::Close(close_code::PAIR_DENIED));
+        }
+    }
+}
+
+/// The pairing phone's outbox (deny routing when the desktop vanished).
+async fn pair_phone_tx(app: &SharedApp, pair_id: &str) -> Option<Outbox> {
+    let pairings = app.pairings.lock().await;
+    pairings.get(pair_id).and_then(|s| s.phone_tx.clone())
+}
+
+/// A `pair_hello` landed: stash the key, and (re-)send the pair_request
+/// so the desktop sees the pairing with its key. Idempotent — a second
+/// hello just refreshes the key and re-announces.
+async fn pair_request_update(app: &SharedApp, pair_id: &str, pk: Option<String>) {
+    let Some(pk) = pk else { return };
+    {
+        let mut pairings = app.pairings.lock().await;
+        let Some(session) = pairings.get_mut(pair_id) else {
+            return;
+        };
+        session.phone_pk = Some(pk);
+    }
+    send_pair_request(app, pair_id).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +506,38 @@ async fn handle_frame(app: &SharedApp, conn: &Conn, tx: &Outbox, text: &str, hos
                 }
             }
         }
+        // E2E session handshake, phone leg: forward to the desktop with
+        // `from` tagging (same rule as `cmd` — the desktop needs the conn
+        // id to address its reply).
+        (Role::Phone, "hs") => {
+            match desktop_sender(app, &conn.device).await {
+                Some(dtx) => {
+                    let forwarded = frame::tag_from(text, &conn.id);
+                    dtx.send(Outbound::Text(forwarded));
+                }
+                None => {
+                    // No desktop to hand-shake with: the same typed
+                    // fast-fail a `cmd` gets, so the phone's UI can say
+                    // why instead of timing out.
+                    tx.send(Outbound::Text(frame::res_offline(f.id)));
+                }
+            }
+        }
+        // E2E encrypted envelope, phone → desktop: same treatment as `cmd`
+        // — `from`-tagged verbatim forwarding. The `d` payload is opaque.
+        (Role::Phone, "enc") => {
+            match desktop_sender(app, &conn.device).await {
+                Some(dtx) => {
+                    let forwarded = frame::tag_from(text, &conn.id);
+                    dtx.send(Outbound::Text(forwarded));
+                }
+                None => {
+                    // Offline fast-fail: same shape as cmd, so the phone's
+                    // shim can surface it (the seq is not an id; pass it).
+                    tx.send(Outbound::Text(frame::res_offline(f.id)));
+                }
+            }
+        }
         (Role::Phone, "res" | "evt" | "hello") => {} // dropped: phones never emit these
 
         // ---- desktop → relay → phones (verbatim) ----
@@ -420,6 +552,32 @@ async fn handle_frame(app: &SharedApp, conn: &Conn, tx: &Outbox, text: &str, hos
             };
             match routed {
                 Some(tx) => tx.send(Outbound::Text(text.to_string())),
+                None => broadcast_to_phones(app, &conn.device, text).await,
+            }
+        }
+        // E2E session handshake, desktop leg: the desktop answers one
+        // phone's hs. `to` names that phone's conn id — unicast when the
+        // target is in the room; missing `to` or a gone target drops the
+        // frame (an hs reply is per-connection state, a broadcast would
+        // hand every phone the desktop's ephemeral key for nothing).
+        (Role::Desktop, "hs") => {
+            if let Some(to) = f.to.as_deref() {
+                if let Some(ptx) = phone_sender(app, &conn.device, to).await {
+                    ptx.send(Outbound::Text(text.to_string()));
+                }
+            }
+        }
+        // E2E encrypted envelope, desktop → phone: `to` unicast (dropped
+        // when the target is gone — the ciphertext is keyed to that one
+        // phone, a broadcast would only leak); no `to` → broadcast (the
+        // v1 compatibility path; a v2 desktop always addresses its frames).
+        (Role::Desktop, "enc") => {
+            match f.to.as_deref() {
+                Some(to) => {
+                    if let Some(ptx) = phone_sender(app, &conn.device, to).await {
+                        ptx.send(Outbound::Text(text.to_string()));
+                    }
+                }
                 None => broadcast_to_phones(app, &conn.device, text).await,
             }
         }
@@ -445,6 +603,7 @@ async fn handle_frame(app: &SharedApp, conn: &Conn, tx: &Outbox, text: &str, hos
                 user_agent: String::new(),
                 friendly_name: None,
                 expires_at: crate::state::pair_ttl(),
+                phone_pk: None,
                 phone_tx: None,
             };
             app.insert_pairing(session).await;
@@ -462,9 +621,10 @@ async fn handle_frame(app: &SharedApp, conn: &Conn, tx: &Outbox, text: &str, hos
                 return;
             };
             let token = crate::state::random_token();
+            let ph = sha256_hex(&token);
             app.persist_phone(
                 &session.device,
-                sha256_hex(&token),
+                ph.clone(),
                 crate::config::PhoneEntry {
                     // The pairing query's friendly name wins; the
                     // UA-derived fallback otherwise.
@@ -476,7 +636,17 @@ async fn handle_frame(app: &SharedApp, conn: &Conn, tx: &Outbox, text: &str, hos
                 },
             )
             .await;
-            phone_tx.send(Outbound::Text(frame::emit::paired(&session.device, &token)));
+            // The desktop's E2E key (from the grant) and the phone's own
+            // (stashed from its pair_hello) cross the wire here; the
+            // token hash goes back to the desktop in pair_done.
+            phone_tx.send(Outbound::Text(frame::emit::paired(
+                &session.device,
+                &token,
+                f.pk.as_deref(),
+            )));
+            if let Some(dtx) = desktop_sender(app, &conn.device).await {
+                dtx.send(Outbound::Text(frame::emit::pair_done(pair_id, &ph)));
+            }
             // Then close: the phone reconnects with the real token.
             phone_tx.send(Outbound::Close(close_code::REPLACED));
             tracing::info!(device = %session.device, "phone paired");
@@ -556,8 +726,8 @@ async fn desktop_sender(app: &SharedApp, device: &str) -> Option<Outbox> {
     rooms.map.get(device).and_then(|r| r.desktop_tx.clone())
 }
 
-/// One phone's outbox by connection id (res unicast routing); `None` when
-/// the phone is not in the room.
+/// One phone's outbox by connection id (res/enc/hs unicast routing);
+/// `None` when the phone is not in the room.
 async fn phone_sender(app: &SharedApp, device: &str, conn_id: &str) -> Option<Outbox> {
     let rooms = app.rooms.lock().await;
     rooms
@@ -631,10 +801,11 @@ async fn cleanup(app: &SharedApp, conn: &Conn) {
         }
         Role::Phone => {
             let name = conn.phone_name.clone().unwrap_or_default();
+            let ph = conn.phone_hash.clone();
             tell_desktop(
                 app,
                 &conn.device,
-                &frame::emit::peer_phone(&conn.id, &name, false),
+                &frame::emit::peer_phone(&conn.id, &name, false, ph.as_deref()),
             )
             .await;
         }

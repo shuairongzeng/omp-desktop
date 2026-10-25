@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **End-to-end encryption for phone remote control** (protocol v2) — pairing now exchanges ephemeral X25519 keys through the relay and every connection re-handshakes (fresh ephemeral keys, HMAC-authenticated under the pairing master secret, so sessions have forward secrecy). All business frames ride as AES-256-GCM `enc` envelopes with seq-counter nonces and replay refusal; the relay routes envelopes only and can no longer read message content. Documented residual: the pairing moment itself still trusts the relay (it mints the pair token). **Hard cutover, no plaintext fallback**: after upgrading, open the phone page once and re-pair each desktop when it shows "需重新配对" — old pairings carry no key material. Phone-side crypto is the vendored pure-JS `@noble` bundle (works under the self-signed cert where `crypto.subtle` is unavailable)
+- **relay is now covered by CI** — the shared test workflow runs the relay crate's test suite on every PR and master push
+
 - **Summon the app from anywhere** — a global hotkey (Ctrl+Alt+Space by default; override in `<app config>/global-hotkey.json`, e.g. `{ "chord": "ctrl+shift+o" }`) shows and focuses the window and drops the cursor into the composer, switching back from the Settings tab if it was covering your project. A new system tray icon toggles the window with a left click, and its menu can show or quit the app (quit goes through the full child-process cleanup)
 
 - **Ctrl+1…9 jumps straight to a tab** (project tabs only; rebindable in Settings → Shortcuts), and **composer drafts now survive a restart** — unsent text is kept per conversation (`omp-desktop:drafts`, 50-entry cap) and restored into the right box when you reopen the tab; sending clears it

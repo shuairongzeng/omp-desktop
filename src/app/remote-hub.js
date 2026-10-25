@@ -197,7 +197,13 @@
       row.appendChild(el("span", `rh-dot ${status}`));
       const main = el("div", "rh-row-main");
       main.appendChild(el("div", "rh-row-name", D().displayName(d)));
-      const meta = [D().osLabel(d.os), STATUS_TEXT[status]].filter(Boolean).join(" · ");
+      // R8: a pre-E2E entry (no ms) shows the re-pair state in the same
+      // meta line — no new element, the existing `.rh-row-meta` style.
+      const rePair = D().needsPairing(d);
+      const meta = [
+        D().osLabel(d.os),
+        rePair ? "需重新配对" : STATUS_TEXT[status],
+      ].filter(Boolean).join(" · ");
       main.appendChild(el("div", "rh-row-meta", meta));
       row.appendChild(main);
       if (d.device === store.selected) row.appendChild(el("span", "rh-row-tag", "当前"));

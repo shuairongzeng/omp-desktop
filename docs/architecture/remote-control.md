@@ -257,8 +257,22 @@ outage also triggers `_remoteResync()`.
 - Tokens are 256-bit random, stored hashed (SHA-256) on both sides;
   the pairing code is the only secret that ever travels in a URL, and it
   is single-use with a short TTL.
-- Content is visible to the relay (it is the user's own server); E2E
-  encryption is a documented future step, not v1.
+- **E2E encryption** (protocol v2, `docs/architecture/remote-e2e-contract.md`
+  is the normative contract): pairing exchanges ephemeral X25519 keys
+  through the relay (`pair_hello`/`pair_grant` pk fields) and both sides
+  derive a master secret the relay never sees. Every connection then runs
+  an `hs` handshake (fresh ephemeral X25519 + HMAC under the MS) for
+  forward secrecy, and all business frames (`cmd`/`res`/`evt`) ride as
+  `enc` envelopes — AES-256-GCM, per-direction keys, seq-counter nonces,
+  strictly increasing seq (replay refusal). The relay routes envelopes
+  (`to`/`from`, room) but content is opaque to it. v2 is a hard cutover:
+  a plaintext `cmd` is rejected with a typed error, and a pairing without
+  key material is asked to re-pair — no plaintext fallback.
+- Residual, documented: the pairing moment still trusts the relay (it
+  mints the pair token), so an *actively* malicious relay could MITM the
+  pairing key exchange inside the 5-minute pairing window. After pairing,
+  passive inspection and later compromise of the relay expose only
+  envelope metadata (type, seq, timing, size).
 
 ## What the phone UI is
 

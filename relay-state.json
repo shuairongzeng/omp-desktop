@@ -1,0 +1,132 @@
+{
+  "devices": {
+    "24eff09ce53ea4fe0aae1392ba6cad6771babfa3de97562d1676a51c851afc12": {
+      "phones": {
+        "ec32a7de133c98fcdd165c1688712a50dcf51881b8812c79fd5f04bf57e844fc": {
+          "name": "node",
+          "paired_at": 1792484924
+        },
+        "62863b61dbf532ec2c5dbe5e03f59235eff5a259a1c531c6f0b0f87c431f70e1": {
+          "name": "node",
+          "paired_at": 1792462481
+        },
+        "113d360ea2b02b65ed360fb7d2d307ddee6159f94ba35a48a15f93ee8b650c23": {
+          "name": "node",
+          "paired_at": 1792485007
+        },
+        "bd92bd08b6514fd01870408e364f923bc0294058cb29e232a0cee052a2ceabb1": {
+          "name": "node",
+          "paired_at": 1792488397
+        },
+        "e76e4b7d2dd137b73491c247ac0c0b5abcfe28e31c8c08c0779f8534dba49769": {
+          "name": "node",
+          "paired_at": 1792505723
+        },
+        "3f6e2d152247a392eeb1bb495c7922f76ec9c322b779e34e3bf7f5a1e44969f1": {
+          "name": "node",
+          "paired_at": 1792504744
+        },
+        "ac1328723dd7b07b07ee1c5371abd7bd653ab97476f91479b6c49f4f440dbb6d": {
+          "name": "node",
+          "paired_at": 1792484861
+        },
+        "7207fcddfb2a748471bd288c4964d294f527319468563af1b78e826b64f0d6b5": {
+          "name": "node",
+          "paired_at": 1792511384
+        },
+        "f1d729bc812730cd14620a5454d0a23fe28298a02d6328725d4fe9e7994c5d84": {
+          "name": "node",
+          "paired_at": 1792474774
+        },
+        "c36305ec8049ff9d323697d06950559baecdf73675bf58586b673a2bcb92fb02": {
+          "name": "node",
+          "paired_at": 1792424714
+        },
+        "7a23c7546ffc7c08f9d456e92e4a1cb5238e85a405487fcc2ddb3ba495f91aef": {
+          "name": "node",
+          "paired_at": 1792477864
+        },
+        "ee1ebc8af866faca04a48f14af6bca85c5dc8deada01df21c488cb958be944aa": {
+          "name": "node",
+          "paired_at": 1792464672
+        },
+        "5782aff4bc1b59f5ec4e8c81406508614bc32d244fa6c8cd67e304390235b313": {
+          "name": "node",
+          "paired_at": 1792487809
+        },
+        "f4d97109476207d08eabd7e6f9454ac16857c407c51d9ca204aae64ce9041098": {
+          "name": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+          "paired_at": 1792458147
+        },
+        "c19c517cd5a370ab91e77c691941d1326544761a67ea02099033504c877fa890": {
+          "name": "node",
+          "paired_at": 1792572873
+        },
+        "925c399b530a3574707cce747406a30a426a8b32ed1070ecc20d7f7ff45e8bc8": {
+          "name": "node",
+          "paired_at": 1792477275
+        }
+      },
+      "info": {
+        "name": "omp-desktop",
+        "os": "macos"
+      }
+    },
+    "1ab233fcd068de48f5331b20bc4ea76a10f2a68182cad4d94dfc7e3a68d6d995": {
+      "phones": {
+        "a751e249b459856d463c5ee33180dcabd0e8f69d3fc0492d40e63bdecf4a6468": {
+          "name": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+          "paired_at": 1792393080
+        },
+        "398c54fbf7844a6ec19efd537c0d36c81db505f007940083437e5d5644d1d8a7": {
+          "name": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+          "paired_at": 1792904363
+        },
+        "29e2c13fed5eff58f5c6c49e3c82879481a3e2f8c61eea7afd48d8d3e22b01f9": {
+          "name": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+          "paired_at": 1792904526
+        },
+        "adadb7ef84abdaac1221de2f52cdcad82822da61ddc24f5d067e3fe5e6457f06": {
+          "name": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+          "paired_at": 1792905796
+        },
+        "9c7f38b55d31c642e666bec24f164cfcff96e48b7e30d81c40e15860e9ab6d7f": {
+          "name": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+          "paired_at": 1792905980
+        },
+        "39c42a0605dbf5771836c510fb468733928bc3d5c5161cc72bcba9bbeb4cb661": {
+          "name": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+          "paired_at": 1792906897
+        },
+        "870e0d826ff5ec846bf6a5a320b2d78b5a4465eb567ba4d3179f666eb4ec1eba": {
+          "name": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHT",
+          "paired_at": 1792840620
+        },
+        "001e51d20bba2ce163960daadb717d2c8562eb50f5a4d23b9a5e5512a109da60": {
+          "name": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+          "paired_at": 1792906728
+        },
+        "3bd005a890e42bf563d107774026e65815a5d22df1e632940d5e0631b8137d29": {
+          "name": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML",
+          "paired_at": 1792546514
+        },
+        "7fd5a10ebd15d6eab9b627d627c43c342d0498951118435194ab2a7652e78103": {
+          "name": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",
+          "paired_at": 1792904558
+        },
+        "b8e2994a2300cb6fae22aeae02f383f237df29f8f65e54adcbb79cfa194d0f31": {
+          "name": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHT",
+          "paired_at": 1792396903
+        },
+        "1c9b3de8a6f933638f8ce088ee3b357f13856ed5c4b6ff6a2236f503eeeeac96": {
+          "name": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHT",
+          "paired_at": 1792401437
+        }
+      },
+      "info": {
+        "name": "DESKTOP-H95838Q",
+        "os": "windows"
+      }
+    }
+  }
+}

@@ -198,4 +198,59 @@ const entry = (device, token, extra = {}) => ({ device, token, name: "", os: "",
   ok(true, "osLabel maps the std os tags and passes unknown ones through");
 }
 
+// ── R8 E2E: the `ms` field and needsPairing ────────────────────────────────
+// The master secret rides the store entry (normalize keeps it, garbage
+// cleans to empty) and upsert swaps it with the token on a re-pair. An
+// entry without ms is a pre-E2E pairing: needsPairing flags it for the
+// hub row and the transport's connect() refusal.
+{
+  const MS = "b64-of-32-bytes==";
+  const withMs = D.normalize({ devices: [entry("d1", "t1", { ms: MS })], selected: "d1" });
+  assert.equal(withMs.devices[0].ms, MS);
+  ok(true, "normalize preserves a stored master secret");
+
+  // absent / non-string / empty ms all sanitize to "" (pre-E2E)
+  const s = D.normalize({
+    devices: [
+      entry("d1", "t1"),                          // pre-R8 entry: no ms
+      entry("d2", "t2", { ms: "" }),              // empty string
+      entry("d3", "t3", { ms: 42 }),              // number: garbage
+      entry("d4", "t4", { ms: null }),            // null: garbage
+    ],
+  });
+  assert.deepEqual(s.devices.map((d) => d.ms), ["", "", "", ""]);
+  ok(true, "absent/empty/non-string ms sanitizes to the pre-E2E empty marker");
+
+  // needsPairing: the needs-re-pair predicate
+  assert.equal(D.needsPairing(entry("d1", "t1", { ms: MS })), false);
+  assert.equal(D.needsPairing(entry("d1", "t1")), true);        // no ms
+  assert.equal(D.needsPairing(entry("d1", "t1", { ms: "" })), true);
+  assert.equal(D.needsPairing(entry("d1", "t1", { ms: 7 })), true); // non-string
+  assert.equal(D.needsPairing(null), true);                     // no entry at all
+  ok(true, "needsPairing: false only for a real ms; true for missing/empty/garbage/null");
+
+  // upsert: a fresh pairing stores the ms; a re-pair swaps token AND ms;
+  // an undefined ms (a v1 relay's `paired` frame) wipes the old one
+  let st = D.upsert(D.emptyStore(), "d1", "t1", MS);
+  assert.equal(st.devices[0].ms, MS);
+  st = D.upsert(st, "d1", "t2", MS + "2");
+  assert.equal(st.devices[0].token, "t2");
+  assert.equal(st.devices[0].ms, MS + "2");
+  ok(true, "upsert stores the ms on a fresh pairing and swaps it on a re-pair");
+
+  st = D.upsert(st, "d1", "t3"); // no ms arg: the entry becomes pre-E2E
+  assert.equal(st.devices[0].ms, "");
+  assert.equal(D.needsPairing(st.devices[0]), true);
+  ok(true, "upsert without an ms wipes it — the entry needs a re-pair");
+
+  // legacy migration: the single-pairing key has no ms, so the migrated
+  // entry reads as pre-E2E (re-scan required), token and selection intact
+  const lg = makeStorage({ "omp-remote:auth": JSON.stringify({ device: "old-d", token: "old-t" }) });
+  const migrated = D.load(lg);
+  assert.equal(migrated.devices[0].token, "old-t");
+  assert.equal(migrated.devices[0].ms, "");
+  assert.equal(D.needsPairing(migrated.devices[0]), true);
+  ok(true, "the legacy migration yields a needs-re-pair entry (no plaintext fallback)");
+}
+
 console.log(`remote-devices: ${n} checks passed`);

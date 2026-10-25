@@ -287,6 +287,17 @@ async fn full_pairing_flow() {
     assert_eq!(paired["device"], DEVICE);
     let phone_token = paired["token"].as_str().unwrap().to_string();
     assert_eq!(phone_token.len(), 64);
+    // …and the desktop gets pair_done carrying the phone token's hash.
+    let done = eventually_json(&mut desktop, "pair_done").await;
+    assert_eq!(done["pair_id"].as_str().unwrap(), pair_id);
+    let done_ph = done["ph"].as_str().unwrap().to_string();
+    assert_eq!(done_ph.len(), 64);
+    use sha2::Digest;
+    let expected: String = {
+        let d = sha2::Sha256::digest(phone_token.as_bytes());
+        d.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    assert_eq!(done_ph, expected);
     expect_close(&mut phone).await;
 
     // 6. state persisted
@@ -799,6 +810,10 @@ where
     .await;
     let paired = next_json(&mut phone).await;
     assert_eq!(paired["t"], "paired");
+    // The desktop now also gets pair_done right after granting (E2E key
+    // material bookkeeping): drain it so later reads line up.
+    let done = eventually_json(desktop, "pair_done").await;
+    assert_eq!(done["pair_id"].as_str().unwrap(), pair_id);
     paired["token"].as_str().unwrap().to_string()
 }
 
@@ -1122,6 +1137,8 @@ where
     .await;
     let paired = next_json(&mut phone).await;
     assert_eq!(paired["t"], "paired");
+    let done = eventually_json(desktop, "pair_done").await;
+    assert_eq!(done["pair_id"].as_str().unwrap(), pair_id);
     paired["token"].as_str().unwrap().to_string()
 }
 
@@ -1157,3 +1174,265 @@ fn urlencode(s: &str) -> String {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// E2E (v2): pair_hello → pk-carrying grant, hs both ways, enc unicast
+// ---------------------------------------------------------------------------
+
+/// Pair a phone the v2 way: pair_hello carries the phone's key, the
+/// desktop's grant carries its own key back, and the desktop ends with
+/// pair_done. Returns (phone token, phone pk, desk pk).
+async fn pair_phone_e2e<S>(relay: &Relay, desktop: &mut S, ua: &str, phone_pk: &str) -> String
+where
+    S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+        + SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error>
+        + Unpin,
+{
+    send(desktop, serde_json::json!({"t":"pair_begin"})).await;
+    let code = next_json(desktop).await;
+    assert_eq!(code["t"], "pair_code");
+    let pair_token = code["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('#')
+        .next()
+        .unwrap()
+        .to_string();
+
+    let mut phone = connect(
+        &ws_url(relay, &format!("role=phone&pair={pair_token}")),
+        Some(ua),
+    )
+    .await;
+    // The phone's very first frame is its pairing key.
+    send(
+        &mut phone,
+        serde_json::json!({"t":"pair_hello","pk":phone_pk}),
+    )
+    .await;
+
+    // The desktop's pair_request carries the key.
+    let req = eventually_json(desktop, "pair_request").await;
+    assert_eq!(req["pk"].as_str().unwrap(), phone_pk);
+    let pair_id = req["pair_id"].as_str().unwrap().to_string();
+    assert_eq!(req["agent"], ua);
+
+    // Grant with the desktop's key.
+    send(
+        desktop,
+        serde_json::json!({"t":"pair_grant","pair_id":pair_id,"pk":"ZGVzay1wa2UwMDA="}),
+    )
+    .await;
+    let paired = next_json(&mut phone).await;
+    assert_eq!(paired["t"], "paired");
+    assert_eq!(paired["pk"].as_str().unwrap(), "ZGVzay1wa2UwMDA=");
+
+    // Desktop's pair_done: the fresh token's sha256.
+    let done = eventually_json(desktop, "pair_done").await;
+    let token = paired["token"].as_str().unwrap().to_string();
+    let expected: String = {
+        use sha2::Digest;
+        let d = sha2::Sha256::digest(token.as_bytes());
+        d.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    assert_eq!(done["ph"].as_str().unwrap(), expected);
+    expect_close(&mut phone).await;
+    token
+}
+
+#[tokio::test]
+async fn e2e_pairing_full_flow() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+    let tok = pair_phone_e2e(&relay, &mut desktop, "E2EPhone", "cGhvbmUtcGswMDA=").await;
+    assert_eq!(tok.len(), 64);
+
+    // The phone reconnects with the real token: the desktop's peer frame
+    // now carries conn + ph (the token hash the key material is keyed by).
+    let mut phone = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok}")),
+        Some("E2EPhone"),
+    )
+    .await;
+    let peer = eventually_json(&mut desktop, "peer").await;
+    let conn = peer["conn"].as_str().unwrap().to_string();
+    assert_eq!(peer["phone"].as_str().unwrap(), conn);
+    let ph = peer["ph"].as_str().unwrap().to_string();
+    assert_eq!(ph.len(), 64);
+    let expected: String = {
+        use sha2::Digest;
+        let d = sha2::Sha256::digest(tok.as_bytes());
+        d.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    assert_eq!(ph, expected);
+}
+
+#[tokio::test]
+async fn e2e_hs_and_enc_routes_both_ways() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+
+    let tok1 = pair_phone_e2e(&relay, &mut desktop, "PhoneA", "cGhvbmUtQS0wMDA=").await;
+    let tok2 = pair_phone_e2e(&relay, &mut desktop, "PhoneB", "cGhvbmUtQi0wMDA=").await;
+    let mut p1 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok1}")),
+        Some("PhoneA"),
+    )
+    .await;
+    let mut p2 = connect(
+        &ws_url(&relay, &format!("role=phone&device={DEVICE}&token={tok2}")),
+        Some("PhoneB"),
+    )
+    .await;
+    let peer1 = eventually_json(&mut desktop, "peer").await;
+    let conn1 = peer1["conn"].as_str().unwrap().to_string();
+    let peer2 = eventually_json(&mut desktop, "peer").await;
+    let conn2 = peer2["conn"].as_str().unwrap().to_string();
+    assert_ne!(conn1, conn2);
+
+    // phone hs → desktop, from-tagged like a cmd.
+    send(
+        &mut p1,
+        serde_json::json!({"t":"hs","v":2,"ph":"h1","pk":"cGhvbWUtZWto","mac":"bWFjMQ=="}),
+    )
+    .await;
+    let hs = eventually_json(&mut desktop, "hs").await;
+    assert_eq!(hs["pk"], "cGhvbWUtZWto");
+    assert_eq!(hs["mac"], "bWFjMQ==");
+    assert_eq!(hs["v"], 2);
+    assert_eq!(hs["from"].as_str().unwrap(), conn1);
+
+    // desktop hs → that phone only (to unicast).
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"hs","v":2,"pk":"ZGVzay1la2g=","mac":"bWFjMg==","to":conn1}),
+    )
+    .await;
+    let hs2 = eventually_json(&mut p1, "hs").await;
+    assert_eq!(hs2["pk"], "ZGVzay1la2g=");
+    assert_eq!(hs2["to"], conn1.as_str());
+
+    // enc phone→desktop: from-tagged verbatim (payload opaque).
+    send(
+        &mut p1,
+        serde_json::json!({"t":"enc","seq":0,"d":"QUVTLTI1Ni1HQ00tY2lwaGVydGV4dA=="}),
+    )
+    .await;
+    let enc = eventually_json(&mut desktop, "enc").await;
+    assert_eq!(enc["seq"], 0);
+    assert_eq!(enc["d"], "QUVTLTI1Ni1HQ00tY2lwaGVydGV4dA==");
+    assert_eq!(enc["from"].as_str().unwrap(), conn1);
+
+    // enc desktop→phone with to: unicast — p1 gets it, p2 does not.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"enc","seq":0,"d":"dW5pY2FzdC1vbmx5","to":conn1}),
+    )
+    .await;
+    let got = eventually_json(&mut p1, "enc").await;
+    assert_eq!(got["d"], "dW5pY2FzdC1vbmx5");
+    assert_eq!(got["seq"], 0);
+    // p2 must not see it: the next enc p2 can receive is the broadcast marker.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"enc","seq":1,"d":"YnJvYWRjYXN0LW1hcmtlcg=="}),
+    )
+    .await;
+    for p in [&mut p1, &mut p2] {
+        let b = eventually_json(p, "enc").await;
+        assert_eq!(b["d"], "YnJvYWRjYXN0LW1hcmtlcg==");
+        assert_eq!(b["seq"], 1);
+    }
+
+    // A unicast to a gone connection is dropped, never broadcast: p1
+    // reconnecting churns ids; use a bogus conn id and prove only the
+    // following broadcast marker reaches the phones.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"enc","seq":2,"d":"bG9zdC10YXJnZXQ=","to":"deadbeef"}),
+    )
+    .await;
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"enc","seq":3,"d":"c2Vjb25kLW1hcmtlcg=="}),
+    )
+    .await;
+    for p in [&mut p1, &mut p2] {
+        let b = eventually_json(p, "enc").await;
+        assert_eq!(
+            b["d"], "c2Vjb25kLW1hcmtlcg==",
+            "unicast to a gone conn must be dropped, not broadcast"
+        );
+    }
+
+    // Malformed E2E envelopes never cross the relay: no hs without mac,
+    // no enc without d.
+    send(
+        &mut p1,
+        serde_json::json!({"t":"hs","pk":"a2V5LW9ubHk="}),
+    )
+    .await;
+    send(
+        &mut p1,
+        serde_json::json!({"t":"enc","seq":1}),
+    )
+    .await;
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"enc","seq":4,"d":"bWFya2VyLW9ubHk=","to":conn1}),
+    )
+    .await;
+    let ok = eventually_json(&mut p1, "enc").await;
+    assert_eq!(ok["d"], "bWFya2VyLW9ubHk=");
+    // And the desktop received nothing new (no hs, no broken enc): the
+    // next desktop frame is the phone peer's presence churn, if any.
+}
+#[tokio::test]
+async fn e2e_pair_hello_after_grace_resends_request_with_key() {
+    let relay = spawn_relay().await;
+    let mut desktop = connect_desktop(&relay).await;
+    send(&mut desktop, serde_json::json!({"t":"pair_begin"})).await;
+    let code = next_json(&mut desktop).await;
+    let pair_token = code["url"]
+        .as_str()
+        .unwrap()
+        .rsplit('#')
+        .next()
+        .unwrap()
+        .to_string();
+
+    let mut phone = connect(
+        &ws_url(&relay, &format!("role=phone&pair={pair_token}")),
+        Some("LateHelloUA"),
+    )
+    .await;
+    // Drain the relay hello, then stay silent past the 1.5 s grace: the
+    // keyless pair_request must have reached the desktop by then.
+    let _ = raw_json(&mut phone).await;
+    let req = eventually_json(&mut desktop, "pair_request").await;
+    assert!(req.get("pk").map(|p| p.is_null()).unwrap_or(true));
+    let pair_id = req["pair_id"].as_str().unwrap().to_string();
+
+    // Now the late hello: the request is re-sent, this time with the key.
+    send(
+        &mut phone,
+        serde_json::json!({"t":"pair_hello","pk":"bGF0ZS1wa2swMDA="}),
+    )
+    .await;
+    let req2 = eventually_json(&mut desktop, "pair_request").await;
+    assert_eq!(req2["pk"].as_str().unwrap(), "bGF0ZS1wa2swMDA=");
+    assert_eq!(req2["pair_id"].as_str().unwrap(), pair_id);
+
+    // And the grant flow still completes.
+    send(
+        &mut desktop,
+        serde_json::json!({"t":"pair_grant","pair_id":pair_id,"pk":"ZGVzay1sYXRlMDA="}),
+    )
+    .await;
+    let paired = next_json(&mut phone).await;
+    assert_eq!(paired["t"], "paired");
+    assert_eq!(paired["pk"], "ZGVzay1sYXRlMDA=");
+    let done = eventually_json(&mut desktop, "pair_done").await;
+    assert_eq!(done["t"], "pair_done");
+}
+

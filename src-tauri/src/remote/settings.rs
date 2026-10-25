@@ -19,9 +19,29 @@ pub struct RemoteSettings {
     /// Friendly name for this desktop in the phone's device picker. Empty
     /// = fall back to the machine's hostname (`display_name`).
     pub device_name: String,
+    /// E2E master secrets by paired phone (`ph` = the phone token's
+    /// SHA-256 hex, the same key the relay and the revoke flow use).
+    /// `ms` is the b64 32-byte pairing master secret; an entry without
+    /// one (or no entry) is a pre-v2 pairing: treated as unpaired, the
+    /// UI must ask for a re-pair (`docs/architecture/remote-e2e-contract.md`).
+    pub phones: std::collections::BTreeMap<String, PhoneSecret>,
+}
+
+/// One phone's E2E material in `remote.json`.
+#[derive(Serialize, Deserialize, Default, Clone)]
+#[serde(default)]
+pub struct PhoneSecret {
+    /// b64 X25519-derived master secret; `None` = pre-v2 entry.
+    pub ms: Option<String>,
 }
 
 impl RemoteSettings {
+    /// The b64 `ms` stored for phone `ph`, or `None` when the phone is
+    /// unknown or paired pre-v2 (both mean "not e2e-paired").
+    pub fn phone_ms(&self, ph: &str) -> Option<&str> {
+        self.phones.get(ph).and_then(|p| p.ms.as_deref())
+    }
+
     /// DER bytes of the pinned cert, if any.
     pub fn pinned_cert_der(&self) -> Option<Vec<u8>> {
         use base64::Engine;
@@ -182,11 +202,21 @@ mod tests {
         let back: RemoteSettings = serde_json::from_slice(&bytes).unwrap();
         assert!(back.enabled && back.ready());
 
-        // An old remote.json without `device_name` still loads (serde default).
+        // An old remote.json without `device_name` *and* without `phones`
+        // still loads (serde default): the E2E v2 additions are additive.
         let legacy = br#"{"enabled":true,"server":"https://x","device_id":"aa","device_token":"bb","pinned_cert_pem":""}"#;
         let back: RemoteSettings = serde_json::from_slice(legacy).unwrap();
         assert_eq!(back.device_name, "");
+        assert!(back.phones.is_empty());
         assert!(back.ready());
+
+        // A v2 file with one phone's `ms` and one pre-v2 entry without.
+        let v2 = br#"{"enabled":true,"server":"https://x","device_id":"aa","device_token":"bb",
+            "phones":{"aabb":{"ms":"c2VjcmV0"},"ccdd":{}}}"#;
+        let back: RemoteSettings = serde_json::from_slice(v2).unwrap();
+        assert_eq!(back.phone_ms("aabb"), Some("c2VjcmV0"));
+        assert_eq!(back.phone_ms("ccdd"), None); // pre-v2 entry: no ms
+        assert_eq!(back.phone_ms("nobody"), None); // unknown phone
     }
 
     #[test]

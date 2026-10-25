@@ -8,6 +8,13 @@
  * pure functions over a plain store object ({devices, selected}), so the
  * socket code that uses them (remote-hub.js picker, remote-transport.js
  * control connection) stays out of the tests. Load before both.
+ *
+ * R8 E2E (docs/architecture/remote-e2e-contract.md): each entry also
+ * carries the pairing's master secret `ms` (b64, 32B) — the root of
+ * every per-connection session key. An entry without `ms` predates the
+ * E2E protocol and cannot participate: needsPairing() marks it for a
+ * re-pair (the hub shows the state, transport refuses the connection).
+ * There is no plaintext fallback — the contract makes the cutover hard.
  */
 (function () {
   "use strict";
@@ -34,6 +41,9 @@
       out.devices.push({
         device: d.device,
         token: d.token,
+        // The E2E master secret (b64). A non-string value (or absent)
+        // drops the field — the entry reads as pre-E2E and needs re-pair.
+        ms: typeof d.ms === "string" && d.ms !== "" ? d.ms : "",
         name: typeof d.name === "string" ? d.name.slice(0, MAX_NAME) : "",
         os: typeof d.os === "string" ? d.os.slice(0, MAX_NAME) : "",
         lastUsed: Number.isFinite(d.lastUsed) ? d.lastUsed : 0,
@@ -70,14 +80,16 @@
 
   /** Add or refresh one desktop's pairing. A fresh pairing selects its
    * device (scanning a QR means "control this one"); a re-pair of a known
-   * device swaps the token and keeps name/os and the current selection. */
-  function upsert(store, device, token) {
+   * device swaps the token AND the ms (a re-pair mints a fresh master
+   * secret) and keeps name/os and the current selection. */
+  function upsert(store, device, token, ms) {
     const out = { ...store, devices: store.devices.slice() };
+    const clean = typeof ms === "string" && ms !== "" ? ms : "";
     const i = out.devices.findIndex((d) => d.device === device);
     if (i >= 0) {
-      out.devices[i] = { ...out.devices[i], token };
+      out.devices[i] = { ...out.devices[i], token, ms: clean };
     } else {
-      out.devices.push({ device, token, name: "", os: "", lastUsed: 0 });
+      out.devices.push({ device, token, ms: clean, name: "", os: "", lastUsed: 0 });
       out.selected = device;
     }
     if (!out.selected || !out.devices.some((d) => d.device === out.selected)) {
@@ -133,10 +145,15 @@
   const OS_LABELS = { windows: "Windows", macos: "macOS", linux: "Linux" };
   const osLabel = (os) => OS_LABELS[os] || os || "";
 
+  /** True when the entry carries no E2E master secret — a pre-R8
+   *  pairing. It cannot join an E2E room; the hub flags the row and the
+   *  transport refuses to dial it (the user re-scans the QR). */
+  const needsPairing = (entry) => !entry || typeof entry.ms !== "string" || entry.ms === "";
+
   window.OMP_REMOTE_DEVICES = {
     KEY, LEGACY_KEY,
     emptyStore, normalize, load, save,
     upsert, select, forget, setInfo, touch,
-    selectedEntry, displayName, osLabel,
+    selectedEntry, displayName, osLabel, needsPairing,
   };
 })();

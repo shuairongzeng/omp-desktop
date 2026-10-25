@@ -242,6 +242,9 @@ async fn connect_once(
     // Announce the picker identity before any phone frame can queue: the
     // channel buffers it and the writer task flushes it in order.
     let _ = tx.send(device_info_frame(settings));
+    // The inbound router answers on the same queue (hs replies, the
+    // plaintext-cmd rejection), so it needs its own sender handle.
+    let route_tx = tx.clone();
     mgr.set_outbox(generation, tx);
     mgr.set_status(app, "online");
 
@@ -275,7 +278,7 @@ async fn connect_once(
             }
             msg = source.next() => match msg {
                 Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
-                    route(app, text.as_str());
+                    route(app, mgr, &route_tx, text.as_str());
                 }
                 Some(Ok(tokio_tungstenite::tungstenite::Message::Close(cf))) => {
                     writer.abort();
@@ -305,20 +308,167 @@ async fn connect_once(
     end
 }
 
-/// One inbound frame: phone commands go to the executor in the webview,
-/// control frames (pairing, phone list, drop notices) to the Settings UI.
-fn route(app: &AppHandle, text: &str) {
+/// One inbound frame. E2E v2 (contract): business frames arrive only as
+/// `enc` envelopes; a plaintext `cmd` is a pre-v2 phone and gets the
+/// contract's typed rejection so its UI can say "reload the page".
+/// Control frames (`pair_request`/`pair_done`/`peer`/`hs`) drive the
+/// pairing and session bookkeeping on the manager, then reach the UI.
+fn route(app: &AppHandle, mgr: &Arc<RemoteManager>, outbox: &mpsc::UnboundedSender<Value>, text: &str) {
     let Ok(frame) = serde_json::from_str::<Value>(text) else {
         return;
     };
     match frame.get("t").and_then(Value::as_str) {
         Some("cmd") => {
-            let _ = app.emit(EVT_PHONE, &frame);
+            // Plaintext business frame: v2 has no plaintext fallback.
+            let id = frame.get("id").and_then(Value::as_u64);
+            let from = frame.get("from").and_then(Value::as_str);
+            let mut res = serde_json::json!({
+                "t": "res",
+                "id": id,
+                "ok": false,
+                "error": "e2e required — reload the phone page",
+            });
+            if let Some(f) = from {
+                res["from"] = Value::String(f.to_string());
+            }
+            let _ = outbox.send(res);
+        }
+        Some("enc") => route_enc(app, mgr, &frame),
+        Some("hs") => route_hs(mgr, outbox, &frame),
+        Some("peer") => {
+            // The relay's phone presence: conn + ph let us bind sessions;
+            // a leaving phone drops its session.
+            let online = frame.get("online").and_then(Value::as_bool).unwrap_or(false);
+            if let Some(conn) = frame.get("conn").and_then(Value::as_str) {
+                let ph = frame.get("ph").and_then(Value::as_str);
+                mgr.note_phone_conn(conn, ph, online);
+            }
+            let _ = app.emit(EVT_CONTROL, &frame);
+        }
+        Some("pair_request") => {
+            // v2: the phone's pairing ephemeral pk rides along; the grant
+            // (remote_send) answers with ours.
+            if let Some(pair_id) = frame.get("pair_id").and_then(Value::as_str).map(str::to_owned) {
+                let pk = frame
+                    .get("pk")
+                    .and_then(Value::as_str)
+                    .and_then(|s| super::crypto::b64_decode(s).ok());
+                mgr.begin_pairing(&pair_id, pk.as_deref());
+            }
+            let _ = app.emit(EVT_CONTROL, &frame);
+        }
+        Some("pair_done") => {
+            // The relay's post-pairing confirmation: `ph` is the phone's
+            // token hash — the MS is derived from the stored pairing
+            // record (both ephemerals) and persisted under `ph`.
+            let pair_id = frame.get("pair_id").and_then(Value::as_str);
+            let ph = frame.get("ph").and_then(Value::as_str);
+            if let Some((pair_id, ph)) = pair_id.zip(ph) {
+                if let Err(e) = mgr.finish_pairing(pair_id, ph) {
+                    eprintln!("[omp-desktop] remote e2e: pairing persist failed: {e}");
+                }
+            }
+            let _ = app.emit(EVT_CONTROL, &frame);
         }
         Some(_) => {
             let _ = app.emit(EVT_CONTROL, &frame);
         }
         None => {}
+    }
+}
+
+/// `enc` arm: open with the phone's session keys and dispatch the inner
+/// frame into the webview, exactly as the pre-E2E plaintext path did.
+fn route_enc(app: &AppHandle, mgr: &Arc<RemoteManager>, frame: &Value) {
+    let Some(conn) = frame.get("from").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(seq) = frame.get("seq").and_then(Value::as_u64) else {
+        return;
+    };
+    let Some(d) = frame.get("d").and_then(Value::as_str) else {
+        return;
+    };
+    let Ok(sealed) = super::crypto::b64_decode(d) else {
+        return;
+    };
+    // Open and dispatch; a failure (bad tag, replay) closes the
+    // connection — the caller checks the manager's session state.
+    let opened = mgr.with_session(conn, |keys| keys.open(seq, &sealed));
+    match opened {
+        Some(Ok(plain)) => {
+            if let Ok(inner) = serde_json::from_slice::<Value>(&plain) {
+                let _ = app.emit(EVT_PHONE, &inner);
+            }
+        }
+        Some(Err(_)) => {
+            // MAC/seq failure: warn and kill the session; the
+            // connection loop's next ping/reconnect recovers.
+            eprintln!(
+                "[omp-desktop] remote e2e: bad frame from phone conn {conn}; dropping session"
+            );
+            mgr.note_phone_conn(conn, None, false);
+        }
+        None => {
+            // Unknown conn: an enc from a phone we have no session
+            // for (pre-hs, or after a drop). Ignore — its hs will
+            // (re)establish the session.
+        }
+    }
+}
+
+/// `hs` arm: verify the phone's MAC under its stored MS, answer with our
+/// own ephemeral + MAC, and install the session keys.
+fn route_hs(mgr: &Arc<RemoteManager>, outbox: &mpsc::UnboundedSender<Value>, frame: &Value) {
+    let ph = frame.get("ph").and_then(Value::as_str);
+    let pk = frame.get("pk").and_then(Value::as_str);
+    let mac = frame.get("mac").and_then(Value::as_str);
+    // The relay tags phone→desktop frames with `from` (the phone's
+    // connection id) — that is the session key, not any `conn` field.
+    let conn = frame.get("from").and_then(Value::as_str);
+    let Some(((ph, pk), (mac, conn))) = ph.zip(pk).zip(mac.zip(conn)) else {
+        // Malformed hs: no recovery path, drop it on the floor.
+        return;
+    };
+    let Some(ms) = mgr.phone_ms(ph) else {
+        // Unknown/unpaired phone: contract says close; we at least
+        // never answer, so the phone's UI shows its own error.
+        eprintln!("[omp-desktop] remote e2e: hs from unknown phone {ph}");
+        return;
+    };
+    let Ok(pk_bytes) = super::crypto::b64_decode(pk) else {
+        return;
+    };
+    let Ok(mac_bytes) = super::crypto::b64_decode(mac) else {
+        return;
+    };
+    let Ok(hs) = super::crypto::HsHandshake::new() else {
+        return;
+    };
+    // The reply needs our pk + MAC — both computed before the
+    // one-shot `finish` consumes the handshake (same MS and phone
+    // pk as the verification inside, so a success here agrees).
+    let reply_pk = super::crypto::b64_encode(hs.public());
+    let reply_mac = hs
+        .reply_mac(&ms, &pk_bytes)
+        .map_or_default(|m| super::crypto::b64_encode(&m));
+    match hs.finish(&ms, &pk_bytes, &mac_bytes) {
+        Ok(keys) => {
+            let _ = outbox.send(serde_json::json!({
+                "t": "hs", "v": 2,
+                "pk": reply_pk,
+                "mac": reply_mac,
+                "to": conn,
+            }));
+            mgr.note_phone_conn(conn, Some(ph), true);
+            mgr.set_session(conn, keys);
+        }
+        Err(_) => {
+            // MAC failure: warn (contract) and drop the phone.
+            eprintln!(
+                "[omp-desktop] remote e2e: hs MAC failed for phone {ph}; refusing session"
+            );
+        }
     }
 }
 

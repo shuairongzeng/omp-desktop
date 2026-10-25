@@ -3985,6 +3985,7 @@ dependencies = [
  "open",
  "png 0.18.1",
  "portable-pty",
+ "ring",
  "rusqlite",
  "rustls",
  "serde",

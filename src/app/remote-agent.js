@@ -28,7 +28,7 @@
   // The desktop's advertised caps (the `hello` frame's `caps` array): `gz`
   // = replies over the size threshold ride as `{gz: base64}`; `ask-sync`
   // = a reconnecting phone can re-pull its pending asks.
-  const DESKTOP_CAPS = ["gz", "transcript-window", "ask-sync"];
+  const DESKTOP_CAPS = ["gz", "transcript-window", "ask-sync", "e2e"];
   window.__OMP_REMOTE_AGENT = { armed: true, HELLO_CAPS: DESKTOP_CAPS };
 
   // No aliasing: Tauri's event/core methods are called on their objects —
@@ -103,7 +103,7 @@
   // late-joining handsets learn the caps they were not there for.
   function broadcastHello() {
     window.__OMP_REMOTE_AGENT.hellos = (window.__OMP_REMOTE_AGENT.hellos || 0) + 1;
-    send({ t: "hello", v: 1, caps: DESKTOP_CAPS });
+    send({ t: "hello", v: 2, caps: DESKTOP_CAPS });
   }
   let desktopOnline = false;
 

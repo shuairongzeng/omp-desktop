@@ -2,14 +2,21 @@
 //! payloads beyond the envelope the spec pins, so malformed frames can't be
 //! forwarded into the desktop. Unknown `t` values are ignored (forward
 //! compatibility).
+//!
+//! E2E note (`docs/architecture/remote-e2e-contract.md`): the `enc` frame's
+//! `d` field is ciphertext and stays opaque end to end; the relay checks
+//! only that it is a string. Same for the public keys riding `hs` and the
+//! `pair_*` frames — pass-through, never inspected.
 
 use serde_json::Value;
 
-/// Classification of an inbound text frame.
+/// Classification of an inbound text frame. The valid payload is boxed:
+/// the two E2E passthrough fields (`pk`, `to`) grew `Frame` past the
+/// point where a stack copy per parse is free.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Inbound {
     /// Envelope validated; `t` and `id` extracted.
-    Valid(Frame),
+    Valid(Box<Frame>),
     /// Broken JSON or a known type with missing/ill-typed fields.
     Invalid,
     /// Structurally fine, but an unknown `t` (relay ignores it).
@@ -31,23 +38,36 @@ pub struct Frame {
     /// `device_info` os tag, when present.
     pub os: Option<String>,
     /// Top-level `from` (the sender's connection id), when present. The
-    /// relay tags phone→desktop `cmd` frames with it; a desktop `res` may
-    /// echo it back for unicast routing.
+    /// relay tags phone→desktop `cmd`/`enc` frames with it; a desktop `res`
+    /// may echo it back for unicast routing.
     pub from: Option<String>,
+    /// `enc`/`hs`/`pair_*` public key passthrough (base64; opaque to the
+    /// relay — only the envelope is checked, never the key material).
+    pub pk: Option<String>,
+    /// `enc`/`hs` unicast target connection id (desktop→phone routing),
+    /// when present.
+    pub to: Option<String>,
 }
 
-/// Envelope rules (`docs/architecture/remote-control.md`):
+/// Envelope rules (`docs/architecture/remote-e2e-contract.md`):
 /// - `t` is a required string.
 /// - `cmd` requires string `name` (incl. `sub`/`unsub`, which are ordinary
 ///   command names to the relay, never special-cased here).
 /// - `res` requires integer `id` + boolean `ok`.
 /// - `evt` requires string `name`.
 /// - `pair_begin`/`list_phones` carry no fields.
-/// - `pair_grant`/`pair_deny` require string `pair_id`.
+/// - `pair_grant`/`pair_deny` require string `pair_id`; `pair_grant` may
+///   carry an optional string `pk` (the desktop's E2E pairing key).
 /// - `revoke` requires string `phone_hash`.
 /// - `device_info` requires string `name`; string `os` is optional.
 /// - `hello` carries `v` + `caps` with no required fields (the relay and
 ///   desktop peers announce capabilities; the relay never parses `caps`).
+/// - `pair_hello` (phone, on the pre-auth pair socket) requires string
+///   `pk` (the phone's E2E pairing key).
+/// - `hs` requires string `pk` + string `mac`; integer `v` and string `ph`
+///   are optional.
+/// - `enc` requires integer `seq` + string `d`; string `to` is optional
+///   (desktop→phone unicast). The relay never parses the ciphertext.
 pub fn parse(text: &str) -> Inbound {
     let v: Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -62,8 +82,10 @@ pub fn parse(text: &str) -> Inbound {
     let str_field = |k: &str| obj.get(k).and_then(Value::as_str).map(String::from);
     let id = obj.get("id").and_then(Value::as_u64);
     let from = str_field("from");
+    let pk = str_field("pk");
+    let to = str_field("to");
     let frame = |t: &str, pair_id: Option<String>, phone_hash: Option<String>| {
-        Inbound::Valid(Frame {
+        Inbound::Valid(Box::new(Frame {
             t: t.to_string(),
             id,
             pair_id,
@@ -71,7 +93,9 @@ pub fn parse(text: &str) -> Inbound {
             name: None,
             os: None,
             from: from.clone(),
-        })
+            pk: pk.clone(),
+            to: to.clone(),
+        }))
     };
 
     match t {
@@ -102,7 +126,7 @@ pub fn parse(text: &str) -> Inbound {
         // The desktop's display identity: `name` is required (an empty one
         // is the caller's business), `os` optional.
         "device_info" => match str_field("name") {
-            Some(n) => Inbound::Valid(Frame {
+            Some(n) => Inbound::Valid(Box::new(Frame {
                 t: t.to_string(),
                 id,
                 pair_id: None,
@@ -110,13 +134,35 @@ pub fn parse(text: &str) -> Inbound {
                 name: Some(n),
                 os: str_field("os"),
                 from,
-            }),
+                pk,
+                to,
+            })),
             None => Inbound::Invalid,
         },
         // Capability handshake: the relay sends one on every join, the
         // desktop broadcasts one on connect. `v`/`caps` are opaque to the
         // relay (peers decide what to make of them).
         "hello" => frame(t, None, None),
+        // E2E pairing key announcement (phone, pre-auth pair socket): the
+        // string `pk` (the phone's X25519 public key) is required.
+        "pair_hello" => match str_field("pk") {
+            Some(_) => frame(t, None, None),
+            None => Inbound::Invalid,
+        },
+        // E2E per-connection session handshake. `pk`+`mac` must be
+        // strings; `v`/`ph` are not envelope-required (the endpoints
+        // validate them).
+        "hs" => match (str_field("pk"), str_field("mac")) {
+            (Some(_), Some(_)) => frame(t, None, None),
+            _ => Inbound::Invalid,
+        },
+        // E2E encrypted envelope. `seq` must be a non-negative integer and
+        // `d` a string; the payload itself is never parsed. `to` (string)
+        // is the optional desktop→phone unicast target.
+        "enc" => match (obj.get("seq").and_then(Value::as_u64), str_field("d")) {
+            (Some(_), Some(_)) => frame(t, None, None),
+            _ => Inbound::Invalid,
+        },
         _ => Inbound::UnknownType,
     }
 }
@@ -176,12 +222,23 @@ pub mod emit {
         json(serde_json::json!({"t":"pair_code","code":code,"url":url}))
     }
 
-    pub fn pair_request(pair_id: &str, agent: &str) -> String {
-        json(serde_json::json!({"t":"pair_request","pair_id":pair_id,"agent":agent}))
+    /// Phone wants in (forwarded to the desktop). `pk` — the phone's E2E
+    /// pairing key from its `pair_hello` — rides along when present.
+    pub fn pair_request(pair_id: &str, agent: &str, pk: Option<&str>) -> String {
+        json(serde_json::json!({"t":"pair_request","pair_id":pair_id,"agent":agent,"pk":pk}))
     }
 
-    pub fn paired(device: &str, token: &str) -> String {
-        json(serde_json::json!({"t":"paired","device":device,"token":token}))
+    /// Grant verdict → the pairing phone. `pk` — the desktop's E2E pairing
+    /// key from its `pair_grant` — rides along when present.
+    pub fn paired(device: &str, token: &str, pk: Option<&str>) -> String {
+        json(serde_json::json!({"t":"paired","device":device,"token":token,"pk":pk}))
+    }
+
+    /// Post-grant notice → the desktop, right after `paired` went to the
+    /// phone: `ph` (sha256-hex of the fresh phone token) is the key the
+    /// desktop stores its per-phone master secret under.
+    pub fn pair_done(pair_id: &str, ph: &str) -> String {
+        json(serde_json::json!({"t":"pair_done","pair_id":pair_id,"ph":ph}))
     }
 
     pub fn pair_denied() -> String {
@@ -199,9 +256,12 @@ pub mod emit {
         json(serde_json::json!({"t":"device","name":name,"os":os}))
     }
 
-    /// `peer` frame → desktop: per-phone presence (subscription refcount).
-    pub fn peer_phone(conn_id: &str, name: &str, online: bool) -> String {
-        json(serde_json::json!({"t":"peer","phone":conn_id,"name":name,"online":online}))
+    /// `peer` frame → desktop: per-phone presence. `phone` and `conn` both
+    /// carry the routing connection id (v2 endpoints key on `conn`; `phone`
+    /// stays for the v1 desktop); `ph` is the phone's token hash so the
+    /// desktop can map connections to per-phone master secrets.
+    pub fn peer_phone(conn_id: &str, name: &str, online: bool, ph: Option<&str>) -> String {
+        json(serde_json::json!({"t":"peer","phone":conn_id,"conn":conn_id,"name":name,"online":online,"ph":ph}))
     }
 
     pub fn revoked(phone_hash: &str) -> String {
@@ -230,6 +290,7 @@ mod tests {
             r#"{"t":"evt","name":"agent://line/1","payload":{"deep":[1]}}"#,
             r#"{"t":"pair_begin"}"#,
             r#"{"t":"pair_grant","pair_id":"ab"}"#,
+            r#"{"t":"pair_grant","pair_id":"ab","pk":"ZGVzay1way0wMDA="}"#,
             r#"{"t":"pair_deny","pair_id":"ab"}"#,
             r#"{"t":"revoke","phone_hash":"h"}"#,
             r#"{"t":"list_phones"}"#,
@@ -237,6 +298,11 @@ mod tests {
             r#"{"t":"device_info","name":"My PC","os":"windows"}"#,
             r#"{"t":"hello","v":1,"caps":["res-unicast","transcript-window","hello"]}"#,
             r#"{"t":"hello"}"#,
+            r#"{"t":"pair_hello","pk":"cGhvbmUtcGstMDAwMDA="}"#,
+            r#"{"t":"hs","v":2,"ph":"aabb…","pk":"b64","mac":"b64"}"#,
+            r#"{"t":"hs","pk":"b64","mac":"b64"}"#,
+            r#"{"t":"enc","seq":0,"d":"AAECAwQ="}"#,
+            r#"{"t":"enc","seq":7,"d":"AAECAwQ=","to":"1a2b3c4d"}"#,
         ];
         for c in cases {
             assert!(matches!(parse(c), Inbound::Valid(_)), "{c} must parse");
@@ -306,6 +372,18 @@ mod tests {
             r#"{"t":"unsub","name":null}"#,
             r#"{"t":"device_info"}"#,
             r#"{"t":"device_info","name":5}"#,
+            // E2E envelope rules: missing / ill-typed required fields.
+            r#"{"t":"pair_hello"}"#,
+            r#"{"t":"pair_hello","pk":7}"#,
+            r#"{"t":"hs","pk":"b64"}"#,
+            r#"{"t":"hs","mac":"b64"}"#,
+            r#"{"t":"hs","pk":"b64","mac":3}"#,
+            r#"{"t":"enc","seq":0}"#,
+            r#"{"t":"enc","d":"AAECAwQ="}"#,
+            r#"{"t":"enc","seq":"0","d":"AAECAwQ="}"#,
+            r#"{"t":"enc","seq":-1,"d":"AAECAwQ="}"#,
+            r#"{"t":"enc","seq":1.5,"d":"AAECAwQ="}"#,
+            r#"{"t":"enc","seq":0,"d":42}"#,
         ];
         for c in cases {
             assert!(
@@ -373,10 +451,13 @@ mod tests {
         assert_eq!(v["t"], "peer");
         assert_eq!(v["desktop"], true);
 
-        let v: Value = serde_json::from_str(&emit::peer_phone("c1", "Pixel", false)).unwrap();
+        let v: Value =
+            serde_json::from_str(&emit::peer_phone("c1", "Pixel", false, Some("ph1"))).unwrap();
         assert_eq!(v["phone"], "c1");
+        assert_eq!(v["conn"], "c1");
         assert_eq!(v["name"], "Pixel");
         assert_eq!(v["online"], false);
+        assert_eq!(v["ph"], "ph1");
 
         let v: Value = serde_json::from_str(&emit::device("My PC", "windows")).unwrap();
         assert_eq!(v["t"], "device");
@@ -387,19 +468,27 @@ mod tests {
         assert_eq!(v["t"], "revoked");
         assert_eq!(v["phone_hash"], "deadbeef");
 
-        let v: Value = serde_json::from_str(&emit::paired("dev1", "tok1")).unwrap();
+        let v: Value = serde_json::from_str(&emit::paired("dev1", "tok1", Some("pk1"))).unwrap();
         assert_eq!(v["t"], "paired");
         assert_eq!(v["device"], "dev1");
         assert_eq!(v["token"], "tok1");
+        assert_eq!(v["pk"], "pk1");
 
         let v: Value =
             serde_json::from_str(&emit::pair_code("ABCD-1234", "https://h/p#tok")).unwrap();
         assert_eq!(v["code"], "ABCD-1234");
         assert_eq!(v["url"], "https://h/p#tok");
 
-        let v: Value = serde_json::from_str(&emit::pair_request("pid", "iPhone UA")).unwrap();
+        let v: Value =
+            serde_json::from_str(&emit::pair_request("pid", "iPhone UA", Some("ppk"))).unwrap();
         assert_eq!(v["pair_id"], "pid");
         assert_eq!(v["agent"], "iPhone UA");
+        assert_eq!(v["pk"], "ppk");
+
+        let v: Value = serde_json::from_str(&emit::pair_done("pid", "ph1")).unwrap();
+        assert_eq!(v["t"], "pair_done");
+        assert_eq!(v["pair_id"], "pid");
+        assert_eq!(v["ph"], "ph1");
 
         let v: Value = serde_json::from_str(&emit::pair_denied()).unwrap();
         assert_eq!(v["t"], "pair_denied");
@@ -421,6 +510,51 @@ mod tests {
         assert_eq!(v["list"][0]["hash"], "h1");
         assert_eq!(v["list"][1]["name"], "b");
         assert_eq!(v["list"][1]["paired_at"], 2);
+    }
+
+    #[test]
+    fn e2e_optional_pk_absent_is_null_not_string() {
+        // `pk`/`to` omitted → null in the emitted frames (serde keeps the
+        // key with null so clients can key uniformly).
+        let v: Value = serde_json::from_str(&emit::paired("d", "t", None)).unwrap();
+        assert!(v["pk"].is_null());
+        let v: Value = serde_json::from_str(&emit::pair_request("p", "a", None)).unwrap();
+        assert!(v["pk"].is_null());
+        let v: Value = serde_json::from_str(&emit::peer_phone("c1", "n", true, None)).unwrap();
+        assert!(v["ph"].is_null());
+    }
+
+    #[test]
+    fn e2e_envelope_extracts_pk_and_to() {
+        let Inbound::Valid(f) = parse(
+            r#"{"t":"enc","seq":3,"d":"AAECAwQ=","to":"feedbeef","pk":"aGFjaw=="}"#,
+        ) else {
+            panic!();
+        };
+        assert_eq!(f.t, "enc");
+        assert_eq!(f.pk.as_deref(), Some("aGFjaw=="));
+        assert_eq!(f.to.as_deref(), Some("feedbeef"));
+
+        let Inbound::Valid(f) =
+            parse(r#"{"t":"hs","v":2,"ph":"h","pk":"k","mac":"m"}"#) else {
+                panic!();
+            };
+        assert_eq!(f.pk.as_deref(), Some("k"));
+        assert_eq!(f.to, None);
+
+        let Inbound::Valid(f) =
+            parse(r#"{"t":"pair_grant","pair_id":"p","pk":"desk"}"#) else {
+                panic!();
+            };
+        assert_eq!(f.pair_id.as_deref(), Some("p"));
+        assert_eq!(f.pk.as_deref(), Some("desk"));
+
+        // A non-string `to` is simply absent (never misroutes a unicast).
+        let Inbound::Valid(f) =
+            parse(r#"{"t":"enc","seq":1,"d":"AAECAwQ=","to":9}"#) else {
+                panic!();
+            };
+        assert_eq!(f.to, None);
     }
 
     #[test]

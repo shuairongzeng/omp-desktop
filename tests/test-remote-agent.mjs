@@ -516,7 +516,7 @@ await check("the desktop broadcasts hello on connector-online and on every phone
 
   // the connector reports its WS connection live → one hello
   E.status({ enabled: true, status: "online" });
-  assert.deepEqual(E.sent, [{ t: "hello", v: 1, caps: ["gz", "transcript-window", "ask-sync"] }]);
+  assert.deepEqual(E.sent, [{ t: "hello", v: 2, caps: ["gz", "transcript-window", "ask-sync", "e2e"] }]);
   // a duplicate online report does not re-broadcast
   E.status({ enabled: true, status: "online" });
   assert.equal(E.sent.length, 1);
@@ -524,7 +524,7 @@ await check("the desktop broadcasts hello on connector-online and on every phone
   // a new phone joins the room → one more hello
   E.control({ t: "peer", phone: "p1", online: true });
   assert.equal(E.sent.length, 2);
-  assert.deepEqual(E.sent.at(-1), { t: "hello", v: 1, caps: ["gz", "transcript-window", "ask-sync"] });
+  assert.deepEqual(E.sent.at(-1), { t: "hello", v: 2, caps: ["gz", "transcript-window", "ask-sync", "e2e"] });
   // a phone leaving never broadcasts
   E.control({ t: "peer", phone: "p1", online: false });
   assert.equal(E.sent.length, 2);

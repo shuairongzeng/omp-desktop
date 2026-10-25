@@ -20,8 +20,8 @@ const hubSrc = readFileSync(join(root, "src/app/remote-hub.js"), "utf8");
 
 const KEY = "omp-remote:devices";
 const storeWith = (...devices) => JSON.stringify({
-  devices: devices.map(([device, token, name = "", os = ""]) =>
-    ({ device, token, name, os, lastUsed: 0 })),
+  devices: devices.map(([device, token, name = "", os = "", ms = "b64-ms"]) =>
+    ({ device, token, name, os, ms, lastUsed: 0 })),
   selected: devices.length ? devices[0][0] : null,
 });
 
@@ -265,6 +265,31 @@ const ok = (msg) => { n++; console.log(`  ok  ${msg}`); };
   go.click();
   assert.deepEqual(E.replaceCalls, ["/p#ABCD-1234"]);
   ok("the pair pane redeems a typed code by opening /p#<code>");
+}
+
+// ── R8 E2E: a pre-E2E entry (no ms) shows the re-pair state ────────────────
+{
+  // one healthy R8 entry and one pre-R8 entry (ms stripped by normalize)
+  const store = storeWith(["d1", "t1", "One", "windows"], ["d2", "t2"]);
+  const noMs = JSON.parse(store);
+  delete noMs.devices[1].ms;
+  const E = makeEnv({ storage: { [KEY]: JSON.stringify(noMs) } });
+  E.hub.open();
+  const rows = E.rows();
+  assert.equal(rows.length, 2);
+  // the healthy row: ordinary presence text
+  assert.equal(rowMeta(rows[0]), "Windows · 连接中…");
+  // the pre-E2E row: the re-pair state replaces the presence text
+  assert.equal(rowMeta(rows[1]), "需重新配对");
+  ok("an entry without ms shows 需重新配对 in the row's meta line");
+
+  // presence changes still update the healthy row; the re-pair row stays
+  E.sockets[0].message({ t: "peer", desktop: true });
+  E.sockets[1].message({ t: "peer", desktop: true });
+  const rows2 = E.rows(); // render() rebuilt the list — re-read
+  assert.equal(rowMeta(rows2[0]), "Windows · 在线");
+  assert.equal(rowMeta(rows2[1]), "需重新配对");
+  ok("the re-pair state wins over live presence — re-scan is the only exit");
 }
 
 console.log(`remote-hub: ${n} checks passed`);

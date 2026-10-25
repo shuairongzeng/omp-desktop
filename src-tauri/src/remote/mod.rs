@@ -14,6 +14,7 @@
 //! the API keys omp itself stores; the relay only ever keeps its hash.
 
 mod conn;
+mod crypto;
 mod settings;
 
 pub use settings::{RemoteSettings, RemoteStateView};
@@ -26,10 +27,13 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{mpsc, oneshot};
 
 /// Frame types the webview may ask us to send; everything else the relay
-/// speaks is either inbound-only or reserved to the relay itself.
-const SENDABLE: [&str; 7] = [
+/// speaks is either inbound-only or reserved to the relay itself. `hello`
+/// is the v2 caps broadcast (the `e2e` cap) — the agent sends it on
+/// connect and on every phone join, as before.
+const SENDABLE: [&str; 8] = [
     "res",
     "evt",
+    "hello",
     "pair_begin",
     "pair_grant",
     "pair_deny",
@@ -57,6 +61,27 @@ pub struct RemoteManager {
     /// Bumped per (re)start so a dying connection can't clear the outbox of
     /// the one that replaced it.
     generation: AtomicU64,
+    /// E2E (contract v2): in-flight pairings by `pair_id`, from the relay's
+    /// `pair_request` (carrying the phone's `pk`) until the relay's
+    /// `pair_done` (carrying `ph`) lets us derive and persist the master
+    /// secret.
+    pairing: Mutex<std::collections::BTreeMap<String, PairingRecord>>,
+    /// E2E session keys by the phone's connection id (the `conn` field of
+    /// the relay's `peer` frames / the `from` the relay stamps on inbound
+    /// frames). One entry per live e2e phone.
+    sessions: Mutex<std::collections::BTreeMap<String, crypto::SessionKeys>>,
+    /// The `ph` (phone token hash) behind each live phone connection, from
+    /// the relay's `peer` frames (`conn` + `ph`), so a `pair_done` arriving
+    /// after a phone connects still binds by hash and the Settings revoke
+    /// flow keeps its existing key.
+    phone_hash: Mutex<std::collections::BTreeMap<String, String>>,
+}
+
+/// One in-flight pairing (E2E v2): the phone's ephemeral public key and
+/// ours, held between `pair_request` and `pair_done`.
+struct PairingRecord {
+    phone_pk: Vec<u8>,
+    desk: crypto::KeyPair,
 }
 
 impl RemoteManager {
@@ -74,6 +99,9 @@ impl RemoteManager {
             outbox: Mutex::new(None),
             stop: Mutex::new(None),
             generation: AtomicU64::new(0),
+            pairing: Mutex::new(std::collections::BTreeMap::new()),
+            sessions: Mutex::new(std::collections::BTreeMap::new()),
+            phone_hash: Mutex::new(std::collections::BTreeMap::new()),
         });
         let settings = mgr.load_settings();
         if settings.enabled && settings.ready() {
@@ -152,6 +180,134 @@ impl RemoteManager {
         if guard.as_ref().is_some_and(|(g, _)| *g == generation) {
             *guard = None;
         }
+    }
+
+    // ── E2E bookkeeping (contract v2; called from conn.rs) ─────────────
+
+    /// A pairing request arrived carrying the phone's ephemeral `pk`:
+    /// generate this desktop's pairing ephemeral for that `pair_id` and
+    /// remember the phone's pk for the `pair_done` derivation. A v1
+    /// `pair_request` (no `pk`) is a no-op — the pairing proceeds
+    /// plaintext-less and the phone is treated as pre-v2 on connect.
+    pub(crate) fn begin_pairing(&self, pair_id: &str, phone_pk: Option<&[u8]>) {
+        let Some(phone_pk) = phone_pk else { return };
+        if phone_pk.len() != 32 {
+            return;
+        }
+        let Some(key) = crypto::KeyPair::generate().ok() else { return };
+        self.pairing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                pair_id.to_string(),
+                PairingRecord {
+                    phone_pk: phone_pk.to_vec(),
+                    desk: key,
+                },
+            );
+    }
+
+    /// The pairing UI answered; the `pair_grant` carries the desktop `pk`
+    /// only when we hold a pairing record for this `pair_id`.
+    pub(crate) fn pairing_pk(&self, pair_id: &str) -> Option<String> {
+        let guard = self
+            .pairing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard
+            .get(pair_id)
+            .map(|r| crypto::b64_encode(&r.desk.public))
+    }
+
+    /// The relay confirmed the pairing (`pair_done` with the phone's token
+    /// hash `ph`): derive `MS` and persist it under `ph` in `remote.json`.
+    /// `Err` carries a human reason (derivation or persistence failure).
+    pub(crate) fn finish_pairing(&self, pair_id: &str, ph: &str) -> Result<(), String> {
+        let record = self
+            .pairing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(pair_id);
+        let Some(record) = record else {
+            // A pairing we never saw a `pk` for (v1 phone): nothing to
+            // store — the phone is paired without E2E and will be asked
+            // to re-pair by the UI (contract: no plaintext fallback).
+            return Ok(());
+        };
+        let desk_pk = record.desk.public.clone(); // 32-byte copy: record.desk is consumed by the agreement
+        let ms = crypto::master_secret(record.desk, &record.phone_pk, &record.phone_pk, &desk_pk)
+            .map_err(|_| "pairing key agreement failed".to_string())?;
+        let ms_b64 = crypto::b64_encode(&ms);
+        let mut settings = self.load_settings();
+        settings
+            .phones
+            .entry(ph.to_string())
+            .or_default()
+            .ms = Some(ms_b64);
+        self.save_settings(&settings)
+    }
+
+
+    /// A phone connection's session keys (after a verified `hs`).
+    pub(crate) fn set_session(&self, conn: &str, keys: crypto::SessionKeys) {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(conn.to_string(), keys);
+    }
+
+    /// The relay told us which `ph` a connection belongs to (`peer` with
+    /// `conn` + `ph`); also drops any stale session for a gone conn.
+    pub(crate) fn note_phone_conn(&self, conn: &str, ph: Option<&str>, online: bool) {
+        if online {
+            if let Some(ph) = ph {
+                self.phone_hash
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(conn.to_string(), ph.to_string());
+            }
+        } else {
+            self.sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(conn);
+            self.phone_hash
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(conn);
+        }
+    }
+
+    /// Session keys for a live phone connection, mutable for the seq
+    /// counters (both directions live on one object).
+    pub(crate) fn with_session<R>(
+        &self,
+        conn: &str,
+        f: impl FnOnce(&mut crypto::SessionKeys) -> R,
+    ) -> Option<R> {
+        let mut guard = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.get_mut(conn).map(f)
+    }
+
+    /// Every live e2e phone connection id (for per-phone encryption of a
+    /// broadcast evt; contract: v2 desktops unicast per phone).
+    pub(crate) fn e2e_conns(&self) -> Vec<String> {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// The MS for a phone hash, decoded from `remote.json`.
+    pub(crate) fn phone_ms(&self, ph: &str) -> Option<[u8; 32]> {
+        let b64 = self.load_settings().phone_ms(ph)?.to_string();
+        let ms = crypto::b64_decode(&b64).ok()?;
+        ms.try_into().ok()
     }
 
     /// (Re)starts the connector task; a running one is stopped first.
@@ -249,11 +405,77 @@ pub fn remote_set_name(
 
 /// Send one frame to the relay (see `SENDABLE`). The webview's remote agent
 /// builds these; the allowlist keeps the IPC surface honest.
+///
+/// E2E v2: `res`/`evt` are the *business* frames — they ride encrypted,
+/// per phone. A `res` unicast echoes the triggering cmd's `from` (the
+/// phone's conn id); an `evt` broadcast is fanned out to every live e2e
+/// session as one `enc` unicast per phone (the agent's per-phone `sub`
+/// refcounting already keeps `from` on res). Control frames (`hello`,
+/// pairing, revoke) stay plaintext per the contract.
 #[tauri::command]
 pub fn remote_send(frame: Value, mgr: State<'_, Arc<RemoteManager>>) -> Result<(), String> {
-    let t = frame.get("t").and_then(Value::as_str).unwrap_or("");
-    if !SENDABLE.contains(&t) {
+    let t = frame.get("t").and_then(Value::as_str).unwrap_or("").to_string();
+    if !SENDABLE.contains(&t.as_str()) {
         return Err(format!("frame type {t:?} is not sendable"));
+    }
+
+    // Business frames → one enc envelope per target phone.
+    if t == "res" || t == "evt" {
+        let targets: Vec<String> = frame
+            .get("from")
+            .and_then(Value::as_str)
+            .map_or_else(|| mgr.e2e_conns(), |s| vec![s.to_string()]);
+        if targets.is_empty() {
+            // Nobody e2e-connected: nothing to send (a v1 phone would see
+            // plaintext, which v2 must never emit for business frames).
+            return Ok(());
+        }
+        let plain = serde_json::to_vec(&frame).map_err(|e| e.to_string())?;
+        let envelopes = targets
+            .iter()
+            .map(|conn| {
+                mgr.with_session(conn, |keys| {
+                    keys.seal(&plain).map(|(seq, sealed)| {
+                        serde_json::json!({
+                            "t": "enc",
+                            "seq": seq,
+                            "d": crypto::b64_encode(&sealed),
+                            "to": conn,
+                        })
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        // Clone the sender out of the guard so the lock is released
+        // before the per-phone send loop (channel senders are cheap).
+        let tx = {
+            let guard = mgr
+                .outbox
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some((_, tx)) = &*guard else {
+                return Err("not connected".to_string());
+            };
+            let tx = tx.clone();
+            drop(guard);
+            tx
+        };
+        for env in envelopes.into_iter().flatten() {
+            let env = env.map_err(|_| "session encryption failed".to_string())?;
+            tx.send(env)
+                .map_err(|_| "connection is closing".to_string())?;
+        }
+        return Ok(());
+    }
+
+    // A grant with our pairing ephemeral's pk attached (E2E pairing).
+    let mut frame = frame;
+    if t == "pair_grant" {
+        if let Some(pair_id) = frame.get("pair_id").and_then(Value::as_str).map(str::to_owned) {
+            if let Some(pk) = mgr.pairing_pk(&pair_id) {
+                frame["pk"] = Value::String(pk);
+            }
+        }
     }
     let guard = mgr
         .outbox
