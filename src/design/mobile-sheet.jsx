@@ -33,6 +33,10 @@ function MobileSheet({ title, onClose, dismissOnScrim = true, children }) {
   const [dy, setDy] = React.useState(null);
   const dragRef = React.useRef(null); // { y0, t0, lastY, lastT, moved }
   const sheetRef = React.useRef(null);
+  // Drag-to-dismiss is a touch gesture; on a fine pointer (a phone in
+  // desktop-mode UA, a hybrid with a mouse) the sheet is a centered card
+  // and an inline translateY would fight the CSS centering transform.
+  const coarse = window.OMP_MOBILE?.isTouch?.() ?? true;
 
   // Escape: the shared stack owns the listener; `active` is this sheet's
   // open state (always true while mounted — sheets unmount on close).
@@ -81,7 +85,8 @@ function MobileSheet({ title, onClose, dismissOnScrim = true, children }) {
       <div className="ms-scrim" onClick={dismissOnScrim ? onClose : undefined} />
       <div className="ms-sheet" ref={sheetRef} style={style}
         role="dialog" aria-modal="true" aria-label={title || "sheet"}
-        onTouchStart={beginDrag} onTouchMove={moveDrag} onTouchEnd={endDrag} onTouchCancel={endDrag}>
+        onTouchStart={coarse ? beginDrag : undefined} onTouchMove={coarse ? moveDrag : undefined}
+        onTouchEnd={coarse ? endDrag : undefined} onTouchCancel={coarse ? endDrag : undefined}>
         <div className="ms-grab" />
         {title && <div className="ms-title">{title}</div>}
         {children}

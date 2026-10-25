@@ -1575,8 +1575,12 @@ React.useEffect(() => {
 
       {/* Phone folder sheet (remote control): recent folders + a typed
           path, submitted as `open_project_at` — see openRemoteProject.
-          Mounted only on a touch device, like the composer's sheet. */}
-      {window.OMP_MOBILE?.isTouch?.() && folderSheet && (<PanelBoundary label="folder sheet">{(() => {
+          Mounted on the remote shim — NOT gated on touch: the opener
+          (handleNewProject) routes here whenever `isRemote()`, and a phone
+          in desktop-mode UA reports a fine pointer. Gating on touch made
+          the click a silent no-op there. CSS centers the sheet as a card
+          under `@media (pointer: fine)`. */}
+      {window.OMP_MOBILE?.isRemote?.() && folderSheet && (<PanelBoundary label="folder sheet">{(() => {
         const MobileSheet = window.MobileSheet;
         if (!MobileSheet) return null;
         const rows = recentRows(recentProjects, sessions, activeProfileId);

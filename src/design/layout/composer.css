@@ -559,3 +559,40 @@
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
 }
+
+/* Remote clients mount sheets at any viewport — a phone in desktop-mode UA
+   reports >760px wide and a fine pointer, and previously the sheet rendered
+   but stayed display:none (the click "did nothing"). The shim marks <html>
+   with .remote-shim; above the phone tier the sheet presents as a centered
+   card. The desktop app never carries the class, so it is unaffected. */
+@media (min-width: 761px) {
+  html.remote-shim .ms-root {
+    display: block;
+    position: fixed; inset: 0;
+    z-index: 95;
+  }
+  html.remote-shim .ms-scrim {
+    position: absolute; inset: 0;
+    background: rgb(0 0 0 / .5);
+  }
+  html.remote-shim .ms-sheet {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(560px, 92vw);
+    max-height: 80vh;
+    background: var(--bg-elevated);
+    border: 1px solid var(--line-bright);
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 24px 70px rgb(0 0 0 / .55);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  html.remote-shim .ms-grab { display: none; }
+  html.remote-shim .ms-title {
+    text-align: center;
+    color: var(--fg-3);
+    font-size: var(--d-text-xs);
+    padding: 0 0 6px;
+  }
+}
