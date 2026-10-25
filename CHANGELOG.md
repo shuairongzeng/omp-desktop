@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Phones could stay on a stale page for a day after a same-version redeploy** — the relay served JS with `max-age=86400` and the `?v=` stamp only changes with the app version, so a fixed phone page never reached a cached handset (this is why a re-pair seemed to "do nothing" after the E2E upgrade). All static responses now revalidate (`no-cache`) with an etag → 304 when nothing changed
+
 ### Added
 
 - **End-to-end encryption for phone remote control** (protocol v2) — pairing now exchanges ephemeral X25519 keys through the relay and every connection re-handshakes (fresh ephemeral keys, HMAC-authenticated under the pairing master secret, so sessions have forward secrecy). All business frames ride as AES-256-GCM `enc` envelopes with seq-counter nonces and replay refusal; the relay routes envelopes only and can no longer read message content. Documented residual: the pairing moment itself still trusts the relay (it mints the pair token). **Hard cutover, no plaintext fallback**: after upgrading, open the phone page once and re-pair each desktop when it shows "需重新配对" — old pairings carry no key material. Phone-side crypto is the vendored pure-JS `@noble` bundle (works under the self-signed cert where `crypto.subtle` is unavailable)

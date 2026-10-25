@@ -214,18 +214,13 @@ pub fn content_type_for(path: &Path) -> &'static str {
     }
 }
 
-/// `Cache-Control`: HTML revalidates every load (the shim ships in it),
-/// everything else is cacheable for a day.
-pub fn cache_control_for(path: &Path) -> &'static str {
-    let is_html = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"));
-    if is_html {
-        "no-cache"
-    } else {
-        "public, max-age=86400"
-    }
+/// `Cache-Control`: everything revalidates every load. HTML because the
+/// shim ships in it, and JS/CSS because the `?v=` stamp only changes with
+/// the app *version* — a same-version redeploy (a fix to the phone page)
+/// used to strand phones on the old scripts for a day. Revalidation is
+/// cheap: `serve_file` answers 304 from the etag when nothing changed.
+pub fn cache_control_for(_path: &Path) -> &'static str {
+    "no-cache"
 }
 
 /// Display strings (phone names, device names) are truncated to 80 chars.
@@ -358,10 +353,9 @@ mod tests {
     fn cache_control() {
         assert_eq!(cache_control_for(Path::new("i.html")), "no-cache");
         assert_eq!(cache_control_for(Path::new("i.HTM")), "no-cache");
-        assert_eq!(
-            cache_control_for(Path::new("app.js")),
-            "public, max-age=86400"
-        );
+        // JS/CSS revalidate too: the ?v= stamp only changes with the app
+        // version, so a same-version redeploy must not strand phones.
+        assert_eq!(cache_control_for(Path::new("app.js")), "no-cache");
     }
 
     #[test]

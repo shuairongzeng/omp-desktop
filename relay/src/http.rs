@@ -28,16 +28,16 @@ async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
-async fn index(State(app): State<SharedApp>) -> Response {
-    serve_static(&app, "index.html")
+async fn index(State(app): State<SharedApp>, req_headers: HeaderMap) -> Response {
+    serve_static(&app, "index.html", &req_headers)
 }
 
-async fn static_file(State(app): State<SharedApp>, uri: Uri) -> Response {
-    serve_static(&app, uri.path())
+async fn static_file(State(app): State<SharedApp>, uri: Uri, req_headers: HeaderMap) -> Response {
+    serve_static(&app, uri.path(), &req_headers)
 }
 
 /// Serve one path inside the static root; escapes and misses are plain 404s.
-fn serve_static(app: &SharedApp, req_path: &str) -> Response {
+fn serve_static(app: &SharedApp, req_path: &str, req_headers: &HeaderMap) -> Response {
     let Some(mut path) = safe_join(&app.static_root, req_path) else {
         return not_found();
     };
@@ -45,19 +45,52 @@ fn serve_static(app: &SharedApp, req_path: &str) -> Response {
         // Directory URLs resolve to their index.html.
         path.push("index.html");
     }
-    serve_file(&path)
+    serve_file(&path, req_headers)
 }
 
-fn serve_file(path: &std::path::Path) -> Response {
+/// Weak etag from file length + mtime seconds — exact for this use (a
+/// redeploy rewrites the file, bumping both).
+fn etag_for(path: &std::path::Path) -> Option<String> {
+    let md = std::fs::metadata(path).ok()?;
+    let secs = md
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!("W/\"{}-{secs}\"", md.len()))
+}
+
+fn serve_file(path: &std::path::Path, req_headers: &HeaderMap) -> Response {
+    let Some(etag) = etag_for(path) else {
+        return not_found();
+    };
+    if req_headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v == etag)
+    {
+        let mut headers = HeaderMap::with_capacity(2);
+        insert_header(&mut headers, header::CACHE_CONTROL, cache_control_for(path));
+        headers.insert(
+            header::ETAG,
+            HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("invalid")),
+        );
+        return (StatusCode::NOT_MODIFIED, headers).into_response();
+    }
     let bytes = match read_file(path) {
         Some(b) => b,
         None => return not_found(),
     };
 
-    let mut headers = HeaderMap::with_capacity(3);
+    let mut headers = HeaderMap::with_capacity(4);
     let ct = content_type_for(path);
     insert_header(&mut headers, header::CONTENT_TYPE, ct);
     insert_header(&mut headers, header::CACHE_CONTROL, cache_control_for(path));
+    headers.insert(
+        header::ETAG,
+        HeaderValue::from_str(&etag).unwrap_or(HeaderValue::from_static("invalid")),
+    );
     if ct.starts_with("text/html") {
         insert_header(&mut headers, header::CONTENT_SECURITY_POLICY, CSP);
     }
@@ -110,7 +143,7 @@ mod tests {
         // `/` and `/p` are router-level aliases for index.html.
         let app = app_with_static("../src");
         for path in ["/", "/p"] {
-            let r = serve_static(&app, "index.html");
+            let r = serve_static(&app, "index.html", &HeaderMap::new());
             assert_eq!(r.status(), StatusCode::OK, "{path}");
             let h = r.headers();
             assert_eq!(
@@ -128,44 +161,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn js_gets_long_cache_no_csp() {
+    async fn js_revalidates_with_etag_and_304s() {
         let app = app_with_static("../src");
-        let r = serve_static(&app, "/live.js");
+        let r = serve_static(&app, "/live.js", &HeaderMap::new());
         assert_eq!(r.status(), StatusCode::OK);
         let h = r.headers();
         assert_eq!(
             h.get(header::CONTENT_TYPE).unwrap(),
             "text/javascript; charset=utf-8"
         );
-        assert_eq!(
-            h.get(header::CACHE_CONTROL).unwrap(),
-            "public, max-age=86400"
-        );
+        // Revalidate-always: a same-version redeploy must reach phones.
+        assert_eq!(h.get(header::CACHE_CONTROL).unwrap(), "no-cache");
         assert!(h.get(header::CONTENT_SECURITY_POLICY).is_none());
+        let etag = h.get(header::ETAG).unwrap().to_str().unwrap().to_string();
+        assert!(etag.starts_with("W/\""));
+
+        // A matching If-None-Match gets a 304 with no body.
+        let mut req = HeaderMap::new();
+        req.insert(header::IF_NONE_MATCH, HeaderValue::from_str(&etag).unwrap());
+        let r304 = serve_static(&app, "/live.js", &req);
+        assert_eq!(r304.status(), StatusCode::NOT_MODIFIED);
+        let body = axum::body::to_bytes(r304.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(body.is_empty());
+
+        // A stale etag re-downloads.
+        let mut stale = HeaderMap::new();
+        stale.insert(header::IF_NONE_MATCH, HeaderValue::from_static("W/\"0-0\""));
+        let r200 = serve_static(&app, "/live.js", &stale);
+        assert_eq!(r200.status(), StatusCode::OK);
     }
 
     #[tokio::test]
     async fn miss_and_traversal_are_404() {
         let app = app_with_static("../src");
         assert_eq!(
-            serve_static(&app, "/nope.js").status(),
+            serve_static(&app, "/nope.js", &HeaderMap::new()).status(),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
-            serve_static(&app, "/../../etc/passwd").status(),
+            serve_static(&app, "/../../etc/passwd", &HeaderMap::new()).status(),
             StatusCode::NOT_FOUND
         );
         let gone = app_with_static("does-not-exist");
-        assert_eq!(serve_static(&gone, "/").status(), StatusCode::NOT_FOUND);
+        assert_eq!(serve_static(&gone, "/", &HeaderMap::new()).status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
     async fn nested_and_dir_paths() {
         let app = app_with_static("../src");
-        let r = serve_static(&app, "/app/accent.js");
+        let r = serve_static(&app, "/app/accent.js", &HeaderMap::new());
         assert_eq!(r.status(), StatusCode::OK);
         // A directory without index.html is a miss (only the root has one).
-        let r = serve_static(&app, "/app");
+        let r = serve_static(&app, "/app", &HeaderMap::new());
         assert_eq!(r.status(), StatusCode::NOT_FOUND);
     }
 
