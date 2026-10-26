@@ -183,9 +183,7 @@ function ProjectSidebar({
                     onClick={() => onSelectTab(groupTarget(group, activeId))}
                     onDoubleClick={() => { if (!multi) startRename(group.tabs[0].id); }}>
                     {folderIcon}
-                    {multi
-                      ? <span className="psb-name">{group.name}</span>
-                      : <TabLabel tab={group.tabs[0]} className="psb-name" />}
+                    <span className="psb-name">{group.name}</span>
                     {profile && (
                       <span className="chip muted tab-profile" title={`profile: ${profile}`}>{profile}</span>
                     )}
