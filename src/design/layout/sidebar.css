@@ -53,6 +53,12 @@
   font-family: var(--font-mono); font-size: var(--d-text-sm);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Project rows: the folder icon, profile chip, run dot and tab count are
+   fixed-size chrome — they must never squeeze the project name to zero.
+   The name keeps a floor of 4ch (enough to recognize the project) and
+   ellipsizes past that; everything else refuses to shrink. */
+.psb-row.psb-project .psb-main > :not(.psb-name) { flex-shrink: 0; }
+.psb-row.psb-project .psb-name { min-width: 4ch; }
 .psb-parent { margin-left: 6px; font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-4); }
 .psb-row .tab-profile { font-size: var(--d-text-xs); }
 
