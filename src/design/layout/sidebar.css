@@ -197,14 +197,30 @@ body.reordering [data-reorder-axis="x"].drop-after { margin-inline: 0 4px; }
    header carries the total count; each row has a status dot and a badge
    colored by the status tone. Tones map onto the theme's semantic colors:
    accent = live work, amber = attention/waiting, rose = failed. */
-.psb-working-head {
-  display: flex; align-items: center; justify-content: space-between;
+
+/* Segmented tab switcher: Open | Working. Sits at the top of the scroll
+   area, replacing the old static "open" section header. */
+.psb-seg {
+  display: flex; gap: 2px; padding: 4px 6px 6px;
+  border-bottom: 1px solid var(--line-soft);
+  margin-bottom: 2px;
 }
-.psb-working-count {
-  font-family: var(--font-mono); font-size: var(--d-text-xs);
-  color: var(--fg-4);
-  background: var(--bg-hover);
-  border-radius: 8px; padding: 0 6px; line-height: 16px;
+.psb-seg-tab {
+  appearance: none; border: 0; background: transparent; padding: 3px 10px;
+  font: inherit; font-size: var(--d-text-xs); color: var(--fg-3);
+  text-transform: lowercase; letter-spacing: 0.04em;
+  border-radius: var(--r-1); cursor: pointer;
+  display: flex; align-items: center; gap: 4px;
+}
+.psb-seg-tab:hover { color: var(--fg-2); background: var(--bg-hover); }
+.psb-seg-tab.active { color: var(--fg); background: var(--bg-surface); }
+.psb-seg-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.psb-seg-badge {
+  font-family: var(--font-mono); font-size: calc(var(--d-text-xs) - 1px);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 8px; padding: 0 5px; line-height: 14px; min-width: 14px;
+  text-align: center;
 }
 .psb-row.psb-working { height: 28px; }
 .psb-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }

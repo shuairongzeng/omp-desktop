@@ -69,11 +69,11 @@ check("badge labels are the planned short tags", () => {
   const labels = {};
   for (const state of W.WORKING_STATES) labels[state] = W.STATUS_META[state].label;
   assert.deepEqual(labels, {
-    "waiting-user": "待批准",
-    failed: "出错",
-    retrying: "重试",
-    running: "运行",
-    background: "后台",
+    "waiting-user": "waiting",
+    failed: "failed",
+    retrying: "retrying",
+    running: "running",
+    background: "background",
   });
 });
 

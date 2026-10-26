@@ -16,15 +16,15 @@
    *  already in flight), and a quiet background job comes last. */
   const PRIORITY = { "waiting-user": 0, failed: 1, retrying: 2, running: 3, background: 4 };
 
-  /** Badge meta per working state: `label` is the short Chinese tag,
+  /** Badge meta per working state: `label` is the short English tag,
    *  `icon` an Icon name (src/design/ui/icons.jsx), `tone` the CSS var
    *  suffix the badge colours itself with. */
   const STATUS_META = {
-    "waiting-user": { label: "待批准", icon: "check", tone: "warn" },
-    failed: { label: "出错", icon: "warn", tone: "error" },
-    retrying: { label: "重试", icon: "refresh", tone: "warn" },
-    running: { label: "运行", icon: "play", tone: "accent" },
-    background: { label: "后台", icon: "clock", tone: "muted" },
+    "waiting-user": { label: "waiting", icon: "check", tone: "warn" },
+    failed: { label: "failed", icon: "warn", tone: "error" },
+    retrying: { label: "retrying", icon: "refresh", tone: "warn" },
+    running: { label: "running", icon: "play", tone: "accent" },
+    background: { label: "background", icon: "clock", tone: "muted" },
   };
 
   const rankOf = row => {

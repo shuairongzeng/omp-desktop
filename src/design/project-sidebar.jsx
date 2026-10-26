@@ -49,6 +49,18 @@ function _saveCollapsed(map) {
 const _PSB_IS_WIN = typeof navigator !== "undefined" &&
   (navigator.userAgent.includes("Windows") || navigator.platform.startsWith("Win"));
 
+// Sidebar view tab: "open" (all tabs grouped by project) or "working"
+// (non-idle tabs by attention priority). Persisted per window so a restart
+// remembers the last view. The "working" tab is the #working-surface slice.
+const VIEW_KEY = "omp-desktop.sidebar.view";
+function _loadView() {
+  try { const v = localStorage.getItem(VIEW_KEY); return v === "working" ? "working" : "open"; }
+  catch (_) { return "open"; }
+}
+function _saveView(v) {
+  try { localStorage.setItem(VIEW_KEY, v); } catch (_) { /* quota/private mode */ }
+}
+
 function ProjectSidebar({
   tabs, activeId, recents, savedSessions = [], historyProfile, profileLabel,
   onSelectTab, onCloseTab, onRenameTab, onNewInProject, onOpenRecent, onForgetRecent, onOpenFolder, onHide, onReorder,
@@ -90,6 +102,14 @@ function ProjectSidebar({
   const reorder = window.useDragReorder(onReorder);
   const hideHint = sidebarHint("desktop.sidebar.toggle", _PSB_IS_WIN ? "Ctrl+B" : "⌘B");
 
+  // View tab: "open" (all tabs grouped) or "working" (non-idle by
+  // priority). The working list comes from OMP_WORKING_SURFACE (already
+  // loaded before this file by index.html's script order).
+  const [view, setView] = React.useState(_loadView);
+  const switchView = v => { setView(v); _saveView(v); };
+  const workingRows = window.OMP_WORKING_SURFACE?.workingTabs(tabs) ?? [];
+  const workingCount = workingRows.length;
+
   return (
     <aside className="project-sidebar" aria-label="projects">
       <div className="psb-head">
@@ -100,9 +120,25 @@ function ProjectSidebar({
       </div>
 
       <div className="psb-scroll" onPointerDown={reorder.onPointerDown}>
-        <div className="psb-section">open</div>
-        {groups.length === 0 && <div className="psb-empty">no open tabs</div>}
-        {groups.map(group => {
+        {/* Segmented tab: Open (all tabs grouped) | Working (non-idle
+            priority list). The working tab's badge shows the count so the
+            user sees it without switching. Persisted in localStorage. */}
+        <div className="psb-seg" role="tablist" aria-label="sidebar view">
+          <button className={`psb-seg-tab${view === "open" ? " active" : ""}`}
+            role="tab" aria-selected={view === "open"}
+            onClick={() => switchView("open")}>open</button>
+          <button className={`psb-seg-tab${view === "working" ? " active" : ""}`}
+            role="tab" aria-selected={view === "working"}
+            onClick={() => switchView("working")}>
+            working
+            {workingCount > 0 && <span className="psb-seg-badge">{workingCount}</span>}
+          </button>
+        </div>
+
+        {view === "open" && (
+          <>
+            {groups.length === 0 && <div className="psb-empty">no open tabs</div>}
+            {groups.map(group => {
           const multi = group.tabs.length > 1;
           // This folder's saved sessions not already open, listed only for
           // the profile the history scan ran under.
@@ -215,41 +251,30 @@ function ProjectSidebar({
         </div>
       );
         })}
+          </>
+        )}
 
-        {/* Working section (#working-surface): non-idle tabs, sorted by
-            attention priority (waiting-user → failed → retrying → running →
-            background), from OMP_WORKING_SURFACE. Hidden when every tab is
-            idle — an empty section would only eat the sidebar's vertical
-            budget. Rows reuse the psb-row shape with a status dot + badge;
-            clicking activates the tab. */}
-        {(() => {
-          const rows = window.OMP_WORKING_SURFACE?.workingTabs(tabs) ?? [];
-          if (!rows.length) return null;
-          const counts = window.OMP_WORKING_SURFACE.countBadge(rows);
-          const meta = window.OMP_WORKING_SURFACE.STATUS_META;
-          return (
-            <>
-              <div className="psb-section psb-working-head">
-                <span>working</span>
-                <span className="psb-working-count" title={Object.entries(counts).map(([s, n]) => `${meta[s]?.label ?? s}: ${n}`).join(" · ")}>
-                  {rows.length}
-                </span>
-              </div>
-              {rows.map(t => {
-                const m = meta[t.runState] ?? meta.running;
-                return (
-                  <div key={t.id} className={`psb-row psb-working${t.id === activeId ? " active" : ""}`}>
-                    <button className="psb-main" title={`${t.name || basename(t.path)} — ${m.label}`} onClick={() => onSelectTab(t.id)}>
-                      <span className={`psb-dot psb-dot-${m.tone}`} />
-                      <span className="psb-name">{t.name || basename(t.path)}</span>
-                    </button>
-                    <span className={`psb-badge psb-badge-${m.tone}`}>{m.label}</span>
-                  </div>
-                );
-              })}
-            </>
-          );
-        })()}
+        {/* Working view: non-idle tabs sorted by attention priority
+            (waiting → failed → retrying → running → background), from
+            OMP_WORKING_SURFACE. Replaces the open groups list when the
+            "working" tab is active. */}
+        {view === "working" && (
+          <>
+            {workingRows.length === 0 && <div className="psb-empty">no active sessions</div>}
+            {workingRows.map(t => {
+              const m = (window.OMP_WORKING_SURFACE?.STATUS_META ?? {})[t.runState] ?? {};
+              return (
+                <div key={t.id} className={`psb-row psb-working${t.id === activeId ? " active" : ""}`}>
+                  <button className="psb-main" title={`${t.name || basename(t.path)} — ${m.label || t.runState}`} onClick={() => onSelectTab(t.id)}>
+                    <span className={`psb-dot psb-dot-${m.tone || "muted"}`} />
+                    <span className="psb-name">{t.name || basename(t.path)}</span>
+                  </button>
+                  <span className={`psb-badge psb-badge-${m.tone || "muted"}`}>{m.label || t.runState}</span>
+                </div>
+              );
+            })}
+          </>
+        )}
 
         <div className="psb-section">recent</div>
         {recents.length === 0 && <div className="psb-empty">no recent projects</div>}
