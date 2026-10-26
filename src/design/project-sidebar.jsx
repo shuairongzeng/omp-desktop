@@ -198,15 +198,9 @@ function ProjectSidebar({
                       <Icon name="plus" size={10} />
                     </button>
                   )}
-                  {!multi && !editing && renameButton(group.tabs[0])}
-                  {!multi && (
-                    <button className="psb-act" title="close tab" onClick={() => onCloseTab(group.tabs[0].id)}>
-                      <Icon name="close" size={9} />
-                    </button>
-                  )}
                 </span>
               </div>
-              {expanded && multi && membersNewestFirst(group).map(t => (
+              {expanded && membersNewestFirst(group).map(t => (
                 <div key={t.id} {...reorder.itemProps(members, t.id, "y")}
                   className={`psb-row psb-tab ${t.id === activeId ? "active" : ""}${reorder.dropClass(members, t.id)}`}>
                   {renaming === t.id ? (
