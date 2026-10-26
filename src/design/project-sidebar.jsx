@@ -212,9 +212,44 @@ function ProjectSidebar({
                   </button>
                 </div>
               )}
-            </div>
-          );
+        </div>
+      );
         })}
+
+        {/* Working section (#working-surface): non-idle tabs, sorted by
+            attention priority (waiting-user → failed → retrying → running →
+            background), from OMP_WORKING_SURFACE. Hidden when every tab is
+            idle — an empty section would only eat the sidebar's vertical
+            budget. Rows reuse the psb-row shape with a status dot + badge;
+            clicking activates the tab. */}
+        {(() => {
+          const rows = window.OMP_WORKING_SURFACE?.workingTabs(tabs) ?? [];
+          if (!rows.length) return null;
+          const counts = window.OMP_WORKING_SURFACE.countBadge(rows);
+          const meta = window.OMP_WORKING_SURFACE.STATUS_META;
+          return (
+            <>
+              <div className="psb-section psb-working-head">
+                <span>working</span>
+                <span className="psb-working-count" title={Object.entries(counts).map(([s, n]) => `${meta[s]?.label ?? s}: ${n}`).join(" · ")}>
+                  {rows.length}
+                </span>
+              </div>
+              {rows.map(t => {
+                const m = meta[t.runState] ?? meta.running;
+                return (
+                  <div key={t.id} className={`psb-row psb-working${t.id === activeId ? " active" : ""}`}>
+                    <button className="psb-main" title={`${t.name || basename(t.path)} — ${m.label}`} onClick={() => onSelectTab(t.id)}>
+                      <span className={`psb-dot psb-dot-${m.tone}`} />
+                      <span className="psb-name">{t.name || basename(t.path)}</span>
+                    </button>
+                    <span className={`psb-badge psb-badge-${m.tone}`}>{m.label}</span>
+                  </div>
+                );
+              })}
+            </>
+          );
+        })()}
 
         <div className="psb-section">recent</div>
         {recents.length === 0 && <div className="psb-empty">no recent projects</div>}

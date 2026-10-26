@@ -60,6 +60,11 @@
     // the terminal's xterm or the browser panel's page belongs to the
     // guest (`guestShouldBypass`), matching ctrl+t/ctrl+w's rule.
     { id: "desktop.tab.jump",        label: "Jump to tab 1–9",         group: "Tabs",    scope: "global",   defaultKeys: ["ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9"] },
+    // Cycle the sidebar's "working" section (non-idle tabs, priority order):
+    // ctrl+alt+j/k jump to the next/prev one. Global scope: the jump lands
+    // even from the composer. The list order follows `OMP_WORKING_SURFACE`.
+    { id: "desktop.working.next",    label: "Next working tab",        group: "Tabs",    scope: "global",   defaultKeys: ["ctrl+alt+j", "shift+super+j"] },
+    { id: "desktop.working.prev",    label: "Previous working tab",    group: "Tabs",    scope: "global",   defaultKeys: ["ctrl+alt+k", "shift+super+k"] },
     { id: "desktop.panel.todo",      label: "Plan kanban",             group: "View",    scope: "global",   defaultKeys: [] },
     { id: "desktop.panel.changes",   label: "Git browser",             group: "View",    scope: "global",   defaultKeys: ["ctrl+shift+g", "shift+super+g"] },
     { id: "desktop.panel.rules",     label: "Approvals",               group: "View",    scope: "global",   defaultKeys: [] },

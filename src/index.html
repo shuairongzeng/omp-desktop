@@ -173,6 +173,12 @@
        window.OMP_PROJECT_NAV at top level and live.js calls it, so it must
        load before all of them. -->
   <script src="app/project-nav.js"></script>
+  <!-- The sidebar's "working" section (design/project-sidebar.jsx reads
+       window.OMP_WORKING_SURFACE at render time; app-live.jsx's
+       desktop.working.next/prev handlers read it at keypress time).
+       Dependency-free IIFE; loads after project-nav so the sidebar's
+       helpers are all present before any design file runs. -->
+  <script src="app/working-surface.js"></script>
   <!-- Tab-bar density stages: how much room each tab gets decides what
        it may show (full / compact / icon-only / scroll). Dependency-free
        IIFE; design/chrome.jsx reads window.OMP_TAB_BAR at effect time. -->

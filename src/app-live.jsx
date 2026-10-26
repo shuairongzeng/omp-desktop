@@ -1021,6 +1021,22 @@ React.useEffect(() => {
     bridge?.activateSession(target.id);
   };
 
+  // Ctrl+Alt+J/K (desktop.working.next/prev): step through the sidebar's
+  // "working" list — the non-idle tabs in the priority order
+  // `OMP_WORKING_SURFACE.workingTabs` returns. Wraps; a list of 0/1 is a
+  // no-op; lands even when the settings tab is active (selectProject first,
+  // same as jumpToNthTab).
+  const cycleWorking = delta => {
+    const rows = window.OMP_WORKING_SURFACE?.workingTabs(sessions) ?? [];
+    if (rows.length < 2 && rows.every(r => r.id === activeSessionId)) return;
+    if (!rows.length) return;
+    const i = rows.findIndex(r => r.id === activeSessionId);
+    const target = rows[(i === -1 ? (delta > 0 ? 0 : rows.length - 1) : (i + delta + rows.length) % rows.length)];
+    if (!target?.id) return;
+    setStab(s => window.OMP_SETTINGS_TAB.selectProject(s));
+    if (target.id !== activeSessionId) bridge?.activateSession(target.id);
+  };
+
   // ── Global keymap handler map ─────────────────────────────────────────────
   // Written into handlersRef every render so the dispatch hook always reads
   // the latest closures without re-subscribing to the window listener.
@@ -1067,6 +1083,8 @@ React.useEffect(() => {
     // The event carries the pressed chord; N is its digit (not a lookup),
     // so a rebind to another ctrl+digit still lands on the right tab.
     "desktop.tab.jump":        e => jumpToNthTab(parseInt(e?.key, 10)),
+    "desktop.working.next":    () => cycleWorking(1),
+    "desktop.working.prev":    () => cycleWorking(-1),
     "desktop.panel.todo":      () => setPlanOpen(v => !v),
     "desktop.panel.changes":   () => setGitOpen(v => (v ? null : { path: null })),
     "desktop.panel.rules":     () => setRulesOpen(v => !v),

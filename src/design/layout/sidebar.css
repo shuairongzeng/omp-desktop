@@ -192,3 +192,40 @@ body.reordering [data-reorder-axis="x"].drop-after { margin-inline: 0 4px; }
   }
 }
 
+/* ── Working section (project-sidebar.jsx, #working-surface) ──────────
+   Priority-sorted non-idle tabs between "open" and "recent". The section
+   header carries the total count; each row has a status dot and a badge
+   colored by the status tone. Tones map onto the theme's semantic colors:
+   accent = live work, amber = attention/waiting, rose = failed. */
+.psb-working-head {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.psb-working-count {
+  font-family: var(--font-mono); font-size: var(--d-text-xs);
+  color: var(--fg-4);
+  background: var(--bg-hover);
+  border-radius: 8px; padding: 0 6px; line-height: 16px;
+}
+.psb-row.psb-working { height: 28px; }
+.psb-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.psb-dot-accent { background: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
+.psb-dot-warn   { background: var(--amber); }
+.psb-dot-error  { background: var(--rose); }
+.psb-dot-muted  { background: var(--fg-4); }
+.psb-badge {
+  flex: none;
+  font-size: var(--d-text-xs); line-height: 1;
+  padding: 3px 6px; border-radius: 8px;
+  border: 1px solid var(--line-soft);
+  color: var(--fg-3);
+}
+.psb-badge-accent { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 30%, var(--line-soft)); background: var(--accent-soft); }
+.psb-badge-warn   { color: var(--amber-fg, var(--amber)); border-color: color-mix(in oklab, var(--amber) 30%, var(--line-soft)); }
+.psb-badge-error  { color: var(--rose-fg, var(--rose)); border-color: color-mix(in oklab, var(--rose) 30%, var(--line-soft)); }
+.psb-badge-muted  { color: var(--fg-4); }
+/* The running dot pulses while a turn streams; reduced-motion keeps it static. */
+@media (prefers-reduced-motion: no-preference) {
+  .psb-dot-accent { animation: psb-working-pulse 1.6s ease-in-out infinite; }
+  @keyframes psb-working-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+}
+
