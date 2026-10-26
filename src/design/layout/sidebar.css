@@ -58,14 +58,23 @@
    The name keeps a floor of 4ch (enough to recognize the project) and
    ellipsizes past that; everything else refuses to shrink. */
 .psb-row.psb-project .psb-main > :not(.psb-name) { flex-shrink: 0; }
-.psb-row.psb-project .psb-name { min-width: 4ch; }
+/* The name must fit the folder prefix plus a few characters of the title.
+   The sidebar is wider than the tab bar, so the folder prefix gets a
+   larger floor here — TabLabel's inline minWidth (4ch, sized for the tab
+   bar) is overridden for the sidebar's roomier rows. */
+.psb-row.psb-project .psb-name { min-width: 10ch; }
+/* The folder prefix is the navigation anchor — it must be fully readable.
+   The sidebar has room: let the prefix take what it needs (no shrink), and
+   let the title absorb all the overflow. */
+.psb-row.psb-project .tab-prefix { min-width: 0 !important; flex-shrink: 0; overflow: visible; text-overflow: clip; }
+.psb-row.psb-project .tab-title { min-width: 0; }
 .psb-parent { margin-left: 6px; font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-4); }
 .psb-row .tab-profile { font-size: var(--d-text-xs); }
 
 /* Saved-session rows of an expanded group: muted next to the open tabs,
    with the conversation's age at the row's end. */
 .psb-history .psb-name { font-size: var(--d-text-xs); }
-.psb-time { flex: none; font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-4); }
+.psb-time { flex: none; flex-shrink: 0; font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-4); }
 .psb-more .psb-name { flex: none; color: var(--fg-4); }
 .psb-more:hover .psb-name { color: var(--accent); }
 
