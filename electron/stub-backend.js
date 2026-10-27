@@ -15,10 +15,16 @@ const { TerminalManager } = require("./backend/terminal");
 const git = require("./backend/git");
 const remoteFiles = require("./backend/remote-files");
 const { BrowserManager } = require("./backend/browser-manager");
+const { RemoteManager } = require("./backend/remote-manager");
+const updater = require("./packaging/updater");
+
+// The packaged app's version; `npx electron .` runs report the repo one.
+const APP_VERSION = require("../package.json").version;
 
 // One browser manager per app run (M3): Chromium launches lazily on the
 // first panel open, exactly like the Tauri manager.
 const browser = new BrowserManager();
+const remote = new RemoteManager();
 // One bridge and one terminal manager per app run (M3). Main subscribes
 // their events and forwards them to the webview under the exact Tauri
 // event names the frontend subscribes to.
@@ -58,7 +64,19 @@ const EXPLICIT = {
   }),
   widgets_set_view: () => null,
   list_saved_sessions: (a) => savedSessions.listSavedSessions(a ?? {}),
-  app_update_check: () => null,
+  // M5: real updater check; the frontend expects Rust's UpdateInfo
+  // (camelCase {version, notes, date, canInstall, releaseUrl}) or null.
+  app_update_check: async () => {
+    const info = await updater.check(updater.DEFAULT_FEED, { currentVersion: APP_VERSION });
+    if (!info?.available) return null;
+    return {
+      version: info.version,
+      notes: info.notes ?? null,
+      date: info.date ?? null,
+      canInstall: true,
+      releaseUrl: info.url,
+    };
+  },
 
   // ── M3 agent bridge (parity-tested; real-omp smoke green) ──────────────
   // The tab's shell slot is registered before omp spawns, exactly like
@@ -99,7 +117,13 @@ const EXPLICIT = {
   remote_replay_events: async (a) => remoteFiles.replayProject(
     await agent.replayEvents(a?.sessionId, a?.afterSeq ?? 0), a?.afterSeq ?? 0),
   remote_list_dirs: (a) => remoteFiles.listDirs(a?.path ?? null),
-  remote_get_state: () => ({ status: "disabled", devices: [], pinnedCert: null }),
+  // ── M4 remote control (crypto+files parity-tested; manager is Main's) ──
+  remote_get_state: () => remote.view(),
+  remote_configure: (a) => remote.configure(a ?? {}),
+  remote_send: (a) => remote.send(a?.frame),
+  remote_set_name: (a) => remote.setName(a?.name ?? ""),
+  remote_trust_server_cert: () => remote.trustServerCert(),
+  remote_regenerate_token: () => remote.regenerateToken(),
   // ── M3 browser (parity-tested slices; manager is Main's integration) ──
   browser_open_panel: (a) => browser.openPanel(a?.sessionId, {
     width: a?.width, height: a?.height, dpr: a?.dpr,
@@ -145,4 +169,4 @@ async function handle(name, args) {
   return reply;
 }
 
-module.exports = { handle, EXPLICIT, agent, terminal, browser };
+module.exports = { handle, EXPLICIT, agent, terminal, browser, remote };

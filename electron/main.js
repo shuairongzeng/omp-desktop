@@ -93,6 +93,7 @@ for (const kind of ["data", "exit"]) {
   });
 }
 app.on("before-quit", () => {
+  stub.remote.shutdown().catch(() => {});
   stub.agent.shutdownAll();
   stub.terminal.shutdownAll().catch(() => {});
   stub.browser.shutdownAll().catch(() => {});
@@ -106,6 +107,14 @@ stub.browser.on("channel", (sessionId, payload) => {
   if (channelId == null) return;
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send("omp:channel", channelId, payload);
+  }
+});
+
+// M4: remote-control frames fan out as the three Tauri events
+// remote-agent.js subscribes to (remote://phone / control / status).
+stub.remote.on("event", (name, payload) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("omp:event", name, payload);
   }
 });
 

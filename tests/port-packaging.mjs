@@ -15,7 +15,8 @@
        version binding);
      - `check()` feed parsing and platform fallback against a mock fetch;
      - the manual build's contract pieces that are cheap to assert (the build
-       script's documented layout constants, no asar, updater wired nowhere).
+       script's documented layout constants, no asar, updater wiring lives
+       only in the dispatcher).
 
    It deliberately does not run the full 250 MB build (that is
    `node electron/packaging/build-app.mjs`); tests/port-packaging.mjs exists to
@@ -436,9 +437,14 @@ test('build-app.mjs documents the manual layout and needs no packaging dependenc
   assert.doesNotMatch(source, /https?:\/\//, 'the build must not fetch anything');
 });
 
-test('updater.js is wired nowhere (Main owns wiring)', () => {
-  for (const file of ['electron/main.js', 'electron/preload.js', 'electron/stub-backend.js']) {
-    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
-    assert.doesNotMatch(source, /packaging\/updater|require\(["']\.\/packaging/, file);
+test('the dispatcher wires app_update_check to the updater (M5)', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'electron/stub-backend.js'), 'utf8');
+  assert.match(source, /require\("\.\/packaging\/updater"\)/, 'the dispatcher requires the updater');
+  assert.match(source, /app_update_check:/, 'app_update_check is dispatched');
+  // The renderer and preload stay updater-free: the check is a backend
+  // command, exactly like the Tauri app's `app_update_check`.
+  for (const file of ['electron/main.js', 'electron/preload.js']) {
+    const s = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.doesNotMatch(s, /packaging\/updater/, file);
   }
 });

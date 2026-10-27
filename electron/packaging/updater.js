@@ -552,4 +552,4 @@ rm -rf ${shQuote(workDir)}
 `;
 }
 
-module.exports = { check, verifySignature, compareVersions, install };
+module.exports = { check, verifySignature, compareVersions, install, DEFAULT_FEED };
