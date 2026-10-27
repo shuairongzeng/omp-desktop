@@ -64,6 +64,9 @@ pub fn read(path: String) -> Result<DroppedFile, String> {
 /// screenshot, an app-specific format), or the clipboard could not be
 /// opened at all. Callers treat empty as "not a file copy" and fall back to
 /// their image/text handling.
+// `const` only where the platform stub is (unix): the Windows `imp`
+// reads the clipboard, so the wrapper cannot be `const` on every target.
+#[allow(clippy::missing_const_for_fn)]
 pub fn copied_file_paths() -> Vec<String> {
     imp::copied_file_paths()
 }
@@ -144,7 +147,7 @@ mod imp {
 /// command existed.
 #[cfg(not(windows))]
 mod imp {
-    pub fn copied_file_paths() -> Vec<String> {
+    pub const fn copied_file_paths() -> Vec<String> {
         Vec::new()
     }
 }

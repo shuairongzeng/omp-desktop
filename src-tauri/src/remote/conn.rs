@@ -313,7 +313,12 @@ async fn connect_once(
 /// contract's typed rejection so its UI can say "reload the page".
 /// Control frames (`pair_request`/`pair_done`/`peer`/`hs`) drive the
 /// pairing and session bookkeeping on the manager, then reach the UI.
-fn route(app: &AppHandle, mgr: &Arc<RemoteManager>, outbox: &mpsc::UnboundedSender<Value>, text: &str) {
+fn route(
+    app: &AppHandle,
+    mgr: &Arc<RemoteManager>,
+    outbox: &mpsc::UnboundedSender<Value>,
+    text: &str,
+) {
     let Ok(frame) = serde_json::from_str::<Value>(text) else {
         return;
     };
@@ -338,7 +343,10 @@ fn route(app: &AppHandle, mgr: &Arc<RemoteManager>, outbox: &mpsc::UnboundedSend
         Some("peer") => {
             // The relay's phone presence: conn + ph let us bind sessions;
             // a leaving phone drops its session.
-            let online = frame.get("online").and_then(Value::as_bool).unwrap_or(false);
+            let online = frame
+                .get("online")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             if let Some(conn) = frame.get("conn").and_then(Value::as_str) {
                 let ph = frame.get("ph").and_then(Value::as_str);
                 mgr.note_phone_conn(conn, ph, online);
@@ -348,7 +356,11 @@ fn route(app: &AppHandle, mgr: &Arc<RemoteManager>, outbox: &mpsc::UnboundedSend
         Some("pair_request") => {
             // v2: the phone's pairing ephemeral pk rides along; the grant
             // (remote_send) answers with ours.
-            if let Some(pair_id) = frame.get("pair_id").and_then(Value::as_str).map(str::to_owned) {
+            if let Some(pair_id) = frame
+                .get("pair_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+            {
                 let pk = frame
                     .get("pk")
                     .and_then(Value::as_str)
@@ -465,9 +477,7 @@ fn route_hs(mgr: &Arc<RemoteManager>, outbox: &mpsc::UnboundedSender<Value>, fra
         }
         Err(_) => {
             // MAC failure: warn (contract) and drop the phone.
-            eprintln!(
-                "[omp-desktop] remote e2e: hs MAC failed for phone {ph}; refusing session"
-            );
+            eprintln!("[omp-desktop] remote e2e: hs MAC failed for phone {ph}; refusing session");
         }
     }
 }

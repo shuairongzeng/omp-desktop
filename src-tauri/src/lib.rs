@@ -411,6 +411,15 @@ fn open_config_folder(app: tauri::AppHandle) -> Result<(), String> {
     open::that_detached(&dir).map_err(|e| e.to_string())
 }
 
+/// Show a project folder in the OS file manager (the tab menu's "Reveal in
+/// Finder/Explorer"): validation and the gated launcher live in
+/// [`external_open::reveal_dir`], which refuses an empty, relative or
+/// vanished path before spawning anything.
+#[tauri::command]
+fn reveal_project_path(path: String) -> Result<(), String> {
+    external_open::reveal_dir(&path)
+}
+
 /// A user-picked file's bytes (`picked_files`): name + base64 contents,
 /// size-capped, files only. Serves the composer's dropped-image pipeline
 /// and the background-image tweak alike.
@@ -1683,7 +1692,11 @@ fn reveal_main_window(
     }
 }
 /// The IPC surface, one row per command. Extracted from `run()` so the
-/// builder spine stays readable (and under clippy's `too_many_lines`).
+/// builder spine stays readable.
+///
+/// One row per command is the point, so the list has outgrown the 100-line
+/// pedantic budget; it is a registry, not logic.
+#[allow(clippy::too_many_lines)]
 fn ipc_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         send_command,
@@ -1729,6 +1742,7 @@ fn ipc_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static 
         delete_saved_session,
         rename_saved_session,
         open_config_folder,
+        reveal_project_path,
         read_file_bytes,
         copied_file_paths,
         pick_background_image,

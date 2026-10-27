@@ -84,7 +84,12 @@ impl KeyPair {
 /// and every contract derivation is 32). The RFC 5869 vectors are
 /// verified as 32-byte prefixes: HKDF blocks are sequential, so the
 /// first 32 bytes of a 42-byte OKM are exactly the 32-byte OKM.
-pub fn hkdf_sha256(ikm: &[u8], salt: &[u8], info: &[u8], len: usize) -> Result<Vec<u8>, Unspecified> {
+pub fn hkdf_sha256(
+    ikm: &[u8],
+    salt: &[u8],
+    info: &[u8],
+    len: usize,
+) -> Result<Vec<u8>, Unspecified> {
     let prk = Salt::new(HKDF, salt).extract(ikm);
     let mut out = [0u8; KEY_LEN];
     prk.expand(&[info], HKDF)?.fill(&mut out)?;
@@ -156,7 +161,9 @@ pub struct HsHandshake {
 impl HsHandshake {
     /// Fresh desktop ephemeral for the connection.
     pub fn new() -> Result<Self, Unspecified> {
-        Ok(Self { eph: KeyPair::generate()? })
+        Ok(Self {
+            eph: KeyPair::generate()?,
+        })
     }
 
     pub fn public(&self) -> &[u8] {
@@ -166,7 +173,10 @@ impl HsHandshake {
     /// The reply MAC: `HMAC(hs_mac_key(MS), "D" || desk_pk || phone_pk)`.
     pub fn reply_mac(&self, ms: &[u8], phone_pk: &[u8]) -> Result<[u8; KEY_LEN], Unspecified> {
         let key = hs_mac_key(ms)?;
-        Ok(hmac_sha256(&key, &hs_mac_desk_msg(&self.eph.public, phone_pk)))
+        Ok(hmac_sha256(
+            &key,
+            &hs_mac_desk_msg(&self.eph.public, phone_pk),
+        ))
     }
 
     /// Consumes the handshake: verifies the phone's MAC (fail → close the
@@ -236,12 +246,10 @@ impl SessionKeys {
     /// The seq is the sender's own strictly increasing counter.
     pub fn seal(&mut self, plaintext: &[u8]) -> Result<(u64, Vec<u8>), Unspecified> {
         let seq = self.send_seq;
-        self.send_seq = self
-            .send_seq
-            .checked_add(1)
-            .ok_or(Unspecified)?;
+        self.send_seq = self.send_seq.checked_add(1).ok_or(Unspecified)?;
         let mut buf = plaintext.to_vec();
-        self.d2c.seal_in_place_append_tag(Self::nonce(seq), Self::aad(seq), &mut buf)?;
+        self.d2c
+            .seal_in_place_append_tag(Self::nonce(seq), Self::aad(seq), &mut buf)?;
         Ok((seq, buf))
     }
 
@@ -291,9 +299,11 @@ mod tests {
     }
 
     fn agree(seed: [u8; 32], peer_pk: &[u8]) -> Vec<u8> {
-        agree_ephemeral(key_from_seed(seed), &UnparsedPublicKey::new(&X25519, peer_pk), |raw| {
-            raw.to_vec()
-        })
+        agree_ephemeral(
+            key_from_seed(seed),
+            &UnparsedPublicKey::new(&X25519, peer_pk),
+            <[u8]>::to_vec,
+        )
         .expect("agreement")
     }
 
@@ -344,9 +354,9 @@ mod tests {
         assert_eq!(
             okm,
             [
-                0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0,
-                0x36, 0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0,
-                0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf,
+                0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a, 0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36,
+                0x2f, 0x2a, 0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c, 0x5d, 0xb0, 0x2d, 0x56,
+                0xec, 0xc4, 0xc5, 0xbf,
             ]
         );
     }
@@ -361,9 +371,9 @@ mod tests {
         assert_eq!(
             okm,
             [
-                0x8d, 0xa4, 0xe7, 0x75, 0xa5, 0x63, 0xc1, 0x8f, 0x71, 0x5f, 0x80, 0x2a, 0x06,
-                0x3c, 0x5a, 0x31, 0xb8, 0xa1, 0x1f, 0x5c, 0x5e, 0xe1, 0x87, 0x9e, 0xc3, 0x45,
-                0x4e, 0x5f, 0x3c, 0x73, 0x8d, 0x2d,
+                0x8d, 0xa4, 0xe7, 0x75, 0xa5, 0x63, 0xc1, 0x8f, 0x71, 0x5f, 0x80, 0x2a, 0x06, 0x3c,
+                0x5a, 0x31, 0xb8, 0xa1, 0x1f, 0x5c, 0x5e, 0xe1, 0x87, 0x9e, 0xc3, 0x45, 0x4e, 0x5f,
+                0x3c, 0x73, 0x8d, 0x2d,
             ]
         );
     }
@@ -405,18 +415,18 @@ mod tests {
         assert_eq!(
             ct,
             &[
-                0x52, 0x2d, 0xc1, 0xf0, 0x99, 0x56, 0x7d, 0x07, 0xf4, 0x7f, 0x37, 0xa3, 0x2a,
-                0x84, 0x42, 0x7d, 0x64, 0x3a, 0x8c, 0xdc, 0xbf, 0xe5, 0xc0, 0xc9, 0x75, 0x98,
-                0xa2, 0xbd, 0x25, 0x55, 0xd1, 0xaa, 0x8c, 0xb0, 0x8e, 0x48, 0x59, 0x0d, 0xbb,
-                0x3d, 0xa7, 0xb0, 0x8b, 0x10, 0x56, 0x82, 0x88, 0x38, 0xc5, 0xf6, 0x1e, 0x63,
-                0x93, 0xba, 0x7a, 0x0a, 0xbc, 0xc9, 0xf6, 0x62,
+                0x52, 0x2d, 0xc1, 0xf0, 0x99, 0x56, 0x7d, 0x07, 0xf4, 0x7f, 0x37, 0xa3, 0x2a, 0x84,
+                0x42, 0x7d, 0x64, 0x3a, 0x8c, 0xdc, 0xbf, 0xe5, 0xc0, 0xc9, 0x75, 0x98, 0xa2, 0xbd,
+                0x25, 0x55, 0xd1, 0xaa, 0x8c, 0xb0, 0x8e, 0x48, 0x59, 0x0d, 0xbb, 0x3d, 0xa7, 0xb0,
+                0x8b, 0x10, 0x56, 0x82, 0x88, 0x38, 0xc5, 0xf6, 0x1e, 0x63, 0x93, 0xba, 0x7a, 0x0a,
+                0xbc, 0xc9, 0xf6, 0x62,
             ][..]
         );
         assert_eq!(
             tag,
             &[
-                0xeb, 0x9f, 0x79, 0x6c, 0x8d, 0x35, 0x6f, 0xc3, 0x1a, 0x84, 0x33, 0x88, 0x4b,
-                0x69, 0x6f, 0x4f,
+                0xeb, 0x9f, 0x79, 0x6c, 0x8d, 0x35, 0x6f, 0xc3, 0x1a, 0x84, 0x33, 0x88, 0x4b, 0x69,
+                0x6f, 0x4f,
             ][..]
         );
     }
@@ -452,7 +462,8 @@ mod tests {
         let phone_pair_pk = pk_from_seed(ALICE_PRIV);
         let desk_pair = KeyPair::generate().expect("desk pairing eph");
         let desk_pair_pk = desk_pair.public.clone(); // 32B: desk_pair is consumed below
-        let ms = master_secret(desk_pair, &phone_pair_pk, &phone_pair_pk, &desk_pair_pk).expect("MS");
+        let ms =
+            master_secret(desk_pair, &phone_pair_pk, &phone_pair_pk, &desk_pair_pk).expect("MS");
 
         // hs: the phone presents its ephemeral pk + MAC; the desktop
         // verifies, replies, and both sides hold the session keys.

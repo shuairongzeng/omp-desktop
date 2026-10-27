@@ -179,6 +179,11 @@
        Dependency-free IIFE; loads after project-nav so the sidebar's
        helpers are all present before any design file runs. -->
   <script src="app/working-surface.js"></script>
+  <!-- A sidebar project row's right-click menu rows and platform labels
+       (reveal in the OS file manager / copy the path). Dependency-free
+       IIFE; design/project-menu.jsx destructures window.OMP_PROJECT_MENU
+       at top level, so this must precede it. -->
+  <script src="app/project-menu.js"></script>
   <!-- Tab-bar density stages: how much room each tab gets decides what
        it may show (full / compact / icon-only / scroll). Dependency-free
        IIFE; design/chrome.jsx reads window.OMP_TAB_BAR at effect time. -->
@@ -470,6 +475,12 @@
        chrome.jsx only reports the right-click, so this need only precede
        app-live.jsx — it sits with the other chrome pieces. -->
   <script type="text/babel" src="design/tab-menu.jsx"></script>
+  <!-- A sidebar project row's right-click menu (reveal in Finder /
+       Explorer / file manager, copy the folder path): app-live.jsx renders
+       window.ProjectMenu at the root; project-sidebar.jsx only reports the
+       right-click, so this need only precede app-live.jsx. Destructures
+       window.OMP_PROJECT_MENU (app/project-menu.js) at top level. -->
+  <script type="text/babel" src="design/project-menu.jsx"></script>
   <script type="text/babel" src="design/chrome.jsx"></script>
   <!-- Project sidebar (#27); reads window.TabRunDot / window.TabLabel
        (design/ui/tab-bits.jsx) and window.OMP_PROJECT_NAV at top level. -->

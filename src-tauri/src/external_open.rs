@@ -205,11 +205,44 @@ fn has_drive_prefix(path: &str) -> bool {
     matches!((chars.next(), chars.next()), (Some(c), Some(':')) if c.is_ascii_alphabetic())
 }
 
+/// The checks [`reveal_dir`] makes before it launches anything, split out so
+/// tests can cover each rejection without opening a file manager.
+///
+/// The rules are the launcher's own: an empty or relative string names
+/// nothing to show, and a path that is not a directory (deleted, or a file)
+/// would make the OS fall back to opening an arbitrary parent. `is_dir`
+/// follows symlinks, which is what the file manager would open anyway — the
+/// symlink itself is not the target the user asked to see.
+pub fn validate_reveal_path(path: &str) -> Result<&Path, String> {
+    if path.trim().is_empty() {
+        return Err("empty path".to_owned());
+    }
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Err("not an absolute path".to_owned());
+    }
+    if !path.is_dir() {
+        return Err("no such folder".to_owned());
+    }
+    Ok(path)
+}
+
+/// Show an existing project folder in the OS file manager.
+///
+/// `open::that_detached` under the spawn gate (see `spawn_gate`): the
+/// launcher is a child process like any other.
+pub fn reveal_dir(path: &str) -> Result<(), String> {
+    let path = validate_reveal_path(path)?;
+    let _gate = crate::spawn_gate::shared();
+    #[allow(clippy::disallowed_methods)] // under the gate
+    open::that_detached(path).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        folder_from_arg, folder_from_url, positional_args, strip_verbatim, OpenProjectState,
-        MAX_PENDING,
+        folder_from_arg, folder_from_url, positional_args, reveal_dir, strip_verbatim,
+        validate_reveal_path, OpenProjectState, MAX_PENDING,
     };
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -366,5 +399,78 @@ mod tests {
             "a full queue must drop the request and report it"
         );
         assert_eq!(state.take_pending().len(), MAX_PENDING);
+    }
+
+    /// Whitespace names nothing either, and the trim must happen before
+    /// `Path::new` so `"  "` is not mistaken for a relative path.
+    #[test]
+    fn an_empty_reveal_path_is_rejected() {
+        assert_eq!(
+            validate_reveal_path("").err().as_deref(),
+            Some("empty path")
+        );
+        assert_eq!(
+            validate_reveal_path(" \n\t").err().as_deref(),
+            Some("empty path")
+        );
+    }
+
+    /// A relative path would resolve against the webview's cwd, not the
+    /// project — never the folder the user clicked.
+    #[test]
+    fn a_relative_reveal_path_is_rejected() {
+        assert_eq!(
+            validate_reveal_path("projects/omp").err().as_deref(),
+            Some("not an absolute path")
+        );
+    }
+
+    /// Both spellings of "nothing to show": a path that no longer exists
+    /// (deleted between render and click) and one that is a file.
+    #[test]
+    fn a_missing_reveal_path_is_rejected() {
+        let dir = unique_temp_dir("reveal-missing");
+        assert_eq!(
+            validate_reveal_path(&dir.to_string_lossy())
+                .err()
+                .as_deref(),
+            Some("no such folder")
+        );
+
+        std::fs::create_dir_all(&dir).expect("create fixture");
+        let file = dir.join("README.md");
+        std::fs::write(&file, b"x").expect("write fixture");
+        assert_eq!(
+            validate_reveal_path(&file.to_string_lossy())
+                .err()
+                .as_deref(),
+            Some("no such folder")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The accepted case stops at validation: `reveal_dir`'s spawn is what
+    /// would open a Finder window, so the test asserts on the split-off
+    /// checks only.
+    #[test]
+    fn an_existing_reveal_path_is_accepted() {
+        let dir = unique_temp_dir("reveal-existing");
+        std::fs::create_dir_all(&dir).expect("create fixture");
+        assert_eq!(
+            validate_reveal_path(&dir.to_string_lossy()),
+            Ok(dir.as_path())
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `reveal_dir` must reject before it reaches the spawn, so these two
+    /// Err paths are safe to drive end to end.
+    #[test]
+    fn reveal_dir_rejects_before_spawning() {
+        assert_eq!(reveal_dir(""), Err("empty path".to_owned()));
+        assert_eq!(
+            reveal_dir("projects/omp"),
+            Err("not an absolute path".to_owned())
+        );
     }
 }

@@ -65,6 +65,9 @@ function ProjectSidebar({
   tabs, activeId, recents, savedSessions = [], historyProfile, profileLabel,
   onSelectTab, onCloseTab, onRenameTab, onNewInProject, onOpenRecent, onForgetRecent, onOpenFolder, onHide, onReorder,
   onResumeSession, onShowAllHistory,
+  // Desktop-only: a project row's right-click menu (design/project-menu.jsx).
+  // Bubbles (group, x, y); app-live.jsx owns the menu state and actions.
+  onProjectMenu,
   // Drawer app menu (phone, ≤760px): the ProfileMenu props ride along so
   // the drawer's foot can host the same per-tab profile switcher the
   // desktop chrome shows. The settings row dispatches `omp:mobile
@@ -171,7 +174,12 @@ function ProjectSidebar({
               {/* The project row carries the active highlight when its
                   session has no row of its own (untitled single-tab) or the
                   members are collapsed (multi-tab). */}
-              <div className={`psb-row psb-project ${containsActive && !memberAlwaysVisible && !expanded ? "active" : ""}`}>
+              <div className={`psb-row psb-project ${containsActive && !memberAlwaysVisible && !expanded ? "active" : ""}`}
+                onContextMenu={e => {
+                  if (!onProjectMenu) return;
+                  e.preventDefault();
+                  onProjectMenu(group, e.clientX, e.clientY);
+                }}>
                 {expandable ? (
                   <button className={`psb-chev ${expanded ? "open" : ""}`}
                     title={expanded ? "collapse" : "expand"} aria-expanded={expanded}

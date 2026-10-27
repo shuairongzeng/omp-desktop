@@ -194,7 +194,9 @@ impl RemoteManager {
         if phone_pk.len() != 32 {
             return;
         }
-        let Some(key) = crypto::KeyPair::generate().ok() else { return };
+        let Some(key) = crypto::KeyPair::generate().ok() else {
+            return;
+        };
         self.pairing
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -239,14 +241,9 @@ impl RemoteManager {
             .map_err(|_| "pairing key agreement failed".to_string())?;
         let ms_b64 = crypto::b64_encode(&ms);
         let mut settings = self.load_settings();
-        settings
-            .phones
-            .entry(ph.to_string())
-            .or_default()
-            .ms = Some(ms_b64);
+        settings.phones.entry(ph.to_string()).or_default().ms = Some(ms_b64);
         self.save_settings(&settings)
     }
-
 
     /// A phone connection's session keys (after a verified `hs`).
     pub(crate) fn set_session(&self, conn: &str, keys: crypto::SessionKeys) {
@@ -414,7 +411,11 @@ pub fn remote_set_name(
 /// pairing, revoke) stay plaintext per the contract.
 #[tauri::command]
 pub fn remote_send(frame: Value, mgr: State<'_, Arc<RemoteManager>>) -> Result<(), String> {
-    let t = frame.get("t").and_then(Value::as_str).unwrap_or("").to_string();
+    let t = frame
+        .get("t")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     if !SENDABLE.contains(&t.as_str()) {
         return Err(format!("frame type {t:?} is not sendable"));
     }
@@ -471,7 +472,11 @@ pub fn remote_send(frame: Value, mgr: State<'_, Arc<RemoteManager>>) -> Result<(
     // A grant with our pairing ephemeral's pk attached (E2E pairing).
     let mut frame = frame;
     if t == "pair_grant" {
-        if let Some(pair_id) = frame.get("pair_id").and_then(Value::as_str).map(str::to_owned) {
+        if let Some(pair_id) = frame
+            .get("pair_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        {
             if let Some(pk) = mgr.pairing_pk(&pair_id) {
                 frame["pk"] = Value::String(pk);
             }

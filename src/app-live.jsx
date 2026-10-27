@@ -18,7 +18,7 @@
    ═════════════════════════════════════════════════════════════════════ */
 
 const {
-  Icon, ChatView, Composer, CommandBridge, WindowChrome, TabBar, TabMenu, SubagentPane, ProjectSidebar, EmptyWorkspace,
+  Icon, ChatView, Composer, CommandBridge, WindowChrome, TabBar, TabMenu, ProjectMenu, SubagentPane, ProjectSidebar, EmptyWorkspace,
   StatusBar, AmbientRail, ConversationTree, PlanKanban, HistoryModal, GitBrowser, FilePreview, ApprovalRulesPanel, UsageStatsPanel, PromptHistoryModal, UpdateModal, useTweaks, QuotePopover,
   SettingsPage, ConfirmCloseDialog, RemotePairDialog,
   useWidgets, WidgetCard, WidgetErrorCard, WidgetApprovalCard, WidgetBoundary, PanelBoundary, AppBoundary,
@@ -104,6 +104,10 @@ function App() {
   // A tab's right-click menu (design/tab-menu.jsx): { tabId, x, y, counts }
   // while open; the bar's onContextMenu fills it, an action drains it.
   const [tabMenu, setTabMenu] = React.useState(null);
+  // A sidebar project row's right-click menu (design/project-menu.jsx):
+  // { path, x, y } while open. Desktop only — the phone drawer never gets
+  // the onProjectMenu prop, so a long-press there stays a text selection.
+  const [projectMenu, setProjectMenu] = React.useState(null);
   const [thinkingLevel, setThinkingLevel] = React.useState(null);
   const [ctx,           setCtx]           = React.useState(data.ctx);
   const [kanban,        setKanban]        = React.useState([]);
@@ -988,6 +992,19 @@ React.useEffect(() => {
     const ids = closeSet(sessions, id, action);
     if (ids.length) bridge?.closeSessions(ids);
   };
+  // Sidebar project row's right-click menu: reveal the folder in the OS
+  // file manager (Rust `reveal_project_path`, which validates the path and
+  // spawns the launcher under the gate) or copy it to the clipboard. Both
+  // resolve true/false so the menu row can flash its outcome.
+  const openProjectMenu = (group, x, y) => setProjectMenu({ path: group?.path || "", x, y });
+  const handleProjectMenuAction = (action, path) => {
+    if (action === "copy-path") return window.copyText(path);
+    if (action === "reveal") {
+      return window.__TAURI__?.core?.invoke("reveal_project_path", { path })
+        .then(() => true, (e) => { console.warn("[project-menu] reveal failed:", e); return false; });
+    }
+    return Promise.resolve(false);
+  };
   // Keyboard move: the active tab's project, one place along the tab bar.
   const shiftActiveProject = delta => {
     if (!activeProject.id) return;
@@ -1253,6 +1270,7 @@ React.useEffect(() => {
                 onForgetRecent={handleForgetRecent}
                 onOpenFolder={handleNewProject}
                 onHide={toggleSidebar}
+                onProjectMenu={openProjectMenu}
                 onReorder={handleReorder}
                 profiles={profiles}
                 activeProfileId={activeProfileId}
@@ -1584,6 +1602,11 @@ React.useEffect(() => {
       {tabMenu && (
         <PanelBoundary label="tab menu">
         <TabMenu menu={tabMenu} onAction={handleTabMenuAction} onClose={() => setTabMenu(null)} />
+        </PanelBoundary>
+      )}
+      {projectMenu && (
+        <PanelBoundary label="project menu">
+        <ProjectMenu menu={projectMenu} onAction={handleProjectMenuAction} onClose={() => setProjectMenu(null)} />
         </PanelBoundary>
       )}
 
