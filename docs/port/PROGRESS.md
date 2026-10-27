@@ -11,8 +11,8 @@ Main (`master`) must never receive port commits. Full-port route per
 |---|---|---|---|
 | M0 | Scaffold + gates: Electron 45 main/preload, `npm test` chain runs the 67 pure JS suites unchanged | scaffold cannot boot | **done**: boot log shows 13 startup calls answered, `npm test` exit 0 in the worktree |
 | M1 | `window.__TAURI__` shim + real `dist/` frontend boots against stub backend; every startup command stubbed per `docs/port/startup-contract.md` | stub shapes stall startup | **boot-proven** (2026-10-27): titlebar crash (`isMaximized`) fixed via `omp:win` channel; zero error boundaries on boot |
-| M2 | Side-effect-free backend in Node: json stores, profiles, recents, saved sessions, keybindings — parity tests ported from the Rust suites | parity coverage < Rust test count for these modules | not started |
-| M3 | Hard core: node-pty terminal, CDP broker over Chromium's pipe, git reads (decision pending: isomorphic-git vs git-only Rust micro-sidecar) | 2× estimate or semantic gaps untestable | not started |
+| M2 | Side-effect-free backend in Node: json stores, profiles, recents, saved sessions, keybindings — parity tests ported from the Rust suites | parity coverage < Rust test count for these modules | **done** (2026-10-27): stores 40 + saved-sessions 32 + keybindings 43 parity tests green; wired into the dispatcher; measured: boot reads the real `open-tabs.json`, real recents/history/keybindings answers in the stub log |
+| M3 | Hard core: node-pty terminal, CDP broker over Chromium's pipe, git reads via **isomorphic-git** (decided 2026-10-27, bench on the real 17 MB repo: status 47 ms, log(100) 25 ms, readCommit 1 ms, listFiles 1 ms — pure JS also never runs git's filter drivers, strictly safer than gix's discovery path) | 2× estimate or semantic gaps untestable | not started |
 | M4 | E2E crypto (@noble, shared with phone) + relay wire compatibility | relay rejects enc frames | not started |
 | M5 | updater, packaging, signing, full E2E, merge decision | — | not started |
 
