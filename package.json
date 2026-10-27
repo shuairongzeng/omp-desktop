@@ -86,7 +86,7 @@
     "test:port-git": "node tests/port-git.mjs",
     "test:port-browser-core": "node tests/port-browser-core.mjs",
     "test:port-remote-files": "node tests/port-remote-files.mjs",
-    "port:build": "node electron/packaging/build-app.mjs",
+    "port:build": "node scripts/port-dist.mjs && node electron/packaging/build-app.mjs",
     "test:port-packaging": "node tests/port-packaging.mjs",
     "test:port-browser-view": "node tests/port-browser-view.mjs"
   },
