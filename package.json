@@ -75,10 +75,13 @@
     "test:remote-agent": "node tests/test-remote-agent.mjs",
     "test:remote-tabs": "node tests/test-remote-tabs.mjs",
     "test:mobile-chat": "node tests/test-mobile-chat.mjs",
-    "test:remote-settings": "node tests/test-remote-settings.mjs"
+    "test:remote-settings": "node tests/test-remote-settings.mjs",
+    "port:boot": "electron . --remote-debugging-port=9333"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.0",
-    "esbuild": "^0.28.2"
-  }
+    "esbuild": "^0.28.2",
+    "electron": "^45.0.0"
+  },
+  "main": "electron/main.js"
 }

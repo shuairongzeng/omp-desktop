@@ -1,0 +1,9 @@
+{
+  "electronVersion": "45.0.0",
+  "installSizeMb": 258,
+  "coldStartMs": 302,
+  "ipcRoundTripAvgMs": 0.044,
+  "ipcRoundTripP95Ms": 0.1,
+  "rssTotalMb": 380.1,
+  "windowCount": 1
+}

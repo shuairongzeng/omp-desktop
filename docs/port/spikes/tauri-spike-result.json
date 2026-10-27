@@ -1,0 +1,8 @@
+{
+  "tauriVersion": "2.12.5",
+  "coldStartMs": 378,
+  "ipcRoundTripAvgMs": 0.148,
+  "ipcRoundTripP95Ms": 0.185,
+  "windowCount": 1,
+  "rssTotalMb": 192.8
+}
