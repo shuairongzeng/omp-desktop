@@ -79,9 +79,23 @@ stub.agent.on("exit", (sessionId, reason) => {
     win.webContents.send("omp:event", `agent://exit/${sessionId}`, reason);
   }
 });
+// M3: terminal output/exit frames. The manager's generic `data`/`exit`
+// events carry {tabId, channel, ...payload}; the payload is exactly what
+// the frontend's _listen expects ({instance, seq, b64} / {instance, code}),
+// so strip the routing keys and pass it through on the same omp:event
+// channel under the Tauri event name.
+for (const kind of ["data", "exit"]) {
+  stub.terminal.on(kind, (ev) => {
+    const { tabId, channel, ...payload } = ev;
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("omp:event", channel, payload);
+    }
+  });
+}
 
 app.on("before-quit", () => {
   stub.agent.shutdownAll();
+  stub.terminal.shutdownAll().catch(() => {});
 });
 
 // One multiplexed channel, like the Tauri command surface: the frontend's

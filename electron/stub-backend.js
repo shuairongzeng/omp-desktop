@@ -11,10 +11,15 @@ const savedSessions = require("./backend/saved-sessions");
 const keybindings = require("./backend/keybindings");
 const stores = require("./backend/stores");
 const { AgentBridge } = require("./backend/agent");
+const { TerminalManager } = require("./backend/terminal");
+const git = require("./backend/git");
+const remoteFiles = require("./backend/remote-files");
 
-// One bridge per app run (M3). Main subscribes its line/exit events and
-// forwards them to the webview as `agent://line/{id}` / `agent://exit/{id}`.
+// One bridge and one terminal manager per app run (M3). Main subscribes
+// their events and forwards them to the webview under the exact Tauri
+// event names the frontend subscribes to.
 const agent = new AgentBridge();
+const terminal = new TerminalManager();
 
 const log = (name, args, reply) =>
   process.stderr.write(`[stub] ${name} ${JSON.stringify(args ?? {})} -> ${JSON.stringify(reply)}\n`);
@@ -52,14 +57,47 @@ const EXPLICIT = {
   app_update_check: () => null,
 
   // ── M3 agent bridge (parity-tested; real-omp smoke green) ──────────────
-  start_session: (a) => agent.startSession(a?.args ?? a ?? {}),
+  // The tab's shell slot is registered before omp spawns, exactly like
+  // Tauri's start_session does (TerminalManager::register_tab).
+  start_session: (a) => {
+    const args = a?.args ?? a ?? {};
+    if (args.sessionId) terminal.registerTab(args.sessionId, args.cwd ?? "");
+    return agent.startSession(args);
+  },
   send_command: (a) => agent.sendCommand(a?.sessionId, a?.json),
   stop_session: (a) => agent.stopSession(a?.sessionId),
   replay_events: (a) => agent.replayEvents(a?.sessionId, a?.afterSeq ?? 0),
   session_status: (a) => agent.sessionStatus(a?.sessionId),
   approval_approve_and_grant: (a) => agent.approveAndGrant(a ?? {}),
+  close_tab: (a) => {
+    terminal.closeTab(a?.sessionId);
+    return agent.stopSession(a?.sessionId);
+  },
 
-  // ── still stubbed (M3 slices in flight) ────────────────────────────────
+  // ── M3 terminal manager (parity-tested, 41 checks) ─────────────────────
+  terminal_open: (a) => terminal.open(a?.sessionId),
+  terminal_status: (a) => terminal.status(a?.sessionId),
+  terminal_write: (a) => terminal.write(a?.sessionId, a?.data ?? ""),
+  terminal_resize: (a) => terminal.resize(a?.sessionId, a?.cols, a?.rows),
+  terminal_ack: (a) => terminal.ack(a?.sessionId, a?.instance, a?.bytes),
+  terminal_replay: (a) => terminal.replay(a?.sessionId, a?.instance, a?.afterSeq),
+  terminal_settings: () => terminal.settingsPayload(),
+  terminal_set_shell: (a) => terminal.setShell(a?.shell),
+  terminal_pick_shell: () => null, // native dialog: M5
+
+  // ── M3 git browser (parity-tested, 52 checks; isomorphic-git) ──────────
+  git_browser_status: (a) => git.gitBrowserStatus(a?.path),
+  git_browser_file: (a) => git.gitBrowserFile(a?.path, a?.relPath ?? a?.rel_path),
+  git_browser_log: (a) => git.gitBrowserLog(a?.path),
+  git_browser_commit: (a) => git.gitBrowserCommit(a?.path, a?.sha),
+  // ── M4 phone-facing file/relay ports (parity-tested, 35 checks) ────────
+  remote_transcript_window: (a) => remoteFiles.transcriptWindow(a?.sessionFile, a?.before ?? null, a?.limit),
+  remote_replay_events: async (a) => remoteFiles.replayProject(
+    await agent.replayEvents(a?.sessionId, a?.afterSeq ?? 0), a?.afterSeq ?? 0),
+  remote_list_dirs: (a) => remoteFiles.listDirs(a?.path ?? null),
+  remote_get_state: () => ({ status: "disabled", devices: [], pinnedCert: null }),
+
+  // ── still stubbed (browser slices in flight) ───────────────────────────
   start_git_watch: () => null,
   extension_ui_state: () => ({ statuses: [], widgets: [], seq: 0 }),
 };
@@ -84,4 +122,4 @@ async function handle(name, args) {
   return reply;
 }
 
-module.exports = { handle, EXPLICIT, agent };
+module.exports = { handle, EXPLICIT, agent, terminal };

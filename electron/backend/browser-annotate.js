@@ -126,10 +126,12 @@ function parsePick(report) {
   if (!pick || typeof pick !== 'object') return null;
   // The capture is made of `docRect`: a pick without one is no pick.
   if (!sane(pick.rect) || !sane(pick.docRect)) return null;
-  for (const field of [pick.url, pick.selector, pick.tag, pick.html, pick.text]) {
+  for (const field of [pick.selector, pick.tag, pick.html, pick.text]) {
+    if (field != null && typeof field !== 'string') return null;
     if (typeof field === 'string' && !wellFormed(field)) return null;
   }
-  const url = capChars(typeof pick.url === 'string' ? pick.url : '', MAX_FIELD);
+  if (typeof pick.url !== 'string' || !wellFormed(pick.url)) return null;
+  const url = capChars(pick.url, MAX_FIELD);
   if (pick.kind === 'element') {
     if (typeof pick.selector !== 'string' || typeof pick.tag !== 'string') return null;
     const selector = capChars(pick.selector, MAX_FIELD);
@@ -208,7 +210,7 @@ class Annotate extends EventEmitter {
     this.within = within;
     this.now = now;
     this.contexts = [];
-    this.on = false;
+    this.enabled = false;
     this.picked = null;
     this.lastPanelRelease = null;
     this.installed = false;
@@ -262,7 +264,7 @@ class Annotate extends EventEmitter {
       if (context.name !== WORLD || !Number.isInteger(context.id)) return;
       if (!this.contexts.includes(context.id)) this.contexts.push(context.id);
       // Notifications stay ordered: a release or toggle cannot be followed by a stale enable.
-      if (this.on) this._notify('Runtime.evaluate', setParams(true, context.id));
+      if (this.enabled) this._notify('Runtime.evaluate', setParams(true, context.id));
       return;
     }
     if (method === 'Runtime.executionContextDestroyed') {
@@ -291,8 +293,8 @@ class Annotate extends EventEmitter {
   async setOn(on) {
     if (this.closed) throw new Error('view closed');
     if (on) await this.install();
-    this.on = Boolean(on);
-    for (const contextId of this.contexts) this._notify('Runtime.evaluate', setParams(this.on, contextId));
+    this.enabled = Boolean(on);
+    for (const contextId of this.contexts) this._notify('Runtime.evaluate', setParams(this.enabled, contextId));
     const last = this.contexts[this.contexts.length - 1];
     // One round trip after them, so a fresh frame shows the change.
     if (last != null) await this._call('Runtime.evaluate', { expression: '0', contextId: last }).catch(() => {});
@@ -370,7 +372,10 @@ class Annotate extends EventEmitter {
   close() {
     if (this.closed) return;
     this.closed = true;
-    this.on = false;
+    this.enabled = false;
+    // The page keeps running after its session is detached: switch the
+    // overlay off there first, or it would go on swallowing the user's clicks.
+    for (const contextId of this.contexts) this._notify('Runtime.evaluate', setParams(false, contextId));
     this.contexts = [];
     this.picked = null;
     this.emit('close');

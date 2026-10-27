@@ -34,6 +34,12 @@
  * commit is checked out, `ignore = dirty`; status walks prune the submodule
  * directory, and every read of a gitlink path answers "absent").
  *
+ * ## Linked worktrees
+ *
+ * Every read picks the right git dir: a worktree's `HEAD` and index come from
+ * its own git dir (`…/.git/worktrees/<name>`), while objects, refs and config
+ * come from the common dir it names in `commondir`.
+ *
  * ## Behaviour differences from the Rust implementation
  *
  * - `.gitattributes` is not consulted (isomorphic-git has no attributes

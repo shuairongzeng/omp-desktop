@@ -1145,6 +1145,15 @@ async function waitForBrowser(child, broker) {
  * the end of its stderr attached to the reason.
  */
 async function start(binary, profile, width, height) {
+  if (process.platform === 'win32') {
+    // Rust passes --remote-debugging-io-pipes=<read>,<write> with inheritable
+    // handle values; Node exposes no way to read a stream's OS HANDLE, so the
+    // browser could open its pipe ends where this process cannot reach them.
+    throw new Failure(
+      'the CDP pipe hand-off is not implemented on Windows in the Node port',
+      true,
+    );
+  }
   const args = commandArgs(profile, width, height);
   // The CDP pipe itself: no port. Appended last, as Rust's `attach` does.
   args.push('--remote-debugging-pipe');
@@ -1245,8 +1254,9 @@ function handle(child, broker, stderr, pidFile, profile) {
  * each in a fresh profile under `<instance dir>/profiles/<sessionId>-<n>`.
  * A configured browser that cannot be launched is an error, never a fallback.
  *
- * `options`: `binaries`, `settings` (`{configDir, file, home}`), `instanceDir`,
- * `root`, `sessionId` (default "browser"), `width`, `height`, `maxAttempts`.
+ * `options`: `binaries`, `configDir`/`file`/`home`/`platform`/`places` (the
+ * browser setting), `instanceDir`, `root`, `sessionId` (default "browser"),
+ * `width`, `height`, `maxAttempts`.
  */
 async function launch(options = {}) {
   const binaries = options.binaries ?? launchCandidates(options);

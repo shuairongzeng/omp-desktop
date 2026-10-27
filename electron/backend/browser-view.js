@@ -44,6 +44,9 @@
      port applies the frame event data it already has, which is all the panel
      payloads below read. History state (`canBack`/`canForward`) is refreshed
      only by `refreshHistory()`.
+   - Rust's `InputEvent::to_command` mapping (frontend payload → CDP method,
+     with its mouse-type/button/key-type validation) is not in this slice:
+     `input(method, params)` takes the CDP command that mapping produced.
    - Rust's async `CdpClient` post (`notify`) is `send(...).catch()` here:
      the same fire-and-forget ordering, no waiting for the reply. */
 
@@ -139,11 +142,12 @@ class Frame {
   /** The panel channel's bytes: seq u64, cssW u32, cssH u32 (LE), JPEG. */
   wire() {
     if (typeof this.b64 !== 'string' || !BASE64.test(this.b64)) return null;
-    const bytes = Buffer.alloc(FRAME_HEADER + Math.floor((this.b64.length / 4) * 3));
+    const jpeg = Buffer.from(this.b64, 'base64');
+    const bytes = Buffer.alloc(FRAME_HEADER + jpeg.length);
     bytes.writeBigUInt64LE(BigInt(this.seq), 0);
     bytes.writeUInt32LE(this.cssW >>> 0, 8);
     bytes.writeUInt32LE(this.cssH >>> 0, 12);
-    Buffer.from(this.b64, 'base64').copy(bytes, FRAME_HEADER);
+    jpeg.copy(bytes, FRAME_HEADER);
     return bytes;
   }
 
@@ -247,7 +251,6 @@ class FrameFlow {
       this.waiters.push(resolve);
       if (this.timer) clearTimeout(this.timer);
       this.timer = null;
-      if (!this.waiters.length) return;
       const inFlight = this.inFlight;
       let delay = 0;
       if (millis != null) delay = millis;
@@ -367,6 +370,7 @@ class View extends EventEmitter {
     if (this.closed) return;
     this.updateState((state) => {
       state.status = 'stopped';
+      state.error = 'browser connection lost';
     });
     this.emit('close');
   }
@@ -574,6 +578,15 @@ class View extends EventEmitter {
    * does not hold the view back.
    */
   applyTargetEvent(method, params = {}) {
+    if (method === 'Target.targetDestroyed') {
+      const targetId = params.targetId;
+      if (typeof targetId !== 'string') return null;
+      this.removePage(targetId);
+      // A closed page that was shown leaves the view with no page.
+      if (this.active && this.active.targetId === targetId) this.active = null;
+      this._publishTabs();
+      return null;
+    }
     const info = params.targetInfo ?? {};
     if (info.type !== 'page') return null;
     const isNew = this._upsertPage(info);
@@ -617,6 +630,8 @@ class View extends EventEmitter {
   async startScreencast(client = this.client, onFrame = () => {}, options = {}) {
     if (!client) throw new Error('cdp not connected');
     if (options.width != null) this.setSize(options.width, options.height, options.dpr);
+    // A View built without a broker adopts the client it is driven with.
+    if (this.client == null) this.client = client;
     const sessionId = this.activeSession();
     this._listen(client);
     this.frames?.close();
@@ -629,6 +644,9 @@ class View extends EventEmitter {
     );
     this._notify('Emulation.setFocusEmulationEnabled', { enabled: true }, { sessionId });
     await this.restartScreencast(sessionId);
+    this.updateState((state) => {
+      state.status = 'running';
+    });
     this._drainFrames();
     return this;
   }
@@ -666,39 +684,74 @@ class View extends EventEmitter {
       if (target != null) this.emit('show', target);
       return;
     }
+    // Only the shown page's session speaks for the panel's state.
+    if (this.active != null && sessionId != null && sessionId !== this.active.sessionId) return;
     if (PAGE_EVENTS.has(method)) this._onPageEvent(method, params ?? {});
   }
 
   _onPageEvent(method, params) {
-    const main = this.active && (params.frame?.id === this.active.targetId || params.frameId === this.active.targetId);
-    if (method === 'Page.frameNavigated' && main) {
-      const url = params.frame?.url;
-      if (typeof url === 'string') {
-        this.updateState((state) => {
-          state.url = url;
-        });
-        const page = this.active && this.page(this.active.targetId);
-        if (page && page.url !== url) {
-          page.url = url;
-          this._publishTabs();
-        }
+    const active = this.active;
+    const mainFrame = active && (params.frame?.id === active.targetId || params.frameId === active.targetId);
+    if (method === 'Page.frameNavigated' && params.frame?.parentId == null) {
+      // A failed load commits an error page that names the URL.
+      const failed = typeof params.frame?.unreachableUrl === 'string' ? params.frame.unreachableUrl : null;
+      const url = failed ?? (typeof params.frame?.url === 'string' ? params.frame.url : null);
+      this.updateState((state) => {
+        if (url != null) state.url = url;
+        state.error = failed == null ? null : `could not load ${failed}`;
+      });
+      const page = active && this.page(active.targetId);
+      if (page && url != null && page.url !== url) {
+        page.url = url;
+        this._publishTabs();
       }
-    } else if (method === 'Page.frameStartedLoading') {
+      this.refreshHistory().catch(() => {});
+    } else if (method === 'Page.frameStartedLoading' && mainFrame) {
       this.updateState((state) => {
         state.loading = true;
       });
-    } else if (method === 'Page.frameStoppedLoading' || method === 'Page.loadEventFired') {
+    } else if (method === 'Page.frameStoppedLoading' && mainFrame) {
       this.updateState((state) => {
         state.loading = false;
       });
+      // Once the page stopped loading the history is settled.
+      this.refreshHistory().catch(() => {});
+    } else if (method === 'Page.loadEventFired') {
+      this.updateState((state) => {
+        state.loading = false;
+      });
+      this.refreshTitle().catch(() => {});
     } else if (method === 'Page.navigatedWithinDocument') {
-      const url = params.url;
-      if (typeof url === 'string') {
-        this.updateState((state) => {
-          state.url = url;
-        });
-      }
+      this.refreshHistory().catch(() => {});
+      this.refreshTitle().catch(() => {});
     }
+  }
+
+  /** `canBack`/`canForward` and the URL, from the navigation history. */
+  async refreshHistory() {
+    if (this.active == null) return this.state;
+    const history = await this.call('Page.getNavigationHistory', {}, { sessionId: this.active.sessionId });
+    const entries = Array.isArray(history?.entries) ? history.entries : [];
+    const index = Number.isInteger(history?.currentIndex) && history.currentIndex >= 0 ? history.currentIndex : 0;
+    const url = entries[index]?.url;
+    return this.updateState((state) => {
+      state.canBack = index > 0;
+      state.canForward = index + 1 < entries.length;
+      if (typeof url === 'string') state.url = url;
+    });
+  }
+
+  /** The shown page's title as Chromium has it now. */
+  async refreshTitle() {
+    const targetId = this.active?.targetId;
+    if (targetId == null) return this.state;
+    const info = await this.call('Target.getTargetInfo', { targetId });
+    const page = this.page(targetId);
+    if (page && info?.targetInfo) {
+      this._upsertPage(info.targetInfo);
+      this._publishTabs();
+    }
+    return this.state;
   }
 
   _onFrame(session, params) {
@@ -711,7 +764,7 @@ class View extends EventEmitter {
       return;
     }
     const active = this.active;
-    if (!active || active.session !== session) {
+    if (!active || active.sessionId !== session) {
       if (ack) this._ackChromium([ack]);
       return; // a page we no longer show
     }
@@ -835,7 +888,7 @@ class View extends EventEmitter {
           item.reject(new Error('browser view closed'));
           continue;
         }
-        const current = this.active && this.active.generation === item.generation && this.active.session === item.session;
+        const current = this.active && this.active.generation === item.generation && this.active.sessionId === item.session;
         if (!current) {
           item.resolve(); // an earlier activation's gesture: dropped
           continue;

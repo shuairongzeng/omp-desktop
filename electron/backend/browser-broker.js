@@ -35,9 +35,14 @@
  * - `client.send(method, params, {sessionId})` is the facade the Electron
  *   backend uses; it owns request ids and resolves with `result`. Messages
  *   that are neither its replies nor events are dropped (Rust exposes them).
+ *   A client with an `event` listener is the reader and consumes events as
+ *   they arrive; with none, events wait in that client's bounded outbox, and
+ *   an overflow cuts the client exactly like Rust's reading thread falling
+ *   behind.
  */
 
 const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
 
 /** Longest message read from Chromium (Rust MAX_MESSAGE: 256 MiB). */
 const MAX_MESSAGE = 256 << 20;
@@ -401,10 +406,7 @@ class Broker {
       return;
     }
     this._alive = false;
-    for (const waiter of this._waiters.values()) {
-      if (waiter.timer !== null) clearTimeout(waiter.timer);
-      waiter.reject(new Error(CLOSED));
-    }
+    for (const waiter of this._waiters.values()) waiter.reject(new Error(CLOSED));
     this._waiters.clear();
     this._attaching.clear();
     const clients = [...this._clients.values()];
@@ -427,7 +429,6 @@ class Broker {
       const wire = this._nextId++;
       let timer = null;
       const waiter = {
-        timer: null,
         resolve: (value) => {
           clearTimeout(timer);
           resolve(value);
@@ -442,7 +443,6 @@ class Broker {
         timer = setTimeout(() => {
           if (this._waiters.delete(wire)) reject(new Error(`${method}: timed out`));
         }, timeoutMs);
-        waiter.timer = timer;
       }
       const message = JSON.stringify({ id: wire, method, params });
       this._enqueue(message).catch((error) => {
@@ -458,7 +458,7 @@ class Broker {
     const client = new BrokerClient(this, id, this._maxQueued);
     this._clients.set(id, client);
     client._ready = this._attachClient(client, 'Target.attachToBrowserTarget', {});
-    client._ready.catch(() => {});
+    client._ready.catch(() => this._removeClient(id));
     return client;
   }
 
@@ -477,7 +477,6 @@ class Broker {
     const attached = new Promise((resolve, reject) => {
       let timer = null;
       const waiter = {
-        timer: null,
         resolve: (value) => {
           clearTimeout(timer);
           resolve(value);
@@ -495,7 +494,6 @@ class Broker {
           reject(new Error(`${method}: timed out`));
         }
       }, ATTACH_TIMEOUT);
-      waiter.timer = timer;
       this._enqueue(JSON.stringify({ id: wire, method, params })).catch((error) => {
         if (this._waiters.delete(wire)) waiter.reject(error);
       });
@@ -847,8 +845,8 @@ class FakeBroker {
   constructor(reply = () => undefined, options = {}) {
     this._reply = reply;
     this._options = options;
-    this._toBroker = new PassThroughStream();
-    this._fromBroker = new PassThroughStream();
+    this._toBroker = new PassThrough();
+    this._fromBroker = new PassThrough();
     this._live = new Set();
     this._attached = 0;
     this._finished = false;
@@ -1006,8 +1004,6 @@ class FakeBroker {
   }
 }
 
-const { PassThrough } = require('node:stream');
-const PassThroughStream = PassThrough;
 const clone = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
 
 // ── entry point ──────────────────────────────────────────────────────────────
