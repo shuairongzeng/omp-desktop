@@ -30,6 +30,7 @@
 // version's cached copy of a same-named file. The version changes every
 // release, so the stamped URL always misses.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -189,10 +190,19 @@ if (distCsp !== expectedCsp) {
 // appending after a fragment would put ?v= where the webview never sends
 // it, leaving the cache key unchanged. Dev builds are untouched: tauri dev
 // serves src/, and only this script stamps.
-const version = JSON.parse(readFileSync(join(root, "src-tauri", "tauri.conf.json"), "utf8")).version;
-if (typeof version !== "string" || !/^[0-9A-Za-z.+-]+$/.test(version)) {
+// The version stamp must change whenever the bundle content changes —
+// otherwise a phone's cached copy of index.html (same `?v=`) keeps the
+// old bundle alive. We mix the tauri.conf.json version with a short hash
+// of the two bundle files, so any content change invalidates the cache.
+const baseVersion = JSON.parse(readFileSync(join(root, "src-tauri", "tauri.conf.json"), "utf8")).version;
+if (typeof baseVersion !== "string" || !/^[0-9A-Za-z.+-]+$/.test(baseVersion)) {
   throw new Error("tauri.conf.json: version must be a plain semver-ish string (it goes into every asset URL)");
 }
+const bundleHash = createHash("sha256");
+for (const f of ["app-bundle.js", "design-bundle.js"]) {
+  try { bundleHash.update(readFileSync(join(out, f))); } catch { /* bundle may not exist yet */ }
+}
+const version = `${baseVersion}-${bundleHash.digest("hex").slice(0, 8)}`;
 const stamp = (where, url) => {
   if (url === "") throw new Error(`${where}: empty URL; "?v=" on an empty URL would fetch the document itself`);
   if (/[\s\u0000-\u001f]/.test(url)) throw new Error(`${where}: URL "${url}" carries whitespace or a control character; the URL parser strips/percent-encodes them, so they hide schemes (" https://…", "java\\tscript:") — write a clean app-relative path`);
