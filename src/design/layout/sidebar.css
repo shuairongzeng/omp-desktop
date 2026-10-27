@@ -57,18 +57,8 @@
    fixed-size chrome — they must never squeeze the project name to zero.
    The name keeps a floor of 4ch (enough to recognize the project) and
    ellipsizes past that; everything else refuses to shrink. */
-.psb-row.psb-project .psb-main > :not(.psb-name):not(.psb-title) { flex-shrink: 0; }
+.psb-row.psb-project .psb-main > :not(.psb-name) { flex-shrink: 0; }
 .psb-row.psb-project .psb-name { min-width: 4ch; }
-/* Merged single-tab row: the session title follows the folder name. The
-   folder name stops growing so the title gets the flexible space; the
-   separator and muted color keep the folder primary. */
-.psb-row.psb-project .psb-name:has(+ .psb-title) { flex: none; max-width: 45%; }
-.psb-title {
-  flex: 1; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--fg-4);
-}
-.psb-title::before { content: "· "; }
 .psb-parent { margin-left: 6px; font-family: var(--font-mono); font-size: var(--d-text-xs); color: var(--fg-4); }
 .psb-row .tab-profile { font-size: var(--d-text-xs); }
 
