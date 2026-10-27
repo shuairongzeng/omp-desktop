@@ -1100,6 +1100,8 @@ React.useEffect(() => {
     // The event carries the pressed chord; N is its digit (not a lookup),
     // so a rebind to another ctrl+digit still lands on the right tab.
     "desktop.tab.jump":        e => jumpToNthTab(parseInt(e?.key, 10)),
+    // Ctrl+Shift+T: pop the closed-tab stack (live.js `reopenClosedTab`).
+    "desktop.tab.reopen":      () => { bridge?.reopenClosedTab(); },
     "desktop.working.next":    () => cycleWorking(1),
     "desktop.working.prev":    () => cycleWorking(-1),
     "desktop.panel.todo":      () => setPlanOpen(v => !v),

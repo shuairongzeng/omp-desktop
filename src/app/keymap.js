@@ -60,6 +60,7 @@
     // the terminal's xterm or the browser panel's page belongs to the
     // guest (`guestShouldBypass`), matching ctrl+t/ctrl+w's rule.
     { id: "desktop.tab.jump",        label: "Jump to tab 1–9",         group: "Tabs",    scope: "global",   defaultKeys: ["ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4", "ctrl+5", "ctrl+6", "ctrl+7", "ctrl+8", "ctrl+9"] },
+    { id: "desktop.tab.reopen",      label: "Reopen closed tab",       group: "Tabs",    scope: "global",   defaultKeys: ["ctrl+shift+t", "shift+super+t"] },
     // Cycle the sidebar's "working" section (non-idle tabs, priority order):
     // ctrl+alt+j/k jump to the next/prev one. Global scope: the jump lands
     // even from the composer. The list order follows `OMP_WORKING_SURFACE`.

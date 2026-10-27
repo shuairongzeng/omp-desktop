@@ -392,6 +392,7 @@ check("guest: bound super chords bypass on every platform", () => {
     assert.equal(bypass(ev(k, "m"), MAC), true, `super+${k} (mac)`);
   }
   assert.equal(bypass(ev("T", "m")), true, "caps lock → super+t");
+  assert.equal(bypass(ev("t", "ms")), true, "shift+super+t (reopen closed tab)");
 });
 
 check("guest: fromGuest actions bypass whatever their modifiers", () => {
@@ -462,7 +463,6 @@ check("guest: unbound chords and plain keys stay the guest's", () => {
   assert.equal(bypass(ev("Tab", "s")), false, "shift+Tab");
   assert.equal(bypass(ev("a")), false);
   assert.equal(bypass(ev("Enter")), false);
-  assert.equal(bypass(ev("t", "ms")), false, "super+shift+t");
   assert.equal(bypass(ev("t", "ma")), false, "super+alt+t");
   assert.equal(bypass(ev("x", "cs")), false, "ctrl+shift+x");
   assert.equal(bypass(ev("~", "m")), false, "super+~ (shifted backtick) is not bound");

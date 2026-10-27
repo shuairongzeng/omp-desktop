@@ -580,6 +580,10 @@
        live.js's window branch reads window.OMP_TRANSCRIPT_WINDOW, so it
        must load before live.js. -->
   <script src="app/transcript-window.js"></script>
+  <!-- The closed-tab stack behind Ctrl+Shift+T (closed-tabs.js): live.js
+       pushes on every closeSession, the keymap action pops. Dependency-free
+       IIFE; must load before live.js. -->
+  <script src="app/closed-tabs.js"></script>
   <script src="live.js"></script>
 
   <!-- App root — wired to OMP_BRIDGE, no demo effects -->

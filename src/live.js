@@ -5060,17 +5060,17 @@
       return _invokeResult("keybindings_reset", { action, profile: _activeProfileId() });
     },
 
-    /** Resume a saved session under the active tab's profile (the profile
-     *  whose sessions directory the entry was listed from). A tab already
+    /** Resume a saved session under `profile` — default the active tab's
+     *  (the profile whose sessions directory a history entry was listed
+     *  from); `reopenClosedTab` passes the closed tab's own. A tab already
      *  running that conversation in this profile is focused instead of
      *  spawning a second process onto the same `.jsonl`. Returns the tab id,
      *  null if `session` doesn't reference a valid saved-session path, or
      *  rejects if the resolved profile no longer exists on the backend (see
      *  `openSession`). The lookup is `findConversationTab`, proven by
      *  `test-project-nav.mjs`. */
-    async resumeSession(session) {
+    async resumeSession(session, profile = _activeProfileId()) {
       if (!session || !session.path) return null;
-      const profile = _activeProfileId();
       const open = window.OMP_PROJECT_NAV.findConversationTab(
         [...sessionRegistry.values()], session.path, profile,
       );
@@ -5081,6 +5081,20 @@
       return _openReported(session.cwd || "", {
         resume: session.path, name: session.title, profile,
       });
+    },
+
+    /** Ctrl+Shift+T (`desktop.tab.reopen`): pop the closed-tab stack
+     *  (`src/app/closed-tabs.js`) and resume that conversation under its own
+     *  profile. `resumeSession`'s focus-existing lookup makes a double pop
+     *  harmless: if the conversation is somehow open again, that tab is
+     *  focused instead of spawning a second process onto the `.jsonl`.
+     *  Resolves to the tab id, or null when the stack is empty. */
+    async reopenClosedTab() {
+      const entry = window.OMP_CLOSED_TABS?.pop();
+      if (!entry) return null;
+      return window.OMP_BRIDGE.resumeSession({
+        path: entry.sessionFile, cwd: entry.path || null, title: null,
+      }, entry.profile || undefined);
     },
 
     // ── Conversation tree (prompt-cache navigator) ───────────────────────────
@@ -5219,6 +5233,13 @@
      *  shell. Unconditional; the tab bar goes through
      *  `closeSessionGuarded`. */
     async closeSession(id) {
+      // Remember the conversation for Ctrl+Shift+T (`desktop.tab.reopen`):
+      // only a tab with a `.jsonl` on disk can come back, so a failed
+      // spawn or a folder-less tab leaves no stack entry.
+      const gone = sessionRegistry.get(id);
+      if (gone?.sessionFile) window.OMP_CLOSED_TABS?.push({
+        sessionFile: gone.sessionFile, profile: gone.profile ?? "", path: gone.path ?? "",
+      });
       _closeTab(id);
       sessionRegistry.delete(id);
       _announceTabs();
