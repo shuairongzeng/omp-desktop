@@ -560,7 +560,7 @@ async function defaultSameUser({ peer, ours }) {
   if (peer.family !== 'IPv4' || ours.family !== 'IPv4') return false;
   const name = `${peer.address}:${peer.port}->${ours.address}:${ours.port}`;
   if (process.platform === 'darwin') {
-    const output = await runLsof(`-iTCP@${peer.address}`);
+    const output = await runLsof(`-iTCP@${peer.address}:${peer.port}`);
     return output != null && lsofLists(output, name, process.geteuid());
   }
   if (process.platform === 'linux') {
@@ -773,7 +773,7 @@ function utf8Strict(payload) {
  * One frame from `buffer`, or null when it is incomplete. Client frames must
  * be masked; protocol violations throw a `WsError` with the close code.
  */
-function decodeFrame(buffer) {
+function decodeFrame(buffer, maxSize = Infinity) {
   if (buffer.length < 2) return null;
   if (buffer[0] & 0x70) throw new WsError(1002, 'reserved bits set');
   const fin = (buffer[0] & 0x80) !== 0;
@@ -792,6 +792,9 @@ function decodeFrame(buffer) {
     length = Number(big);
     offset += 8;
   }
+  // Refused from the header: waiting for a frame the cap can never accept
+  // would stall the connection instead of failing it.
+  if (length > maxSize) throw new WsError(1009, 'message too big');
   if (!masked) throw new WsError(1002, 'client frames must be masked');
   if (buffer.length < offset + 4 + length) return null;
   const mask = buffer.subarray(offset, offset + 4);
@@ -886,7 +889,7 @@ class WsSocket {
     while (!this.closed) {
       let frame;
       try {
-        frame = decodeFrame(this.buffer);
+        frame = decodeFrame(this.buffer, this.maxSize);
       } catch (error) {
         this.close(error.code ?? 1002, error.message);
         return;

@@ -45,6 +45,7 @@ const {
   Tap,
   Observer,
   encodeFrame,
+  decodeFrame,
   lsofLists,
   procfsSameUser,
   percentDecode,
@@ -492,6 +493,7 @@ test('view: the shown page drives loading, history and title state', async () =>
   };
   const view = new View({ broker });
   const client = broker.clients[0];
+  view._upsertPage(pageInfo('t1'));
   view.setActive('t1', 's1');
   const states = [];
   view.on('message', (message) => {
@@ -1301,6 +1303,20 @@ test('proxy: a broker failure is an error reply, not a dropped socket', async ()
     ws.close();
     await proxy.close();
   }
+});
+
+test('proxy: WebSocket frames decode only masked, bounded client frames', () => {
+  const payload = Buffer.from('{"id":1}');
+  const frame = decodeFrame(encodeFrame(0x1, payload, { mask: true }));
+  assert.equal(frame.opcode, 0x1);
+  assert.deepEqual(frame.payload, payload);
+  assert.throws(() => decodeFrame(encodeFrame(0x1, payload)), /masked/);
+  const huge = Buffer.alloc(10);
+  huge[0] = 0x81;
+  huge[1] = 0x80 | 127;
+  huge.writeBigUInt64BE(1_000_000n, 2);
+  assert.throws(() => decodeFrame(huge, 1024), /message too big/);
+  assert.equal(decodeFrame(encodeFrame(0x1, payload, { mask: true }).subarray(0, 4)), null, 'incomplete');
 });
 
 // ── annotate: install, pick gating, capture ────────────────────────────────

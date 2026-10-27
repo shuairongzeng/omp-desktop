@@ -39,11 +39,13 @@
      async loops: `FrameFlow.next()` is a promise, input is a promise queue,
      and the ordering guarantees (causal commands, ack before next frame) are
      unchanged.
-   - Rust's `Page.frameNavigated`/loading handling in the worker made extra
-     CDP calls (`Page.getNavigationHistory`, `Target.getTargetInfo`); this
-     port applies the frame event data it already has, which is all the panel
-     payloads below read. History state (`canBack`/`canForward`) is refreshed
-     only by `refreshHistory()`.
+   - Rust's worker reacts to page events with CDP calls; the same calls are
+     made here, from the same events: `Page.frameNavigated`,
+     `Page.frameStoppedLoading` and `Page.navigatedWithinDocument` refresh
+     `Page.getNavigationHistory`, `Page.loadEventFired` refreshes
+     `Target.getTargetInfo` (the title), and a failed main-frame load sets
+     `error` from `unreachableUrl`. Only events of the shown page's session
+     count (the Rust worker's `is_active_session`).
    - Rust's `InputEvent::to_command` mapping (frontend payload → CDP method,
      with its mouse-type/button/key-type validation) is not in this slice:
      `input(method, params)` takes the CDP command that mapping produced.
@@ -685,8 +687,10 @@ class View extends EventEmitter {
       return;
     }
     // Only the shown page's session speaks for the panel's state.
-    if (this.active != null && sessionId != null && sessionId !== this.active.sessionId) return;
-    if (PAGE_EVENTS.has(method)) this._onPageEvent(method, params ?? {});
+    if (PAGE_EVENTS.has(method)) {
+      if (this.active == null || sessionId !== this.active.sessionId) return;
+      this._onPageEvent(method, params ?? {});
+    }
   }
 
   _onPageEvent(method, params) {

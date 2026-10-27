@@ -48,3 +48,6 @@ docs/superpowers/
 .nucleus/
 relay/target/
 .phone-profile/
+
+# ── Electron port build output ───────────────────────────────────────────────
+/release/
