@@ -46,6 +46,9 @@ const windowApi = {
     show: () => Promise.resolve(),
     setFocus: () => Promise.resolve(),
     setTitle: () => Promise.resolve(),
+    // chrome.jsx:62 subscribes "tauri://resize" on the window object and
+    // calls .then() in a mount effect — must be a Promise of an unlisten.
+    listen: () => Promise.resolve(() => {}),
     close: () => winOp("close"),
     minimize: () => winOp("minimize"),
     maximize: () => winOp("maximize"),

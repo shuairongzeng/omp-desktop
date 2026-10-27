@@ -12,25 +12,42 @@ const log = (name, args, reply) =>
 // Explicit shapes where an empty default would stall or mislead startup.
 // Keys are the exact command names the frontend sends.
 const EXPLICIT = {
-  profiles_list: () => ({ profiles: [{ id: "default", name: "default", isDefault: true }] }),
-  profile_current: () => "default",
-  keybindings_get: () => ({ bindings: {}, paths: [] }),
-  approval_mode_get: () => ({ mode: "ask", project: null }),
-  session_prefs_get: () => ({}),
+  // Shapes verbatim from docs/port/startup-contract.md §1 (rows 1-13).
+  approval_mode_get: () => ({ default: "write", projects: {} }),
+  prompt_history_list: () => [],
+  list_profiles: () => ({
+    profiles: [{ id: "default", name: "default" }],
+    startupId: "default",
+    degraded: null,
+  }),
+  set_close_guard: () => null,
   recent_projects_list: () => [],
-  open_tabs_list: () => [],
+  close_all_tabs: () => null,
+  // Row 7 — the riskiest stub: a non-null reply without BOTH arrays throws
+  // inside _restoreOpenTabs and aborts the whole restore chain.
+  open_tabs_load: () => ({ tabs: [], active: null, skipped: [] }),
+  // Row 8 — must be an array or null; any other truthy value throws in a
+  // detached async (unhandled rejection).
+  take_pending_open_projects: () => [],
+  "plugin:app|version": () => "0.11.0",
+  keybindings_list: () => ({
+    omp: {}, overlay: {}, overlayError: null,
+    ompPath: null, inheritedPath: null, overlayPath: null,
+  }),
+  widgets_state: () => ({
+    configPath: null, fatal: null, errors: [], plugins: [],
+    active: { sessionId: null, applicable: [] }, runs: [],
+  }),
+  widgets_set_view: () => null,
   list_saved_sessions: () => [],
-  models_recent: () => [],
-  widgets_list: () => [],
-  widgets_state: () => ({ plugins: [], runs: [] }),
-  extension_ui_state: () => ({ statuses: [], widgets: [] }),
-  browser_state: () => ({ enabled: false, pages: [], panelOpen: false }),
-  terminal_status: () => ({ tabs: [] }),
-  remote_state: () => ({ status: "disabled", devices: [], pinnedCert: null }),
-  updater_state: () => ({ checking: false, update: null }),
-  goal_config_get: () => ({ enabled: false }),
-  stats_summary: () => null,
-  git_status: () => ({ branch: null, dirty: false }),
+  app_update_check: () => null,
+  // Restored-tab path (contract §2) — inert until M2 spawns real sessions.
+  start_session: () => "write",
+  start_git_watch: () => null,
+  replay_events: () => ({ events: [], headSeq: 0, dropped: false }),
+  session_status: () => null,
+  send_command: () => null,
+  extension_ui_state: () => ({ statuses: [], widgets: [], seq: 0 }),
 };
 
 // Name-shape fallbacks, in priority order.
