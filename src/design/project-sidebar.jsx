@@ -10,7 +10,7 @@
    ═════════════════════════════════════════════════════════════════════ */
 
 const { Icon, TabRunDot, TabLabel, RenameField, ProfileMenu } = window;
-const { groupTabs, groupRunState, groupTarget, membersNewestFirst, basename, parentName, savedForProject } = window.OMP_PROJECT_NAV;
+const { groupTabs, groupRunState, groupTarget, membersNewestFirst, basename, parentName, savedForProject, sessionTitle } = window.OMP_PROJECT_NAV;
 const { relativeTime } = window.OMP_WIDGETS;
 
 // Saved sessions shown per expanded group; past that an "all …" row opens
@@ -158,6 +158,11 @@ function ProjectSidebar({
           const cardTip = multi
             ? (group.path || group.name)
             : [group.tabs[0].name, group.path].filter(Boolean).join("\n");
+          // Single-tab projects render as ONE row: folder name plus the
+          // session's title when it adds information (#46). A member row
+          // would duplicate this row, so single-tab chevrons open history
+          // only — a live session never disappears behind a collapse.
+          const singleTitle = sessionTitle(group);
           const members = `members:${group.key}`;
           return (
             <div key={group.key} {...reorder.itemProps("side-projects", group.key, "y")}
@@ -165,7 +170,7 @@ function ProjectSidebar({
               {/* A multi-tab project row is only highlighted through its
                   active member row, as in the mockup; a single-tab one is
                   that tab. */}
-              <div className={`psb-row psb-project ${containsActive && !expanded ? "active" : ""}`}>
+              <div className={`psb-row psb-project ${containsActive && (!multi || !expanded) ? "active" : ""}`}>
                 {expandable ? (
                   <button className={`psb-chev ${expanded ? "open" : ""}`}
                     title={expanded ? "collapse" : "expand"} aria-expanded={expanded}
@@ -184,6 +189,7 @@ function ProjectSidebar({
                     onDoubleClick={() => { if (!multi) startRename(group.tabs[0].id); }}>
                     {folderIcon}
                     <span className="psb-name">{group.name}</span>
+                    {singleTitle && <span className="psb-title">{singleTitle}</span>}
                     {profile && (
                       <span className="chip muted tab-profile" title={`profile: ${profile}`}>{profile}</span>
                     )}
@@ -198,9 +204,15 @@ function ProjectSidebar({
                       <Icon name="plus" size={10} />
                     </button>
                   )}
+                  {!multi && renaming !== group.tabs[0].id && renameButton(group.tabs[0])}
+                  {!multi && (
+                    <button className="psb-act" title="close tab" onClick={() => onCloseTab(group.tabs[0].id)}>
+                      <Icon name="close" size={9} />
+                    </button>
+                  )}
                 </span>
               </div>
-              {expanded && membersNewestFirst(group).map(t => (
+              {multi && expanded && membersNewestFirst(group).map(t => (
                 <div key={t.id} {...reorder.itemProps(members, t.id, "y")}
                   className={`psb-row psb-tab ${t.id === activeId ? "active" : ""}${reorder.dropClass(members, t.id)}`}>
                   {renaming === t.id ? (

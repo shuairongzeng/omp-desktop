@@ -485,4 +485,21 @@ check("closeSet never includes the anchor", () => {
   }
 });
 
+// sessionTitle (sidebar single-tab merged row): the title shown beside the
+// folder name, null when the tab just repeats the folder.
+check("sessionTitle returns null when the tab repeats the folder name", () => {
+  const [g] = N.groupTabs([tab("a", "D:\\GitHub\\genoffice", { name: "genoffice" })]);
+  assert.equal(N.sessionTitle(g), null);
+});
+check("sessionTitle returns the title when it adds information", () => {
+  const [g] = N.groupTabs([tab("a", "D:\\GitHub\\genoffice", { name: "fix copy button" })]);
+  assert.equal(N.sessionTitle(g), "fix copy button");
+});
+check("sessionTitle is null for multi-tab groups and blank names", () => {
+  const [g] = N.groupTabs([tab("a", "/p", { name: "one" }), tab("b", "/p", { name: "two" })]);
+  assert.equal(N.sessionTitle(g), null);
+  const [g2] = N.groupTabs([tab("a", "/p", { name: " " })]);
+  assert.equal(N.sessionTitle(g2), null);
+});
+
 console.log(`project-nav: ${passed} checks passed`);

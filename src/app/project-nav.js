@@ -215,6 +215,16 @@
       s.path && s.cwd && normPath(s.cwd) === want && !open.has(normPath(s.path)));
   }
 
+  /** A single-tab group's session title worth showing beside the folder
+   *  name — null when the tab just repeats the folder (an untitled tab
+   *  takes the folder's basename), so the sidebar's merged single-tab row
+   *  never prints the same text twice. */
+  function sessionTitle(group) {
+    if (!group || group.tabs.length !== 1) return null;
+    const title = (group.tabs[0].name || "").trim();
+    return title && title !== group.name ? title : null;
+  }
+
   /** `recents` minus projects already open under `profile`. */
   function recentRows(recents, tabs, profile) {
     return recents.filter(r => findProjectTab(tabs, r.path, profile, null) === null);
@@ -351,6 +361,7 @@
     findProjectTab,
     findConversationTab,
     savedForProject,
+    sessionTitle,
     recentRows,
     sessionProjects,
     sessionStrip,
