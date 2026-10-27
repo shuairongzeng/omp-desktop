@@ -26,6 +26,7 @@ Feature internals (RPC frames, state machines, measured omp behaviour) live in `
 |`external-open.md`|"Open with OMP Desktop" on macOS/Windows/Linux|`external_open.rs`, `src-tauri/packaging/`|
 |`frontend-load-order.md`|full `src/index.html` script-order rationale|`src/index.html`|
 |`release-frontend.md`|`dist/` build, CSP check, `?v=` asset stamping|`scripts/build-frontend.mjs`|
+|`electron-migration-assessment.md`|the Tauri→Electron decision: migration surface counts, spike-measured runtime deltas, three costed routes, recommendation (stay on Tauri)|—|
 |`widgets.md`|rail widget plugins: Rust scheduler state machine, approval/fingerprint, `widgets_*` commands and `widgets://` events, runner|`src-tauri/src/widgets/`, `app/widgets.js`, `app/use-widgets.jsx`, `design/widgets/`|
 |`extension-widgets.md`|omp extension `setStatus`/`setWidget` as rail cards: wire frames, per-tab state, the Rust copy for dropped replays, lifecycle|`agent/ext_ui.rs`, `app/extension-widgets.js`, `live.js` `state.extWidgets`|
 |`browser.md`|per-tab Chromium: Rust-owned `browser.json` setting and discovery, lazy CDP proxy (admission, tap), agent-follow, screencast flow control/input, isolated annotation overlay and capture, lifecycle, security and known limits|`browser/`, `app/browser*.js`, `app/use-browser.jsx`, `design/browser-*.jsx`|
