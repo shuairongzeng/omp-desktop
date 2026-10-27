@@ -86,6 +86,10 @@ replaceOnce('<script src="babel.min.js"></script>\n', "");
 let compiled = 0;
 let bytesIn = 0;
 let bytesOut = 0;
+// Collect compiled JSX output for the design bundle instead of writing
+// per-file <script defer> tags. The bundle is written after all JSX is
+// compiled, so every file is present before we concatenate.
+const designBundle = [];
 html = html.replace(/<script type="text\/babel" src="([^"]+)\.jsx"><\/script>/g, (_, path) => {
   const source = readFileSync(join(src, `${path}.jsx`), "utf8");
   let code;
@@ -101,10 +105,11 @@ html = html.replace(/<script type="text\/babel" src="([^"]+)\.jsx"><\/script>/g,
   if (existsSync(target)) throw new Error(`${path}.js already exists in src/; cannot compile ${path}.jsx onto it`);
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, `${code}\n`);
+  designBundle.push({ path, code });
   compiled++;
   bytesIn += source.length;
   bytesOut += code.length;
-  return `<script defer src="${path}.js"></script>`;
+  return `<!-- bundled: ${path}.js -->`;
 });
 
 // Anything Babel's own loader would run (`text/babel`, `text/jsx`, any case)
@@ -112,6 +117,42 @@ html = html.replace(/<script type="text\/babel" src="([^"]+)\.jsx"><\/script>/g,
 if (/<script\b[^>]*(text\/(?:babel|jsx)|\.jsx["'\s>])/i.test(html)) {
   throw new Error("index.html: a Babel script tag was not compiled");
 }
+
+// Merge the compiled JSX files into one design bundle, and the plain
+// app/*.js + live.js + adapter.js files into one app bundle. The script
+// tags become comments; two <script defer> tags replace them. Vendor
+// files (react, marked, hljs, xterm, qrcode) stay separate — they are
+// already minified and cached independently.
+const esbuild = createRequire(import.meta.url)("esbuild");
+const BUNDLE_EXCLUDE = new Set([
+  "react.production.js", "react-dom.production.js", "marked.min.js",
+  "highlight.min.js", "xterm.js", "xterm-addon-fit.js", "qrcode.js",
+]);
+const appBundleFiles = [];
+for (const [, path] of html.matchAll(/<script\b(?![^>]*\bdefer\b)[^>]*\ssrc="([^"]+)"/gi)) {
+  if (BUNDLE_EXCLUDE.has(path) || path.endsWith(".css")) continue;
+  const file = join(out, path);
+  if (!existsSync(file)) continue; // already checked below; skip missing
+  appBundleFiles.push(path);
+}
+if (appBundleFiles.length) {
+  const appCode = appBundleFiles.map(p => readFileSync(join(out, p), "utf8")).join("\n;\n");
+  const appMin = esbuild.transformSync(appCode, { minify: true, target: "es2022", legalComments: "none" }).code;
+  writeFileSync(join(out, "app-bundle.js"), appMin + "\n");
+  for (const p of appBundleFiles) {
+    html = html.replace(`<script src="${p}"></script>`, `<!-- bundled: ${p} -->`);
+  }
+  // Insert the app bundle before the first design-bundle comment.
+  html = html.replace("<!-- bundled:", `<script defer src="app-bundle.js"></script>\n  <!-- bundled:`);
+}
+if (designBundle.length) {
+  const designCode = designBundle.map(b => b.code).join("\n;\n");
+  const designMin = esbuild.transformSync(designCode, { minify: true, target: "es2022", legalComments: "none" }).code;
+  writeFileSync(join(out, "design-bundle.js"), designMin + "\n");
+  // Replace the first bundled-JSX comment with the design bundle tag.
+  html = html.replace(/<!-- bundled: [^ ]+ -->/, `<script defer src="design-bundle.js"></script>`);
+}
+
 for (const [, path] of html.matchAll(/<script\b[^>]*\ssrc="([^"]+)"/gi)) {
   if (!existsSync(join(out, path))) throw new Error(`dist/index.html loads ${path}, which dist/ lacks`);
 }
