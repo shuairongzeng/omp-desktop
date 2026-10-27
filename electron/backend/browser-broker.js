@@ -644,8 +644,13 @@ class Broker {
     const attach = typeof value.method === 'string' && ATTACH_METHODS.has(value.method);
     const out = { id: wire };
     if (root !== undefined) out.sessionId = root;
+    // Rust `rewritten(root.is_some())`: the member sessionId is stripped
+    // only when the root replaced it; a message that carries its OWN owned
+    // session keeps it on the wire, or Chromium answers browser-level
+    // ("'Page.navigate' wasn't found").
     for (const [key, member] of Object.entries(value)) {
-      if (key === 'id' || key === 'sessionId') continue;
+      if (key === 'id') continue;
+      if (key === 'sessionId' && root !== undefined) continue;
       out[key] = member;
     }
     this._inFlight.set(wire, { clientId, id, attach });

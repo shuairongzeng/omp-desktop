@@ -92,10 +92,21 @@ for (const kind of ["data", "exit"]) {
     }
   });
 }
-
 app.on("before-quit", () => {
   stub.agent.shutdownAll();
   stub.terminal.shutdownAll().catch(() => {});
+  stub.browser.shutdownAll().catch(() => {});
+});
+
+// M3: browser screencast frames and view messages ride the webview Channel
+// the frontend created in browserOpenPanel (preload serializes it to its
+// id; the dispatcher hands that id to the manager).
+stub.browser.on("channel", (sessionId, payload) => {
+  const channelId = stub.browser.channels.get(sessionId);
+  if (channelId == null) return;
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("omp:channel", channelId, payload);
+  }
 });
 
 // One multiplexed channel, like the Tauri command surface: the frontend's

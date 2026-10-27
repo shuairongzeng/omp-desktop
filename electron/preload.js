@@ -1,81 +1,57 @@
-/* electron/preload.js — the `window.__TAURI__` compatibility shim.
+/* electron/preload.js — the isolated-world bridge half of the port shim.
 
-   The frontend's whole backend surface is five call shapes (audited on
-   master 2026-10-27): `core.invoke` (25 sites), `event.listen` (11),
-   `core.Channel` (2, browser panel only), `window.getCurrentWindow()` (1),
-   `webview.getCurrentWebview()` (1). This shim implements exactly those,
-   so no frontend file changes for M1. */
+   The renderer-main-world half is electron/port-shim.js (injected into
+   dist/index.html by scripts/port-dist.mjs). The split exists because
+   Electron's contextBridge cannot marshal a Channel: a class is not
+   constructible across the bridge and an `onmessage` assignment on a
+   marshalled object stays renderer-local. Tauri has the same split — its
+   Channel class lives in the renderer (@tauri-apps/api), crosses the wire
+   as an id, and receives frames through a renderer-side listener.
+
+   Here a Channel crosses as its id (the shim's toJSON); frame delivery
+   calls back into the renderer through the function proxy the shim's
+   `onmessage` setter registered via channelHandler. NOTE: a sandboxed
+   preload has no Buffer, so base64 frames decode with atob. */
 
 const { contextBridge, ipcRenderer } = require("electron");
 
 let nextChannelId = 1;
-const channels = new Map(); // id -> { onmessage }
+const channelHandlers = new Map(); // id -> renderer handler proxy
 
-// Event subscription: the main process pushes { name, payload } on
-// "omp:event"; listeners registered by name.
+// Channel delivery: main pushes (id, payload); payload is either a base64
+// screencast frame or a plain {type, value} object.
+ipcRenderer.on("omp:channel", (_e, id, payload) => {
+  const fn = channelHandlers.get(id);
+  if (!fn) return;
+  if (payload && typeof payload.b64 === "string") {
+    const bin = atob(payload.b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+    fn(bytes.buffer);
+  } else {
+    fn(payload);
+  }
+});
+
 const listeners = new Map(); // name -> Set<handler>
 ipcRenderer.on("omp:event", (_e, name, payload) => {
   for (const h of listeners.get(name) ?? []) h({ payload });
 });
 
-class Channel {
-  constructor(onmessage) {
-    this.id = nextChannelId++;
-    this.onmessage = onmessage ?? null;
-    channels.set(this.id, this);
-  }
-}
-
-const core = {
+contextBridge.exposeInMainWorld("__OMP_PRIMS__", {
   invoke: (name, args) => ipcRenderer.invoke("omp:invoke", name, args ?? {}),
-  Channel,
-};
-
-const event = {
+  winOp: (op) => ipcRenderer.invoke("omp:win", op),
+  channelCreate: () => nextChannelId++,
+  channelHandler: (id, fn) => {
+    if (fn == null) channelHandlers.delete(id);
+    else channelHandlers.set(id, fn);
+  },
   listen: (name, handler) => {
     if (!listeners.has(name)) listeners.set(name, new Set());
     listeners.get(name).add(handler);
     return Promise.resolve(() => listeners.get(name)?.delete(handler));
   },
-  emit: () => Promise.resolve(),
-};
-
-const winOp = (op) => ipcRenderer.invoke("omp:win", op);
-const windowApi = {
-  getCurrentWindow: () => ({
-    show: () => Promise.resolve(),
-    setFocus: () => Promise.resolve(),
-    setTitle: () => Promise.resolve(),
-    // chrome.jsx:62 subscribes "tauri://resize" on the window object and
-    // calls .then() in a mount effect — must be a Promise of an unlisten.
-    listen: () => Promise.resolve(() => {}),
-    close: () => winOp("close"),
-    minimize: () => winOp("minimize"),
-    maximize: () => winOp("maximize"),
-    unmaximize: () => winOp("unmaximize"),
-    isMaximized: () => winOp("isMaximized"),
-    startDragging: () => winOp("startDragging"),
-    onDragDropEvent: () => Promise.resolve(() => {}),
-  }),
-};
-
-const webviewApi = {
-  getCurrentWebview: () => ({
-    onDragDropEvent: () => Promise.resolve(() => {}),
-    setZoom: () => Promise.resolve(),
-  }),
-};
-
-contextBridge.exposeInMainWorld("__TAURI__", {
-  core,
-  event,
-  window: windowApi,
-  webview: webviewApi,
-  // The frontend guards on `window.__TAURI__` presence; internals is used
-  // by nothing in src/ (audited) but kept as an inert object so a stray
-  // deep read cannot throw.
-  internals: {},
 });
 
 // Test/verification hook: lets a CDP-driven check confirm the shim is live.
-contextBridge.exposeInMainWorld("__OMP_PORT_SHIM__", { version: 1 });
+contextBridge.exposeInMainWorld("__OMP_PORT_SHIM__", { version: 2 });

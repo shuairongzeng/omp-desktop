@@ -14,7 +14,11 @@ const { AgentBridge } = require("./backend/agent");
 const { TerminalManager } = require("./backend/terminal");
 const git = require("./backend/git");
 const remoteFiles = require("./backend/remote-files");
+const { BrowserManager } = require("./backend/browser-manager");
 
+// One browser manager per app run (M3): Chromium launches lazily on the
+// first panel open, exactly like the Tauri manager.
+const browser = new BrowserManager();
 // One bridge and one terminal manager per app run (M3). Main subscribes
 // their events and forwards them to the webview under the exact Tauri
 // event names the frontend subscribes to.
@@ -96,7 +100,26 @@ const EXPLICIT = {
     await agent.replayEvents(a?.sessionId, a?.afterSeq ?? 0), a?.afterSeq ?? 0),
   remote_list_dirs: (a) => remoteFiles.listDirs(a?.path ?? null),
   remote_get_state: () => ({ status: "disabled", devices: [], pinnedCert: null }),
-
+  // ── M3 browser (parity-tested slices; manager is Main's integration) ──
+  browser_open_panel: (a) => browser.openPanel(a?.sessionId, {
+    width: a?.width, height: a?.height, dpr: a?.dpr,
+    channelId: a?.events?.__channel ?? null,
+  }),
+  browser_close_panel: (a) => browser.closePanel(a?.sessionId),
+  browser_resize: (a) => browser.resize(a?.sessionId, a?.width, a?.height, a?.dpr),
+  browser_navigate: (a) => browser.navigate(a?.sessionId, a?.url),
+  browser_history: (a) => browser.history(a?.sessionId, a?.delta),
+  browser_tab_new: (a) => browser.tabNew(a?.sessionId),
+  browser_tab_close: (a) => browser.tabClose(a?.sessionId, a?.targetId),
+  browser_tab_activate: (a) => browser.tabActivate(a?.sessionId, a?.targetId),
+  browser_input: (a) => browser.input(a?.sessionId, a),
+  browser_frame_ack: (a) => browser.frameAck(a?.sessionId, a?.seq),
+  browser_annotate: (a) => browser.annotate(a?.sessionId, a?.on === true),
+  browser_capture: (a) => browser.capture(a?.sessionId, a?.rect),
+  browser_scroll_to: (a) => browser.scrollRect(a?.sessionId, a?.rect),
+  browser_settings: () => browser.settings(),
+  browser_set_path: (a) => browser.setPath(a?.path),
+  browser_pick_path: () => null, // native dialog: M5
   // ── still stubbed (browser slices in flight) ───────────────────────────
   start_git_watch: () => null,
   extension_ui_state: () => ({ statuses: [], widgets: [], seq: 0 }),
@@ -122,4 +145,4 @@ async function handle(name, args) {
   return reply;
 }
 
-module.exports = { handle, EXPLICIT, agent, terminal };
+module.exports = { handle, EXPLICIT, agent, terminal, browser };

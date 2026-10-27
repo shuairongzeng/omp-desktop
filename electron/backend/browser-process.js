@@ -1293,7 +1293,39 @@ async function launch(options = {}) {
   throw new Error(`chromium did not start: ${failures.join('; ')}`);
 }
 
+/**
+ * Spawn Chromium with the CDP pipe and NO reader attached yet, so the
+ * caller controls reader order. Measured (2026-10-27): the FIRST reader on
+ * the pipe decides whether large replies (screenshots, screencast frames)
+ * ever arrive — the broker as first reader starves them, a plain reader
+ * first delivers to every reader. `start()`/`launch()` keep their internal
+ * handshake broker for callers that do not need the panel path.
+ */
+function spawnChromium(binary, profile, width = WINDOW.width, height = WINDOW.height) {
+  const args = commandArgs(profile, width, height);
+  args.push('--remote-debugging-pipe');
+  const options = {
+    stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
+  };
+  if (isScript(binary)) options.env = scriptEnvironment(profile);
+  const child = spawn(binary, args, options);
+  const stderr = new StderrTail(child.stderr);
+  return {
+    child,
+    from: child.stdio[4],
+    to: child.stdio[3],
+    stderr,
+    stop: async () => {
+      killTree(child);
+      try { child.kill('SIGKILL'); } catch { /* gone */ }
+      await waitExit(child);
+    },
+  };
+}
+
 module.exports = {
+  spawnChromium,
   // setting
   settingsGet,
   settingsSetPath,
