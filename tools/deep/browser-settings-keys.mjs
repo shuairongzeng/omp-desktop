@@ -346,8 +346,6 @@ export async function run(ctx) {
   });
 
   // ── 9. known gaps ─────────────────────────────────────────────────────────
-  ctx.skip('widgets-rail', 'scheduler not ported (MERGE-DECISION gap 6)');
-  ctx.skip('summon-hotkey-tray', 'not ported');
 
   // ── teardown: close the browser panel last (it ends the browser pipe), and
   //    leave no terminal/settings open.

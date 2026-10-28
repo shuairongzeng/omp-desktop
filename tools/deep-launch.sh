@@ -18,6 +18,17 @@ cat > "$CFG/open-tabs.json" <<'JSON'
   "active": 0
 }
 JSON
+cat > "$CFG/widgets.json" <<'JSON'
+{
+  "version": 1,
+  "plugins": [
+    { "id": "git", "title": "Git", "command": ["bash", "/Users/jackey/GitHub/omp-desktop/examples/widgets/git.sh"], "triggers": ["activate"], "intervalMs": 60000 }
+  ]
+}
+JSON
+cat > "$CFG/global-hotkey.json" <<'JSON'
+{ "chord": "ctrl+alt+k" }
+JSON
 cd "$(dirname "$0")/.."
 OMP_PORT_CONFIG_DIR="$CFG" nohup "release/OMP Desktop.app/Contents/MacOS/OMP Desktop" \
   --remote-debugging-port="$PORT" > /tmp/deep-launch.log 2>&1 &

@@ -12,6 +12,9 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("node:path");
 const stub = require("./stub-backend");
+const { globalShortcut, Tray, Menu, nativeImage } = require("electron");
+const fs = require("node:fs");
+const hotkey = require("./backend/hotkey");
 
 const T0 = Date.now();
 
@@ -97,7 +100,80 @@ app.on("before-quit", () => {
   stub.agent.shutdownAll();
   stub.terminal.shutdownAll().catch(() => {});
   stub.browser.shutdownAll().catch(() => {});
+  stub.widgetsHost.killAll();
+  globalShortcut.unregisterAll();
 });
+
+// ── widgets: events to the webview + host lifecycle hooks ─────────────────
+stub.setWidgetEmit((event, payload) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("omp:event", event, payload);
+  }
+});
+// Rust: start_session registers the session with the host (lib.rs:183),
+// close/stop unregister it, agent_end notifies turn end. The port has no
+// .git/HEAD watcher, so the branch trigger is inert (documented gap).
+const origHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.removeHandler("omp:invoke");
+ipcMain.handle("omp:invoke", (e, name, args) => {
+  const result = stub.handle(name, args);
+  if (name === "start_session") {
+    const a = args?.args ?? args ?? {};
+    Promise.resolve(result).then(() => {
+      stub.widgetsHost.sessionStarted(a.sessionId, a.cwd ?? null);
+    });
+  }
+  if (name === "close_tab" || name === "stop_session") {
+    const sid = args?.sessionId;
+    if (sid) Promise.resolve(result).then(() => stub.widgetsHost.sessionClosed(sid));
+  }
+  return result;
+});
+// agent_end frames ride the agent line channel: notify turn end.
+stub.agent.on("line", (sessionId, frame) => {
+  if (typeof frame?.text === "string" && frame.text.includes('"type":"agent_end"')) {
+    stub.widgetsHost.turnEnded(sessionId);
+  }
+});
+
+// ── summon hotkey + tray (global_hotkey.rs / tray.rs) ─────────────────────
+const summon = () => {
+  console.log("[port] summon fired");
+  app.focus({ steal: true });
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    win.webContents.send("omp:event", hotkey.SUMMON_EVENT, null);
+  }
+};
+function setupHotkeyTray() {
+const chord = hotkey.readChord(stub.widgetsHost.configDir ?? require("./backend/stores").configHome());
+  if (chord.warning) console.error(chord.warning);
+  try {
+    const registered = globalShortcut.register(chord.accelerator, summon);
+    console.log(`[port] summon hotkey ${chord.chord} -> ${chord.accelerator} registered=${registered} isRegistered=${globalShortcut.isRegistered(chord.accelerator)}`);
+  } catch (e) {
+    console.error(`[port] summon hotkey registration failed: ${e.message}`);
+  }
+  const trayIcon = nativeImage.createFromPath(path.join(__dirname, "assets", "16x16.png"));
+  let tray = null;
+  if (!trayIcon.isEmpty()) {
+    tray = new Tray(trayIcon);
+    tray.setToolTip(hotkey.TRAY_TOOLTIP);
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: "show omp", click: summon },
+      { label: "quit", click: () => { app.quit(); } },
+    ]));
+    // Rust: left click toggles the window (tray.rs), menu stays for right.
+    tray.on("click", () => {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (!win) return summon();
+      if (win.isVisible() && win.isFocused()) win.hide();
+      else summon();
+    });
+  }
+}
 
 // M3: browser screencast frames and view messages ride the webview Channel
 // the frontend created in browserOpenPanel (preload serializes it to its
@@ -118,15 +194,13 @@ stub.remote.on("event", (name, payload) => {
   }
 });
 
-// One multiplexed channel, like the Tauri command surface: the frontend's
-// shim sends (name, args); the stub (later: real backend) answers.
-ipcMain.handle("omp:invoke", (_e, name, args) => stub.handle(name, args));
 
 // Events the frontend subscribes to ride this channel back; the stub emits
 // nothing, matching a quiet desktop.
 ipcMain.handle("omp:subscribe", (_e, _name) => 0);
 
 app.whenReady().then(() => {
+  setupHotkeyTray();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

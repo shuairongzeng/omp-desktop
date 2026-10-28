@@ -19,6 +19,7 @@ const { RemoteManager } = require("./backend/remote-manager");
 const nativeShell = require("./backend/native-shell");
 const workspace = require("./backend/workspace");
 const projectFiles = require("./backend/project-files");
+const { WidgetHost } = require("./backend/widgets/host");
 const savedMutate = require("./backend/saved-sessions-mutate");
 const profilesMutate = require("./backend/profiles-mutate");
 const agentStats = require("./backend/agent-stats");
@@ -70,11 +71,11 @@ const EXPLICIT = {
   // Widgets: the Rust scheduler/thread model is not ported (MERGE-DECISION
   // gap 6). The UI gets an explicit empty-but-valid state and its writes
   // succeed into memory, never a silent no-op shape.
-  widgets_state: () => widgetsState(),
-  widgets_approve: (a) => widgetsApprove(a),
-  widgets_refresh: () => null,
-  widgets_set_view: () => null,
-  widgets_set_view: () => null,
+  widgets_state: () => widgetsHost.state(),
+  widgets_approve: (a) => widgetsHost.approve(a?.pluginId, a?.fingerprint),
+  widgets_refresh: (a) => widgetsHost.refresh(a?.pluginId),
+  widgets_set_view: (a) => widgetsHost.setView(a?.view),
+  widgets_reload: () => widgetsHost.reload(),
   list_saved_sessions: (a) => savedSessions.listSavedSessions(a ?? {}),
   // M5: real updater check; the frontend expects Rust's UpdateInfo
   // (camelCase {version, notes, date, canInstall, releaseUrl}) or null.
@@ -230,25 +231,11 @@ async function handle(name, args) {
   return reply;
 }
 
-// ── widgets (explicit empty state; scheduler not ported) ────────────────────
-const widgetApprovals = new Map(); // fingerprint -> true
-const widgetViews = new Map(); // pluginId -> view
 
-function widgetsState() {
-  return {
-    configPath: null,
-    fatal: null,
-    errors: [],
-    plugins: [],
-    active: { sessionId: null, applicable: [] },
-    runs: [],
-  };
-}
+// The widget host's `widgets://` events ride the same omp:event channel as
+// every other Tauri event; main.js installs the sink once windows exist.
+let widgetEmitSink = () => {};
+const widgetsHost = new WidgetHost({ emit: (event, payload) => widgetEmitSink(event, payload) });
+const setWidgetEmit = (fn) => { widgetEmitSink = fn; };
 
-function widgetsApprove(a) {
-  if (!a?.fingerprint) throw new Error("widgets_approve needs a fingerprint");
-  widgetApprovals.set(a.fingerprint, true);
-  return null;
-}
-
-module.exports = { handle, EXPLICIT, agent, terminal, browser, remote };
+module.exports = { handle, EXPLICIT, agent, terminal, browser, remote, widgetsHost, setWidgetEmit };

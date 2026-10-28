@@ -2,27 +2,27 @@
   {
     "name": "tab-switch",
     "ok": true,
-    "detail": "tabs session-1793158047030 ⇄ session-1793158067393; header \"📝 QUIZ: 给娃出题\" ⇄ \"deep-cfg-tabs-sidebar-proj\"; /status user row landed in deep-cfg-tabs-sidebar-proj's jsonl (-1→3805 bytes); seed jsonl 400291→400291"
+    "detail": "tabs session-1793164075594 ⇄ session-1793164096036; header \"📝 QUIZ: 给娃出题\" ⇄ \"deep-cfg-tabs-sidebar-proj\"; /status user row landed in deep-cfg-tabs-sidebar-proj's jsonl (-1→4289 bytes); seed jsonl 424781→424781"
   },
   {
     "name": "tab-close",
     "ok": true,
-    "detail": "tab session-1793158067393 closed via its × (aria-label \"close deep-cfg-tabs-sidebar-proj\"); open-tabs.json 2→1 entries; scoped pgrep 1→0"
+    "detail": "tab session-1793164096036 closed via its × (aria-label \"close deep-cfg-tabs-sidebar-proj\"); open-tabs.json 2→1 entries; scoped pgrep 1→0"
   },
   {
     "name": "reopen-closed",
     "ok": true,
-    "detail": "Ctrl+Shift+T: tabs 1→2, conversation 2026-10-28T03-27-47-655Z_01a1808c-b5c7-77d6-ba06-07dad2978281.jsonl resumed (tab session-1793158075594)"
+    "detail": "Ctrl+Shift+T: tabs 1→2, conversation 2026-10-28T05-08-16-291Z_01a180e8-b323-7707-ba8c-db1710d20608.jsonl resumed (tab session-1793164108521)"
   },
   {
     "name": "tab-rename",
     "ok": true,
-    "detail": "double-click → typed \"deep-renamed-mvrk0qhx\" → open-tabs.json name = \"deep-renamed-mvrk0qhx\""
+    "detail": "double-click → typed \"deep-renamed-mvrnm1j7\" → open-tabs.json name = \"deep-renamed-mvrnm1j7\""
   },
   {
     "name": "middle-click-close",
     "ok": true,
-    "detail": "middle click closed tab session-1793158075594: tabs 2→1, scoped pgrep 1→0, conversation kept on disk (2026-10-28T03-27-47-655Z_01a1808c-b5c7-77d6-ba06-07dad2978281.jsonl, 3986→3986 bytes)"
+    "detail": "middle click closed tab session-1793164108521: tabs 2→1, scoped pgrep 1→0, conversation kept on disk (2026-10-28T05-08-16-291Z_01a180e8-b323-7707-ba8c-db1710d20608.jsonl, 4470→4470 bytes)"
   },
   {
     "name": "sidebar-recent-remove",
@@ -42,17 +42,17 @@
   {
     "name": "send-roundtrip",
     "ok": true,
-    "detail": "deep-composer-send-1793158090549 in .user-text and in 2026-10-26T12-31-15-604Z_01a17831-8c94-7647-88ec-dec231e169a5.jsonl (bash approval granted: null)"
+    "detail": "deep-composer-send-1793164129709 in .user-text and in 2026-10-26T12-31-15-604Z_01a17831-8c94-7647-88ec-dec231e169a5.jsonl (bash approval granted: true)"
   },
   {
     "name": "queue-while-streaming",
     "ok": true,
-    "detail": ".queue-row kind=follow-up text=deep-composer-queue-1793158100054; delivered after idle (DOM + jsonl)"
+    "detail": ".queue-row kind=follow-up text=deep-composer-queue-1793164136759; delivered after idle (DOM + jsonl)"
   },
   {
     "name": "abort",
     "ok": true,
-    "detail": "streaming stopped 4ms after abort; follow-up deep-composer-afterabort-1793158106144 ran to idle"
+    "detail": "streaming stopped 4ms after abort; follow-up deep-composer-afterabort-1793164155260 ran to idle"
   },
   {
     "name": "plan-mode",
@@ -62,12 +62,12 @@
   {
     "name": "thinking-menu",
     "ok": true,
-    "detail": "menu showed [\"off\",\"minimal\",\"low\",\"medium\",\"high\"] (parity with get_available_thinking_levels); off → minimal → off"
+    "detail": "menu showed [\"off\",\"minimal\",\"low\",\"medium\",\"high\"] (parity with get_available_thinking_levels); high → minimal → high"
   },
   {
     "name": "model-picker",
     "ok": true,
-    "detail": "211 rows incl. current glm-5.3-prime; switched to cmaas-glm-5.3 and back"
+    "detail": "211 rows incl. current glm-5.3-prime; switched to cmaas-glm-5.3 and back; thinking re-applied off → high"
   },
   {
     "name": "at-mention",
@@ -82,7 +82,7 @@
   {
     "name": "terminal-write-kill",
     "ok": true,
-    "detail": "marker TERM-DEEP-1793158128072 in xterm DOM; pty 83378 spawned and gone (0->0 zsh children); tab session-1793158127740 closed"
+    "detail": "marker TERM-DEEP-1793164186504 in xterm DOM; pty 61920 spawned and gone (0->0 zsh children); tab session-1793164186403 closed"
   },
   {
     "name": "git-file-diff",
@@ -97,12 +97,12 @@
   {
     "name": "conversation-tree",
     "ok": true,
-    "detail": "63 tree rows vs 63 host \"type\":\"message\",\"role\":\"user\" lines (±2); head \"63 prompts | cache lifetime unknown\""
+    "detail": "70 tree rows vs 70 host \"type\":\"message\",\"role\":\"user\" lines (±2); head \"70 prompts | cache lifetime unknown\""
   },
   {
     "name": "history-search-restore",
     "ok": true,
-    "detail": "Ctrl+H → 57 sessions, \"QUIZ\" → 1; clicking it focused the open tab (2 tabs unchanged, active \"chuti·📝 QUIZ: 给娃出题\")"
+    "detail": "Ctrl+H → 58 sessions, \"QUIZ\" → 1; clicking it focused the open tab (2 tabs unchanged, active \"chuti·📝 QUIZ: 给娃出题\")"
   },
   {
     "name": "subagents-panel",
@@ -112,7 +112,7 @@
   {
     "name": "usage-stats",
     "ok": true,
-    "detail": "requests card 3571 vs ctx.invoke usage_stats.overall.totalRequests 3571 (exact); cards [\"3,571\",\"$0.00\",\"12.62M in / 2.85M out\",\"66 t/s\"]"
+    "detail": "requests card 3641 vs ctx.invoke usage_stats.overall.totalRequests 3641 (exact); cards [\"3,641\",\"$0.00\",\"12.75M in / 3.05M out\",\"70 t/s\"]"
   },
   {
     "name": "browser-navigate",
@@ -137,12 +137,12 @@
   {
     "name": "settings-sections",
     "ok": true,
-    "detail": "12 sections walked: Appearance1 12r/4g, Remote 2r/2g, Layout 4r/1g, Chat 4r/2g, Composer 3r/3g, Rail 6r/2g, Terminal 4r/2g, Browser 3r/2g, Agent 4r/3g, Session 7r/2g, Approvals 2r/2g, Shortcuts 38r/1g"
+    "detail": "12 sections walked: Appearance1 12r/4g, Remote 2r/2g, Layout 4r/1g, Chat 4r/2g, Composer 3r/3g, Rail 7r/2g, Terminal 4r/2g, Browser 3r/2g, Agent 4r/3g, Session 7r/2g, Approvals 2r/2g, Shortcuts 38r/1g"
   },
   {
     "name": "key-history",
     "ok": true,
-    "detail": "Ctrl+H opened the modal (57 saved-session row(s) listed), Escape closed it"
+    "detail": "Ctrl+H opened the modal (58 saved-session row(s) listed), Escape closed it"
   },
   {
     "name": "key-sidebar",
@@ -157,13 +157,11 @@
   {
     "name": "widgets-rail",
     "ok": true,
-    "skipped": true,
-    "detail": "scheduler not ported (MERGE-DECISION gap 6)"
+    "detail": "card text: Gitrunning…branchmainupstreamorigin/main0changed filesahead …"
   },
   {
     "name": "summon-hotkey-tray",
     "ok": true,
-    "skipped": true,
-    "detail": "not ported"
+    "detail": "hotkey ctrl+alt+K registered with the OS; tray \"show omp\" un-hid the window"
   }
 ]

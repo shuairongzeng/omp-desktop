@@ -19,6 +19,7 @@ import { run as runTabsSidebar } from "./deep/tabs-sidebar.mjs";
 import { run as runComposer } from "./deep/composer.mjs";
 import { run as runPanels } from "./deep/panels.mjs";
 import { run as runBrowserSettings } from "./deep/browser-settings-keys.mjs";
+import { run as runWidgetsHotkey } from "./deep/widgets-hotkey.mjs";
 
 const port = Number(process.argv[2]);
 const shotDir = process.argv[3] ?? "/tmp/deep-shots";
@@ -34,6 +35,7 @@ const groups = [
   ["composer", runComposer],
   ["panels", runPanels],
   ["browser-settings-keys", runBrowserSettings],
+  ["widgets-hotkey", runWidgetsHotkey],
 ];
 
 for (const [name, run] of groups) {
