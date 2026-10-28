@@ -55,3 +55,25 @@ Known sweep limits: `Page.captureScreenshot` cannot see OS-level dialogs
 `screencapture`, and the check runs last because a modal dialog blocks
 later DOM checks); conditional UI (git/browser buttons render only for
 a git-repo project) means the fixture tab must be a repo.
+
+## Operation-level matrix (2026-10-27, supersedes the render-level sweep)
+
+`tools/deep-e2e.mjs <cdp-port> [shot-dir]` runs four group modules
+(`tools/deep/{tabs-sidebar,composer,panels,browser-settings-keys}.mjs`,
+shared harness `tools/deep/ctx.mjs`) SEQUENTIALLY against one instance.
+Every check proves its feature by an external consequence — open-tabs.json
+/ recent-projects.json / session jsonl on disk, scoped `pgrep` of omp and
+pty children, `pbpaste`, Finder's front-window target — or a DOM change a
+no-op could not produce. Latest run: **31/33 pass, 2 skipped** (widgets
+rail and summon hotkey/tray are the documented unported gaps), 0 failed;
+results + screenshots in `docs/port/sweep/deep-e2e.json` and
+`/tmp/deep-shots-final2/`.
+
+The matrix is the port's release gate: it found six real backend bugs the
+render-level sweep could not see — `recent_projects_remove` missing (dead
+sidebar click), the frontend InputEvent→CDP mapping unported (no click or
+key ever reached the page), annotate picks never forwarded to the panel,
+`View.close()` closing the manager's shared CDP pipe (reopen dead for the
+run), headless screencast metadata alternating device/window px (clicks
+mapped outside the page), and `Page.enable` missing on shown pages (strip
+showed URLs, never titles).
