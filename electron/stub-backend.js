@@ -96,6 +96,12 @@ const EXPLICIT = {
   start_session: (a) => {
     const args = a?.args ?? a ?? {};
     if (args.sessionId) terminal.registerTab(args.sessionId, args.cwd ?? "");
+    // Rust resolves the mode HERE, never in the frontend (repo invariant):
+    // project override wins, else the global default. agent.js's own default
+    // (write) must never decide it.
+    if (args.approvalMode == null || args.approvalMode === "") {
+      args.approvalMode = stores.approvalModeResolve(args.cwd ?? null);
+    }
     return agent.startSession(args);
   },
   send_command: (a) => agent.sendCommand(a?.sessionId, a?.json),

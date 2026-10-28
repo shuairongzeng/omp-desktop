@@ -456,6 +456,139 @@ test("approval: the_default_file_is_the_documented_one", (t) => {
   });
 });
 
+// ── approval_mode.rs: resolve (start_session's mode lookup) ─────────────────
+
+test("approval: resolve_without_overrides_is_the_default", (t) => {
+  scratch(t);
+
+  assert.equal(stores.approvalModeResolve(null), "write");
+  assert.equal(stores.approvalModeResolve(undefined), "write");
+  assert.equal(stores.approvalModeResolve(""), "write");
+  assert.equal(stores.approvalModeResolve("/no/such/project"), "write");
+  assert.equal(stores.approvalModeResolve("relative/dir"), "write");
+});
+
+test("approval: resolve_prefers_the_project_override_and_falls_back_to_the_default", (t) => {
+  const s = scratch(t);
+  const a = s.folder("a");
+  const b = s.folder("b");
+
+  stores.approvalModeSetDefault("always-ask");
+  stores.approvalModeSetProject(a, "yolo");
+
+  assert.equal(stores.approvalModeResolve(a), "yolo");
+  assert.equal(stores.approvalModeResolve(b), "always-ask");
+  assert.equal(stores.approvalModeResolve(null), "always-ask");
+  assert.equal(stores.approvalModeResolve(s.missing("nope")), "always-ask");
+});
+
+test("approval: resolve_matches_a_symlink_and_its_target", (t) => {
+  const s = scratch(t);
+  const real = s.folder("real");
+  const link = path.join(s.dir, "link");
+  fs.symlinkSync(real, link, "dir");
+
+  stores.approvalModeSetProject(link, "yolo");
+
+  assert.equal(stores.approvalModeResolve(real), "yolo");
+  assert.equal(stores.approvalModeResolve(link), "yolo");
+});
+
+test("approval: resolve_canonicalises_a_trailing_slash_for_a_live_folder", (t) => {
+  const s = scratch(t);
+  const project = s.folder("project");
+
+  stores.approvalModeSetProject(project, "yolo");
+
+  assert.equal(stores.approvalModeResolve(`${project}${path.sep}`), "yolo");
+  assert.equal(
+    stores.approvalModeResolve(`${project}${path.sep}${path.sep}`),
+    "yolo",
+  );
+});
+
+test("approval: resolve_does_not_canonicalise_a_missing_folder", (t) => {
+  // `project_key` keeps the raw path when canonicalisation fails, so a
+  // trailing slash on a folder that is gone is a different, unmatched key.
+  const s = scratch(t);
+  const project = s.missing("gone");
+
+  stores.approvalModeSetProject(project, "yolo");
+
+  assert.equal(stores.approvalModeResolve(project), "yolo");
+  assert.equal(
+    stores.approvalModeResolve(`${project}${path.sep}`),
+    "write",
+  );
+});
+
+test("approval: resolve_reads_the_load_once_cache_not_the_file_again", (t) => {
+  const s = scratch(t);
+  const project = s.folder("project");
+  stores.approvalModeSetProject(project, "yolo");
+
+  // Corrupt the file behind the loaded cache: the cached value still wins.
+  fs.writeFileSync(s.config("approval-mode.json"), "not json");
+  assert.equal(stores.approvalModeResolve(project), "yolo");
+
+  stores.resetCaches(); // a fresh `ApprovalModeStore::load`: defaults
+  assert.equal(stores.approvalModeResolve(project), "write");
+  assert.deepEqual(stores.approvalModeGet(), { default: "write", projects: {} });
+});
+
+test("approval: resolve_of_a_corrupt_store_is_the_default_and_never_throws", (t) => {
+  const s = scratch(t);
+  const file = s.config("approval-mode.json");
+  fs.writeFileSync(file, '{ "default": "auto", "projects": { "/x": "yolo" } }');
+
+  assert.equal(stores.approvalModeResolve(null), "write");
+  assert.equal(stores.approvalModeResolve(s.folder("anything")), "write");
+
+  // The user's file is left alone and a write still refuses.
+  assert.equal(
+    fs.readFileSync(file, "utf8"),
+    '{ "default": "auto", "projects": { "/x": "yolo" } }',
+  );
+  assert.throws(() => stores.approvalModeSetDefault("yolo"), /unreadable/);
+});
+
+test("approval: set_project_then_resolve_round_trips_through_the_file", (t) => {
+  const s = scratch(t);
+  const project = s.folder("project");
+  const key = fs.realpathSync(project);
+
+  stores.approvalModeSetDefault("always-ask");
+  stores.approvalModeSetProject(project, "yolo");
+  stores.resetCaches(); // resolve must read what landed on disk
+
+  assert.deepEqual(JSON.parse(fs.readFileSync(s.config("approval-mode.json"), "utf8")), {
+    version: 1,
+    default: "always-ask",
+    projects: { [key]: "yolo" },
+  });
+  assert.equal(stores.approvalModeResolve(project), "yolo");
+
+  stores.approvalModeSetProject(project, null);
+  stores.resetCaches();
+  assert.equal(stores.approvalModeResolve(project), "always-ask");
+});
+
+test("approval: resolve_flags_match_the_spawn_argv", (t) => {
+  const s = scratch(t);
+  const project = s.folder("project");
+  const cases = [
+    ["always-ask", "--approval-mode=always-ask"],
+    ["write", "--approval-mode=write"],
+    ["yolo", "--approval-mode=yolo"],
+  ];
+
+  for (const [mode, flag] of cases) {
+    stores.approvalModeSetDefault(mode);
+    stores.approvalModeSetProject(project, mode);
+    assert.equal(`--approval-mode=${stores.approvalModeResolve(project)}`, flag);
+  }
+});
+
 // ── profiles.rs ─────────────────────────────────────────────────────────────
 
 test("profiles: normalize_seeds_builtin_and_drops_junk", (t) => {

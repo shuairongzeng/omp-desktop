@@ -618,7 +618,7 @@ function approvalModeSetProject(projectRoot, mode) {
       `project folder must be an absolute path: ${JSON.stringify(String(projectRoot ?? ""))}`,
     );
   }
-  const key = projectKey(projectRoot);
+  const key = approvalProjectKey(projectRoot);
   return updateApproval(approvalFilePath(), (data) => {
     if (parsed === null) {
       if (!Object.prototype.hasOwnProperty.call(data.projects, key)) return false;
@@ -632,12 +632,38 @@ function approvalModeSetProject(projectRoot, mode) {
 }
 
 /** Canonical folder when it resolves, the raw path otherwise (gone folder). */
-function projectKey(projectRoot) {
+function approvalProjectKey(projectRoot) {
   try {
     return fs.realpathSync(projectRoot);
   } catch {
     return projectRoot;
   }
+}
+
+/**
+ * `ApprovalModeStore::resolve`: the mode a tab in `projectPath` spawns with —
+ * its override, else the stored default. `null`/`undefined`/`""` mean "no
+ * folder" and take the default. Any other path is canonicalised
+ * (`approvalProjectKey`: the raw path when canonicalisation fails, i.e. a
+ * folder that is gone) and matched *exactly* against the `projects` keys, so
+ * a trailing slash matches only when the raw key has one too (a live folder
+ * canonicalises it away). Reads the load-once cache; a corrupt file already
+ * read as defaults there, so this never throws on bad JSON.
+ */
+function approvalModeResolve(projectPath) {
+  if (projectPath === null || projectPath === undefined || projectPath === "") {
+    return approvalEntry(approvalFilePath()).file.default;
+  }
+  if (typeof projectPath !== "string") {
+    throw new Error(
+      `project folder must be a path: ${JSON.stringify(String(projectPath))}`,
+    );
+  }
+  const key = approvalProjectKey(projectPath);
+  const file = approvalEntry(approvalFilePath()).file;
+  return Object.prototype.hasOwnProperty.call(file.projects, key)
+    ? file.projects[key]
+    : file.default;
 }
 
 /** Drop every in-memory store cache (tests, and a config-dir switch). */
@@ -884,6 +910,8 @@ module.exports = {
   approvalModeGet,
   approvalModeSetDefault,
   approvalModeSetProject,
+  approvalModeResolve,
+  approvalProjectKey,
   profilesList,
   // Shared plumbing the dispatch layer and later slices need.
   configHome,
