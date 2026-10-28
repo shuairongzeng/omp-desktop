@@ -64,6 +64,14 @@ const PLAINTEXT_TYPES = new Set([
   'device_info',
   'ping',
   'pong',
+  // Rust's remote_send: only res/evt ride enc envelopes; the pairing and
+  // phone-admin frames go out plaintext (no phone session exists yet to
+  // seal for — wrapping them silently dropped pair_begin: zero frames).
+  'pair_begin',
+  'pair_grant',
+  'pair_deny',
+  'list_phones',
+  'revoke',
   'pair_hello',
   'pair_request',
   'pair_grant',
@@ -661,6 +669,9 @@ class RemoteConnector extends EventEmitter {
     if (!ph || !pkB64 || !macB64 || !conn) return null;
     const ms = this.phoneMs(ph);
     if (!ms) {
+      // A hs can beat the pair_done that stores its MS (the phone connects
+      // the moment the relay says paired): keep it for one retry.
+      this._pendingUnknownHs = frame;
       this.emit('warn', `remote e2e: hs from unknown phone ${ph}`);
       return null;
     }

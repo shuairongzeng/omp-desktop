@@ -108,3 +108,15 @@ equality in checkServerIdentity (regression test with a real openssl
 CA:FALSE leaf). `tools/deep/remote-relay.mjs` walks enable → device-id row
 → TOFU trust prompt → trust → online → disable against the live relay with
 a temporary registered device (revoked afterwards).
+
+## Phone chain against the port desktop (2026-10-28)
+
+`tools/deep/phone-port-e2e.mjs` walks the whole handset path against the
+production relay: Settings → Remote pair code → phone overlay submits it →
+the port desktop's pair_request dialog approves → the phone enters the port
+desktop's session view → a marker message round-trips through the port's
+omp (session jsonl on disk) and the reply streams back. 5/5 measured.
+Two parity gaps this round closed: the connector's boot-time start (Rust
+starts at setup) and the v2 pairing state machine (pair_request pk →
+grant pk → pair_done MS persistence; plus the ms-refresh + pending-hs
+retry for a hs that beats pair_done).

@@ -12,17 +12,24 @@ const crypto = require("node:crypto");
 const { EventEmitter } = require("node:events");
 const { RemoteConnector } = require("./remote-conn");
 const remoteFiles = require("./remote-files");
+const C = require("./remote-crypto");
 
 // Frame types the desktop webview treats as control bookkeeping rather
 // than phone commands (remote-agent.js listenTauri("remote://control")).
-const CONTROL_TYPES = new Set(["peer", "pair_request", "pair_done", "hello", "device_info"]);
 
 class RemoteManager extends EventEmitter {
   constructor() {
     super();
     this.connector = null;
+    this.pairings = new Map(); // pair_id -> { desk keypair, phone pk }
     this.settings = remoteFiles.remoteSettingsLoad();
     this.status = this.settings?.enabled ? "connecting" : "off";
+    // Rust starts the connector at setup when the store is enabled and
+    // ready (RemoteManager::start); without this a restarted app sits at
+    // "connecting" forever because only a configure() click ever connects.
+    if (this.settings?.enabled && this.settings?.server && this.settings?.device_token) {
+      this._restartConnector().catch(() => this._emitStatus());
+    }
   }
 
   /** Rust's RemoteStateView (remote/mod.rs::view), field for field: the
@@ -73,7 +80,51 @@ class RemoteManager extends EventEmitter {
     this.connector = conn;
     conn.on("status", () => this._emitStatus());
     conn.on("frame", (frame) => {
-      const name = CONTROL_TYPES.has(frame?.t) ? "remote://control" : "remote://phone";
+      // Rust's pairing state machine (mod.rs): `pair_request` carries the
+      // phone's X25519 pk; we mint our ephemeral and attach its pk to the
+      // grant; `pair_done` carries the phone token hash and lets us derive
+      // and persist the master secret. Without it the phone stores a token
+      // with no MS and every later connection is refused (re-pair loop).
+      if (frame?.t === "pair_request" && frame.pair_id && frame.pk) {
+        this.pairings.set(frame.pair_id, { desk: C.generateKeyPair(), phonePk: frame.pk });
+      } else if (frame?.t === "pair_done" && frame.pair_id && frame.ph) {
+        const record = this.pairings.get(frame.pair_id);
+        this.pairings.delete(frame.pair_id);
+        if (record) {
+          try {
+            const ms = C.masterSecret({
+              myPrivateKey: record.desk.privateKey,
+              peerPublicKey: record.phonePk,
+              phonePk: record.phonePk,
+              deskPk: record.desk.pk,
+            });
+            this.settings = remoteFiles.remoteSettingsSave({
+              phones: {
+                ...this.settings?.phones,
+                [frame.ph]: { ...(this.settings?.phones ?? {})[frame.ph], ms: C.b64Encode(ms) },
+              },
+            });
+          } catch (error) {
+            console.log(`[port] pairing ms derivation failed: ${error.message}`);
+          }
+        }
+        // The live connector's phone-secret map predates the pairing:
+        // refresh it, and answer a hs that arrived before the MS landed.
+        if (this.connector) {
+          this.connector.setPhoneSecrets(this.settings?.phones ?? {});
+          const pending = this.connector._pendingUnknownHs;
+          if (pending) {
+            this.connector._pendingUnknownHs = null;
+            const reply = this.connector.acceptHs(pending);
+            if (reply) this.connector._sendJson(reply);
+          }
+        }
+      }
+      // Rust routes a phone's `cmd` to remote://phone and EVERY other
+      // inbound control frame (pair_code, pair_request, phones, revoked,
+      // dropped, peer, hello…) to remote://control — a whitelist here
+      // silently dropped pair_code, so the QR modal never opened.
+      const name = frame?.t === "cmd" ? "remote://phone" : "remote://control";
       this.emit("event", name, frame);
     });
     conn.on("session", (info) => this.emit("event", "remote://control", { t: "session", ...info }));
@@ -86,6 +137,10 @@ class RemoteManager extends EventEmitter {
 
   send(frame) {
     if (!this.connector) return Promise.reject(new Error("remote is off"));
+    // Rust's remote_send attaches our pairing pk to the grant.
+    if (frame?.t === "pair_grant" && frame.pair_id && this.pairings.has(frame.pair_id)) {
+      frame = { ...frame, pk: this.pairings.get(frame.pair_id).desk.pkB64 };
+    }
     return this.connector.send(frame);
   }
 

@@ -321,8 +321,8 @@ function installApplicationMenu() {
 }
 
 app.whenReady().then(() => {
-  installApplicationMenu();
-  setupHotkeyTray();
+    installApplicationMenu();
+    setupHotkeyTray();
   ingestArgv(process.argv, process.cwd());
   createWindow();
   // No boot announce needed: live.js's _setupExternalOpens drains the

@@ -31,7 +31,9 @@ writeFileSync(join(dir, "remote.json"), JSON.stringify(seed, null, 2));
 const { RemoteManager } = require("../electron/backend/remote-manager.js");
 
 test("view() carries every RemoteStateView field the Settings page reads", () => {
-  const view = new RemoteManager().view();
+  const manager = new RemoteManager();
+  const view = manager.view();
+  manager.connector?.stop?.();
   for (const key of ["enabled", "server", "device_id", "status", "pinned_cert", "device_name"]) {
     assert.ok(key in view, `view() is missing ${key} (rows-remote.jsx reads it)`);
   }
@@ -93,6 +95,15 @@ nNudyPi46DzpmiOKAUt20oEZzPnW4soasCtB
   // No pin / unparsable pin: system roots, exactly like Rust's None.
   assert.deepEqual(tlsOptions(""), { rejectUnauthorized: true });
   assert.deepEqual(tlsOptions("-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----"), { rejectUnauthorized: true });
+});
+
+test("an enabled ready store connects at construction (Rust starts at setup)", () => {
+  writeFileSync(join(dir, "remote.json"), JSON.stringify({
+    enabled: true, server: "http://127.0.0.1:1/", device_id: "aa".repeat(32), device_token: "bb".repeat(32),
+  }));
+  const manager = new RemoteManager();
+  assert.ok(manager.connector, "a restarted app with an enabled ready store must boot its connector");
+  manager.connector.stop();
 });
 
 test("configure() enables into a full view (the Enable click's reply)", async () => {
