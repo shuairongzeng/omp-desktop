@@ -790,7 +790,7 @@ await check('omp_args_orders_profile_resume_cwd_mode_then_config_last', () => {
       '--mode',
       'rpc-ui',
       '--profile=work',
-      '--resume=sess-file.jsonl',
+    '--resume=sess-file.jsonl',
       '--cwd=/tmp/proj',
       '--approval-mode=always-ask',
       '--config=/tmp/overlay.yml',
@@ -1138,12 +1138,17 @@ await check('start_session_reports_arguments_and_writes_the_browser_overlay', as
   bridges.push(bridge);
   const events = watch(bridge, 'sess-argv');
   const relative = path.relative(process.cwd(), project);
+  // A resume path must exist on disk: omp hard-fails on a ghost resume
+  // (live.js persists a fresh session's planned sessionFile before omp
+  // writes the file), so the bridge drops it — see the next check.
+  const resumeFile = path.join(makeTempDir('argv-resume'), 'sess-file.jsonl');
+  fs.writeFileSync(resumeFile, '');
 
   await withEnv({ FAKE_OMP_MODE: 'frames', FAKE_OMP_ARGV_FILE: argvFile }, async () => {
     const mode = await bridge.startSession({
       sessionId: 'sess-argv',
       cwd: relative,
-      resume: 'sess-file.jsonl',
+      resume: resumeFile,
       profile: 'work',
       approvalMode: 'yolo',
       browserPort: 43210,
@@ -1157,12 +1162,31 @@ await check('start_session_reports_arguments_and_writes_the_browser_overlay', as
     '--mode',
     'rpc-ui',
     '--profile=work',
-    '--resume=sess-file.jsonl',
+    `--resume=${resumeFile}`,
     `--cwd=${path.resolve(project)}`,
     '--approval-mode=yolo',
     `--config=${overlayPath}`,
   ]);
   assert.equal(fs.readFileSync(overlayPath, 'utf8'), overlayContent(43210));
+});
+
+await check('a_resume_file_that_does_not_exist_is_dropped', async () => {
+  const bin = makeFakeBin();
+  const argvFile = path.join(makeTempDir('ghost-argv'), 'argv');
+  const bridge = new AgentBridge({ pathDirs: [bin] });
+  bridges.push(bridge);
+  const events = watch(bridge, 'sess-ghost');
+  await withEnv({ FAKE_OMP_MODE: 'frames', FAKE_OMP_ARGV_FILE: argvFile }, async () => {
+    await bridge.startSession({
+      sessionId: 'sess-ghost',
+      cwd: makeTempDir('ghost-proj'),
+      resume: '/definitely/not/a/session.jsonl',
+    });
+    await events.exited;
+  });
+  const argv = readLines(argvFile);
+  assert.ok(!argv.some((a) => a.startsWith('--resume=')), argv.join(' '));
+
 });
 
 await check('start_session_omits_profile_and_cwd_for_the_builtin_profile', async () => {

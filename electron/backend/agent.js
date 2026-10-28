@@ -1076,7 +1076,14 @@ class AgentBridge extends EventEmitter {
 
     const mode = parseApprovalMode(args.approvalMode ?? args.mode ?? 'write');
     const profile = isDefaultProfile(args.profile) ? null : String(args.profile);
-    const resume = args.resume == null || args.resume === '' ? null : String(args.resume);
+    let resume = args.resume == null || args.resume === '' ? null : String(args.resume);
+    // omp hard-fails on a resume file that does not exist, and live.js
+    // persists a fresh session's PLANNED sessionFile into open-tabs.json
+    // before omp ever writes the file (get_state reports it at spawn). A
+    // restart right after opening an empty tab (approval-mode change,
+    // profile switch) would therefore resume a ghost and die: drop the
+    // dead resume and start fresh instead.
+    if (resume !== null && !fs.existsSync(resume)) resume = null;
     const cwd =
       typeof args.cwd === 'string' && args.cwd !== '' ? resolveCwd(args.cwd) : null;
     let config = null;
