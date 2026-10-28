@@ -477,6 +477,21 @@ function recentsTouch(profile, projectPath) {
 }
 
 /**
+ * `recent_projects_remove`: drop every entry whose profile AND path match
+ * verbatim (Rust compares the stored canonical path against the raw
+ * argument — the frontend sends the row's canonical path from the list),
+ * keeping file order and the other profiles' entries.
+ */
+function recentsRemove(profile, projectPath) {
+  const key = recentsKey(profile);
+  const path = String(projectPath ?? '');
+  const file = readRecentFile();
+  file.entries = file.entries.filter((e) => !(e.profile === key && e.path === path));
+  writeAtomic(configPath('recent-projects.json'), pretty({ entries: file.entries }));
+  return entriesFor(file, key);
+}
+
+/**
  * The key recents are stored under: the built-in profile (`null`, `""`,
  * `"default"`) is `"default"`; an unlisted id is an error.
  */
@@ -907,6 +922,7 @@ module.exports = {
   openTabsSave,
   recentsList,
   recentsTouch,
+  recentsRemove,
   approvalModeGet,
   approvalModeSetDefault,
   approvalModeSetProject,

@@ -745,3 +745,17 @@ test("stores: a fresh config dir reads the documented empty defaults", (t) => {
     degraded: null,
   });
 });
+
+test("recents_remove drops only the matching profile and path", (t) => {
+  const s = scratch(t);
+  const a = fs.realpathSync(s.folder("a"));
+  const b = fs.realpathSync(s.folder("b"));
+  stores.recentsTouch("default", a);
+  stores.recentsTouch("default", b);
+  const left = stores.recentsRemove("default", a);
+  assert.deepEqual(left.map((e) => e.path), [b]);
+  const raw = JSON.parse(fs.readFileSync(s.config("recent-projects.json"), "utf8"));
+  assert.ok(!raw.entries.some((e) => e.profile === "default" && e.path === a));
+  // removing an absent path is a no-op that still returns the list
+  assert.deepEqual(stores.recentsRemove("default", a).map((e) => e.path), [b]);
+});

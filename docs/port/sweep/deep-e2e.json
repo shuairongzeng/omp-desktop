@@ -1,0 +1,169 @@
+[
+  {
+    "name": "tab-switch",
+    "ok": true,
+    "detail": "tabs session-1793158047030 ⇄ session-1793158067393; header \"📝 QUIZ: 给娃出题\" ⇄ \"deep-cfg-tabs-sidebar-proj\"; /status user row landed in deep-cfg-tabs-sidebar-proj's jsonl (-1→3805 bytes); seed jsonl 400291→400291"
+  },
+  {
+    "name": "tab-close",
+    "ok": true,
+    "detail": "tab session-1793158067393 closed via its × (aria-label \"close deep-cfg-tabs-sidebar-proj\"); open-tabs.json 2→1 entries; scoped pgrep 1→0"
+  },
+  {
+    "name": "reopen-closed",
+    "ok": true,
+    "detail": "Ctrl+Shift+T: tabs 1→2, conversation 2026-10-28T03-27-47-655Z_01a1808c-b5c7-77d6-ba06-07dad2978281.jsonl resumed (tab session-1793158075594)"
+  },
+  {
+    "name": "tab-rename",
+    "ok": true,
+    "detail": "double-click → typed \"deep-renamed-mvrk0qhx\" → open-tabs.json name = \"deep-renamed-mvrk0qhx\""
+  },
+  {
+    "name": "middle-click-close",
+    "ok": true,
+    "detail": "middle click closed tab session-1793158075594: tabs 2→1, scoped pgrep 1→0, conversation kept on disk (2026-10-28T03-27-47-655Z_01a1808c-b5c7-77d6-ba06-07dad2978281.jsonl, 3986→3986 bytes)"
+  },
+  {
+    "name": "sidebar-recent-remove",
+    "ok": true,
+    "detail": "\"remove from recent\" on /private/tmp/deep-cfg-tabs-sidebar-proj: recent-projects.json 2→1 entries, row gone"
+  },
+  {
+    "name": "project-menu-copy",
+    "ok": true,
+    "detail": "context menu → \"Copy project path\": pbpaste = /Users/jackey/GitHub/chuti"
+  },
+  {
+    "name": "project-menu-reveal",
+    "ok": true,
+    "detail": "Reveal in Finder on /Users/jackey/GitHub/chuti: front window \"/private/tmp/\" → /Users/jackey/GitHub/chuti/"
+  },
+  {
+    "name": "send-roundtrip",
+    "ok": true,
+    "detail": "deep-composer-send-1793158090549 in .user-text and in 2026-10-26T12-31-15-604Z_01a17831-8c94-7647-88ec-dec231e169a5.jsonl (bash approval granted: null)"
+  },
+  {
+    "name": "queue-while-streaming",
+    "ok": true,
+    "detail": ".queue-row kind=follow-up text=deep-composer-queue-1793158100054; delivered after idle (DOM + jsonl)"
+  },
+  {
+    "name": "abort",
+    "ok": true,
+    "detail": "streaming stopped 4ms after abort; follow-up deep-composer-afterabort-1793158106144 ran to idle"
+  },
+  {
+    "name": "plan-mode",
+    "ok": true,
+    "detail": "plan-on + .plan-strip appeared, then both cleared on the second click"
+  },
+  {
+    "name": "thinking-menu",
+    "ok": true,
+    "detail": "menu showed [\"off\",\"minimal\",\"low\",\"medium\",\"high\"] (parity with get_available_thinking_levels); off → minimal → off"
+  },
+  {
+    "name": "model-picker",
+    "ok": true,
+    "detail": "211 rows incl. current glm-5.3-prime; switched to cmaas-glm-5.3 and back"
+  },
+  {
+    "name": "at-mention",
+    "ok": true,
+    "detail": "30 rows ⊂ list_project_files(30); picked app.js → draft \"@app.js \""
+  },
+  {
+    "name": "slash-command-popup",
+    "ok": true,
+    "detail": "81 rows, all registered; /security (builtin from get_available_commands) + /plan (desktop) present"
+  },
+  {
+    "name": "terminal-write-kill",
+    "ok": true,
+    "detail": "marker TERM-DEEP-1793158128072 in xterm DOM; pty 83378 spawned and gone (0->0 zsh children); tab session-1793158127740 closed"
+  },
+  {
+    "name": "git-file-diff",
+    "ok": true,
+    "detail": "porcelain \"??\" → tree row \"deep-diff-probe.txtU\" (U) → git_browser_file {status:Untracked, kind:Text, adds:1}"
+  },
+  {
+    "name": "git-commit-browse",
+    "ok": true,
+    "detail": "clicked 90c99695; view subject matches git log -1 (%s); files pane \"90c9969 · 12 files\""
+  },
+  {
+    "name": "conversation-tree",
+    "ok": true,
+    "detail": "63 tree rows vs 63 host \"type\":\"message\",\"role\":\"user\" lines (±2); head \"63 prompts | cache lifetime unknown\""
+  },
+  {
+    "name": "history-search-restore",
+    "ok": true,
+    "detail": "Ctrl+H → 57 sessions, \"QUIZ\" → 1; clicking it focused the open tab (2 tabs unchanged, active \"chuti·📝 QUIZ: 给娃出题\")"
+  },
+  {
+    "name": "subagents-panel",
+    "ok": true,
+    "detail": "open manager → split layout, pane head \"subagents· 0/0 liveprogress\", 0 rows, 0 crash cards, 0 error-watch entries"
+  },
+  {
+    "name": "usage-stats",
+    "ok": true,
+    "detail": "requests card 3571 vs ctx.invoke usage_stats.overall.totalRequests 3571 (exact); cards [\"3,571\",\"$0.00\",\"12.62M in / 2.85M out\",\"66 t/s\"]"
+  },
+  {
+    "name": "browser-navigate",
+    "ok": true,
+    "detail": "tab \"Example Domain\" (url https://example.com/), canvas 1058x1284 with 14005 sampled painted pixels"
+  },
+  {
+    "name": "browser-page-tabs",
+    "ok": true,
+    "detail": "2 page tabs → 3 after new-tab → 2 after closing it"
+  },
+  {
+    "name": "browser-annotate",
+    "ok": true,
+    "detail": "annotate off → on → pick \"p:nth-of-type(1)\" → comment → new marker [\"1\"] → off"
+  },
+  {
+    "name": "browser-reopen",
+    "ok": true,
+    "detail": "close → open again: running page, 14005 sampled painted pixels, strip [\"about:blank\",\"Example Domain\",\"about:blank\"]"
+  },
+  {
+    "name": "settings-sections",
+    "ok": true,
+    "detail": "12 sections walked: Appearance1 12r/4g, Remote 2r/2g, Layout 4r/1g, Chat 4r/2g, Composer 3r/3g, Rail 6r/2g, Terminal 4r/2g, Browser 3r/2g, Agent 4r/3g, Session 7r/2g, Approvals 2r/2g, Shortcuts 38r/1g"
+  },
+  {
+    "name": "key-history",
+    "ok": true,
+    "detail": "Ctrl+H opened the modal (57 saved-session row(s) listed), Escape closed it"
+  },
+  {
+    "name": "key-sidebar",
+    "ok": true,
+    "detail": "Cmd+B: sidebar unmounted and remounted, tab-bar toggle aria-pressed false → true"
+  },
+  {
+    "name": "key-terminal",
+    "ok": true,
+    "detail": "Ctrl+backquote: xterm mounted (first output \"\"), second press hid the panel"
+  },
+  {
+    "name": "widgets-rail",
+    "ok": true,
+    "skipped": true,
+    "detail": "scheduler not ported (MERGE-DECISION gap 6)"
+  },
+  {
+    "name": "summon-hotkey-tray",
+    "ok": true,
+    "skipped": true,
+    "detail": "not ported"
+  }
+]

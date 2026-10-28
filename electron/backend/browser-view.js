@@ -777,8 +777,14 @@ class View extends EventEmitter {
       const value = Number(metadata[key]);
       return Number.isFinite(value) ? Math.round(value) : fallback;
     };
-    const cssW = cssNumber('deviceWidth', this.size.w);
-    const cssH = cssNumber('deviceHeight', this.size.h);
+    // The emulation pins the page viewport to exactly this.size, so the
+    // metadata can never legitimately exceed it — yet headless Chromium
+    // alternates device px (css*dpr) and window px here (measured
+    // 1058x1284 / 1280x657 for a 529x642 viewport), which would map panel
+    // clicks outside the page. Clamp to the requested emulation; the JPEG
+    // aspect still matches (device px is an exact multiple).
+    const cssW = Math.min(cssNumber('deviceWidth', this.size.w), this.size.w);
+    const cssH = Math.min(cssNumber('deviceHeight', this.size.h), this.size.h);
     const frame = Frame.create(data, cssW, cssH);
     const proportioned = frame.hasCssProportions();
     const restart = this._frameNeedsRestart(cssW, cssH, proportioned);
@@ -934,11 +940,59 @@ class View extends EventEmitter {
     this._holdTimer = null;
     this._restartTimer = null;
     this.emit('close');
-    this.client?.close?.();
+    // Rust closes the view's OWN BrokerClient, which detaches only that
+    // session; the port's client is the manager's shared pipe, so closing
+    // it would kill every other view. Detach this session instead.
+    const session = this.active?.sessionId;
+    if (session) this._notify('Target.detachFromTarget', { sessionId: session });
+  }
+}
+
+const MOUSE_TYPES = ['mousePressed', 'mouseReleased', 'mouseMoved'];
+const MOUSE_BUTTONS = ['none', 'left', 'middle', 'right', 'back', 'forward'];
+const KEY_TYPES = ['keyDown', 'keyUp', 'rawKeyDown', 'char'];
+
+/**
+ * The frontend's InputEvent -> CDP command, mirroring
+ * src-tauri/src/browser/view/input.rs `to_command` exactly (same allowed
+ * sets, same param names, same refusals).
+ */
+function inputEventToCommand(ev = {}) {
+  const oneOf = (what, value, allowed) => {
+    if (!allowed.includes(value)) throw new Error(`invalid ${what} ${JSON.stringify(value)}`);
+  };
+  switch (ev.kind) {
+    case 'mouse': {
+      oneOf('mouse type', ev.type, MOUSE_TYPES);
+      oneOf('mouse button', ev.button, MOUSE_BUTTONS);
+      return ['Input.dispatchMouseEvent', {
+        type: ev.type, x: ev.x, y: ev.y, button: ev.button,
+        buttons: ev.buttons, clickCount: ev.clickCount, modifiers: ev.modifiers,
+      }];
+    }
+    case 'wheel':
+      return ['Input.dispatchMouseEvent', {
+        type: 'mouseWheel', x: ev.x, y: ev.y,
+        deltaX: ev.deltaX, deltaY: ev.deltaY, modifiers: ev.modifiers,
+      }];
+    case 'key': {
+      oneOf('key type', ev.type, KEY_TYPES);
+      const params = {
+        type: ev.type, key: ev.key, code: ev.code, modifiers: ev.modifiers,
+        windowsVirtualKeyCode: ev.windowsVirtualKeyCode,
+      };
+      if (ev.text != null) params.text = ev.text;
+      return ['Input.dispatchKeyEvent', params];
+    }
+    case 'text':
+      return ['Input.insertText', { text: ev.text }];
+    default:
+      throw new Error(`invalid input event kind ${JSON.stringify(ev.kind)}`);
   }
 }
 
 module.exports = {
+  inputEventToCommand,
   View,
   FrameFlow,
   Frame,

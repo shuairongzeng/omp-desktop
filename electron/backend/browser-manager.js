@@ -25,7 +25,8 @@ const { EventEmitter } = require("node:events");
 const path = require("node:path");
 const proc = require("./browser-process");
 const { connect } = require("./browser-broker");
-const { View } = require("./browser-view");
+const viewMod = require("./browser-view");
+const { View } = viewMod;
 const annotateMod = require("./browser-annotate");
 const { PipeClient } = require("./browser-pipe-client");
 const { startProxy } = require("./browser-proxy");
@@ -92,11 +93,21 @@ class BrowserManager extends EventEmitter {
       view = new View({ client: this.pipe, sessionId });
       view.startFollowing();
       view.on("message", (m) => this.emit("channel", sessionId, m));
+      // Agent-follow: a page the agent opened becomes the shown page; the
+      // view only decides WHICH target, attaching its session is here.
+      view.on("show", async (targetId) => {
+        try {
+          const session = await this.pipe.sessionFor(targetId);
+          view.setActive(targetId, session);
+          await this.pipe.send("Page.enable", {}, { sessionId: session }).catch(() => {});
+        } catch { /* page gone between event and attach */ }
+      });
       this.views.set(sessionId, view);
     }
     // Rust's open_panel guarantees at least one page before the screencast
     // starts (a fresh Chromium has none); without it the panel reports
     // "no page open" forever.
+    if (channelId != null) this.channels.set(sessionId, channelId);
     if (view.pages().length === 0 || !view.active) {
       const target = await this.pipe.send("Target.createTarget", { url: "about:blank" });
       await view.discover();
@@ -104,8 +115,8 @@ class BrowserManager extends EventEmitter {
       // page active; the View throws "no page open" until setActive runs.
       const cdpSession = await this.pipe.sessionFor(target?.targetId);
       view.setActive(target?.targetId, cdpSession);
+      await this.pipe.send("Page.enable", {}, { sessionId: cdpSession }).catch(() => {});
     }
-    if (channelId != null) this.channels.set(sessionId, channelId);
     view.setSize(width, height, dpr ?? 1);
     await view.startScreencast(
       this.pipe,
@@ -161,12 +172,19 @@ class BrowserManager extends EventEmitter {
     const v = this.view(sessionId);
     if (!v.pages().some(p => p.targetId === targetId)) throw new Error("unknown tab");
     await v.call("Target.activateTarget", { targetId });
-    v.setActive(targetId, v.activeSession());
+    const session = await this.pipe.sessionFor(targetId);
+    v.setActive(targetId, session);
+    await this.pipe.send("Page.enable", {}, { sessionId: session }).catch(() => {});
     return null;
   }
 
   input(sessionId, event) {
-    return this.view(sessionId).input(event?.method ?? event, event?.params ?? {});
+    const v = this.view(sessionId);
+    if (event && typeof event.kind === 'string') {
+      const [method, params] = viewMod.inputEventToCommand(event);
+      return v.input(method, params);
+    }
+    return v.input(event?.method, event?.params ?? {});
   }
 
   frameAck(sessionId, seq) {
@@ -180,14 +198,26 @@ class BrowserManager extends EventEmitter {
     return null;
   }
 
-  async annotate(sessionId, on) {
-    const v = this.view(sessionId);
+  /** The tab's Annotate, installing on first use; its picks ride the
+   *  panel channel exactly like the Rust emit (use-browser.jsx consumes
+   *  `{type:"pick", value}`), and the view state carries `annotate` so the
+   *  next state message does not self-cancel the mode. */
+  async _ensureAnnotate(sessionId) {
     let ann = this.annotates.get(sessionId);
-    if (on && !ann) {
-      ann = await annotateMod.install(v.client, v.activeSession(), { view: v });
+    if (!ann) {
+      const v = this.view(sessionId);
+      ann = await annotateMod.install(this.pipe, v.active?.targetId, { view: v });
+      ann.on("pick", (value) => this.emit("channel", sessionId, { type: "pick", value }));
       this.annotates.set(sessionId, ann);
     }
+    return ann;
+  }
+
+  async annotate(sessionId, on) {
+    const v = this.view(sessionId);
+    const ann = on ? await this._ensureAnnotate(sessionId) : this.annotates.get(sessionId);
     if (ann) await ann.setOn(on === true);
+    v.updateState((state) => { state.annotate = on === true; });
     if (!on && ann) {
       this.annotates.delete(sessionId);
     }
@@ -195,12 +225,7 @@ class BrowserManager extends EventEmitter {
   }
 
   async capture(sessionId, rect) {
-    let ann = this.annotates.get(sessionId);
-    if (!ann) {
-      const v = this.view(sessionId);
-      ann = await annotateMod.install(v.client, v.activeSession(), { view: v });
-      this.annotates.set(sessionId, ann);
-    }
+    const ann = await this._ensureAnnotate(sessionId);
     return ann.capture(rect);
   }
 
@@ -231,7 +256,9 @@ class BrowserManager extends EventEmitter {
     this.views.delete(sessionId);
     this.channels.delete(sessionId);
     const ann = this.annotates.get(sessionId);
-    if (ann) await ann.close().catch(() => {});
+    if (ann) {
+      try { ann.close(); } catch { /* overlay already gone */ }
+    }
     this.annotates.delete(sessionId);
     return null;
   }

@@ -54,6 +54,7 @@ const EXPLICIT = {
   set_close_guard: () => null,
   recent_projects_list: (a) => stores.recentsList(a?.profile ?? ""),
   recent_projects_touch: (a) => stores.recentsTouch(a?.profile ?? "", a?.path),
+  recent_projects_remove: (a) => stores.recentsRemove(a?.profile, a?.path),
   close_all_tabs: () => null,
   // The riskiest startup shape: a non-null reply without BOTH arrays throws
   // inside _restoreOpenTabs and aborts the whole restore chain.
@@ -154,7 +155,7 @@ const EXPLICIT = {
   browser_tab_new: (a) => browser.tabNew(a?.sessionId),
   browser_tab_close: (a) => browser.tabClose(a?.sessionId, a?.targetId),
   browser_tab_activate: (a) => browser.tabActivate(a?.sessionId, a?.targetId),
-  browser_input: (a) => browser.input(a?.sessionId, a),
+  browser_input: (a) => browser.input(a?.sessionId, a?.event),
   browser_frame_ack: (a) => browser.frameAck(a?.sessionId, a?.seq),
   browser_annotate: (a) => browser.annotate(a?.sessionId, a?.on === true),
   browser_capture: (a) => browser.capture(a?.sessionId, a?.rect),
