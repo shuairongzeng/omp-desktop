@@ -13,7 +13,7 @@
    `onmessage` setter registered via channelHandler. NOTE: a sandboxed
    preload has no Buffer, so base64 frames decode with atob. */
 
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 let nextChannelId = 1;
 const channelHandlers = new Map(); // id -> renderer handler proxy
@@ -45,6 +45,43 @@ contextBridge.exposeInMainWorld("__OMP_PRIMS__", {
   channelHandler: (id, fn) => {
     if (fn == null) channelHandlers.delete(id);
     else channelHandlers.set(id, fn);
+  },
+  // Tauri's native drag-drop event, reproduced from the DOM: the sandboxed
+  // preload shares the page's document, and webUtils resolves a dropped
+  // File to its absolute path (the renderer cannot).
+  dragDrop: (handler) => {
+    const dpr = () => window.devicePixelRatio || 1;
+    const pathsOf = (e) => {
+      const files = e.dataTransfer?.files;
+      if (!files || !files.length) return [];
+      const out = [];
+      for (const f of files) {
+        try { out.push(webUtils.getPathForFile(f)); } catch { /* not a file */ }
+      }
+      return out;
+    };
+    const payload = (type, e) => ({
+      type,
+      paths: pathsOf(e),
+      position: { x: Math.round(e.clientX * dpr()), y: Math.round(e.clientY * dpr()) },
+    });
+    // preventDefault keeps Electron from navigating the app to a dropped
+    // file: like Tauri's dragDropEnabled, the app owns every drop.
+    const over = (e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); handler(payload("over", e)); } };
+    const drop = (e) => { if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); handler(payload("drop", e)); } };
+    const leave = () => handler({ type: "leave", paths: [], position: { x: 0, y: 0 } });
+    // Capture phase: Chromium's native drag events do not bubble to
+    // window-level bubble listeners (measured: a CDP drag fired a capture
+    // listener and not a bubble one), so the composer would never see a
+    // real drop.
+    window.addEventListener("dragover", over, true);
+    window.addEventListener("drop", drop, true);
+    window.addEventListener("dragleave", leave, true);
+    return Promise.resolve(() => {
+      window.removeEventListener("dragover", over, true);
+      window.removeEventListener("drop", drop, true);
+      window.removeEventListener("dragleave", leave, true);
+    });
   },
   listen: (name, handler) => {
     if (!listeners.has(name)) listeners.set(name, new Set());

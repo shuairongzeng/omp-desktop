@@ -12,11 +12,50 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("node:path");
 const stub = require("./stub-backend");
-const { globalShortcut, Tray, Menu, nativeImage } = require("electron");
+const { globalShortcut, Tray, Menu, nativeImage, shell, screen } = require("electron");
+const os = require("node:os");
 const fs = require("node:fs");
 const hotkey = require("./backend/hotkey");
 
 const T0 = Date.now();
+
+// ── window bounds memory (the Tauri app restores its last geometry) ───────
+const boundsFile = () =>
+  path.join(process.env.OMP_PORT_CONFIG_DIR || path.join(os.homedir(), ".omp-port"), "window-bounds.json");
+
+function restoreBounds(win) {
+  try {
+    const b = JSON.parse(fs.readFileSync(boundsFile(), "utf8"));
+    if (!Number.isFinite(b.width) || b.width < 400 || !Number.isFinite(b.height) || b.height < 300) return;
+    const onScreen = screen.getAllDisplays().some((d) => {
+      const { x, y, width, height } = d.workArea;
+      return b.x + b.width > x && b.x < x + width && b.y + b.height > y && b.y < y + height;
+    });
+    if (!onScreen) return;
+    win.setBounds({ x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) });
+    if (b.maximized) win.maximize();
+  } catch { /* first run or a torn file: the conf geometry stands */ }
+}
+
+function saveBounds(win) {
+  try {
+    const dir = path.dirname(boundsFile());
+    fs.mkdirSync(dir, { recursive: true });
+    const b = win.getBounds();
+    fs.writeFileSync(boundsFile(), JSON.stringify({ ...b, maximized: win.isMaximized() }));
+  } catch (error) {
+    console.log(`[port] window bounds not saved: ${error.message}`);
+  }
+}
+
+function debounce(fn, ms) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+    timer.unref?.();
+  };
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -37,6 +76,28 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  // Tauri's navigation_guard.rs: the webview must never navigate away from
+  // the app (a link in a chat message would replace the whole UI). External
+  // URLs go to the OS browser instead.
+  win.webContents.on("will-navigate", (event, url) => {
+    const appUrl = win.webContents.getURL();
+    if (url.startsWith(appUrl) || url.startsWith("file://")) return;
+    event.preventDefault();
+    console.log(`[port] navigation guarded: ${url.slice(0, 80)}`);
+    shell.openExternal(url).catch(() => {});
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (!url.startsWith("file://")) shell.openExternal(url).catch(() => {});
+    return { action: "deny" };
+  });
+
+  restoreBounds(win);
+  const save = debounce(() => saveBounds(win), 400);
+  win.on("moved", save);
+  win.on("resized", save);
+  win.on("maximize", save);
+  win.on("unmaximize", save);
+
   win.webContents.once("did-finish-load", () => {
     console.log(`[port] first load at +${Date.now() - T0}ms`);
     // Tauri's startDragging() has no Electron equivalent; the idiomatic
@@ -227,7 +288,40 @@ app.on("open-file", (_e, file) => {
     (m) => console.error(m))) announceOpenProjects();
 });
 
+// macOS routes Cmd+C/V/X/A through the application menu's Edit role: with
+// no menu at all (this app's frameless shell) every clipboard chord is
+// dead. The roles bring the standard accelerators without a visible bar.
+function installApplicationMenu() {
+  const template = [
+    { role: "appMenu" },
+    {
+      label: "File",
+      submenu: [{ role: "close" }],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" }, { role: "redo" }, { type: "separator" },
+        { role: "cut" }, { role: "copy" }, { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" }, { role: "forceReload" },
+        { role: "toggleDevTools" }, { type: "separator" },
+        { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" },
+        { type: "separator" }, { role: "togglefullscreen" },
+      ],
+    },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(() => {
+  installApplicationMenu();
   setupHotkeyTray();
   ingestArgv(process.argv, process.cwd());
   createWindow();

@@ -64,7 +64,7 @@ shared harness `tools/deep/ctx.mjs`) SEQUENTIALLY against one instance.
 Every check proves its feature by an external consequence — open-tabs.json
 / recent-projects.json / session jsonl on disk, scoped `pgrep` of omp and
 pty children, `pbpaste`, Finder's front-window target — or a DOM change a
-no-op could not produce. Latest run: **39/39 pass, 0 skipped, 0 failed** — the widgets
+no-op could not produce. Latest run: **43/43 pass, 0 skipped, 0 failed** — the widgets
 rail and the summon hotkey/tray were ported in full (bb735d3);
 results + screenshots in `docs/port/sweep/deep-e2e.json` and
 `/tmp/deep-shots-final2/`.
@@ -77,3 +77,21 @@ key ever reached the page), annotate picks never forwarded to the panel,
 run), headless screencast metadata alternating device/window px (clicks
 mapped outside the page), and `Page.enable` missing on shown pages (strip
 showed URLs, never titles).
+
+## Shell comfort (2026-10-28, measured)
+
+- `clipboard-chords`: the application menu's Edit role carries Cmd+C/V/X/A
+  (macOS accelerators live in the menu; without one every chord is dead).
+  Evidence: pbcopy seed + a real Cmd+V keystroke lands in the composer.
+- `navigation-guard`: `will-navigate` refuses every non-app URL and hands it
+  to `shell.openExternal` (Tauri's navigation_guard.rs parity);
+  `setWindowOpenHandler` denies new windows the same way.
+- `drop-pipeline`: the preload's capture-phase DOM listeners reproduce
+  Tauri's `onDragDropEvent` payload (`{type, paths, position}` in physical
+  pixels, paths via `webUtils.getPathForFile`) and preventDefault keeps a
+  drop from navigating the app. MANUAL ROW: an OS file drop (webUtils
+  resolving a real File) is not synthesizable — Chromium's CDP drags carry
+  no Files type and an empty FileList; drag an image into the composer by
+  hand to verify the attach chip.
+- `window-bounds`: `window-bounds.json` in the config dir persists
+  geometry + maximized across launches (cross-display validated on read).

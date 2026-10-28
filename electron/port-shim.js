@@ -80,7 +80,10 @@
     },
     webview: {
       getCurrentWebview: () => ({
-        onDragDropEvent: () => Promise.resolve(() => {}),
+        // The preload's DOM listeners carry the real paths; Tauri's payload
+        // shape is { type, paths, position } in physical pixels.
+        onDragDropEvent: (handler) =>
+          P.dragDrop((payload) => handler({ payload })),
         setZoom: () => Promise.resolve(),
       }),
     },
