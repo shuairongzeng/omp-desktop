@@ -8,6 +8,14 @@
    Windows user reads the reason instead of a dead panel. Windows support
    itself is deferred to a Windows-side round (user decision 2026-10-27). */
 
+// Own config dir: the chain runs without OMP_PORT_CONFIG_DIR, where the
+// real browser.json would make the unconfigured launch skip discovery and
+// never reach the "no Chromium found" boundary.
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+process.env.OMP_PORT_CONFIG_DIR = mkdtempSync(join(tmpdir(), "port-platform-"));
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
