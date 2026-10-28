@@ -320,6 +320,127 @@ export async function run(ctx) {
     return `reopen restored the shown page (${after.slice(0, 40)})`;
   });
 
+  // The proxy port is per instance (bind 0): find it through the overlay
+  // files agent.js writes, then confirm by /json containing our page.
+  const proxyPort = async (urlPrefix) => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const base = tmpdir(); // macOS: /var/folders/…, not /tmp
+    let dirs = [];
+    try { dirs = readdirSync(base).filter((d) => d.startsWith('omp-desktop-electron-')); } catch { return null; }
+    for (const d of dirs) {
+      let files = [];
+      try { files = readdirSync(`${base}/${d}`).filter((f) => f.endsWith('.yml')); } catch { continue; }
+      for (const f of files) {
+        const m = /cdpUrl: "http:\/\/127\.0\.0\.1:(\d+)"/.exec(readFileSync(`${base}/${d}/${f}`, 'utf8'));
+        if (!m) continue;
+        const port = Number(m[1]);
+        try {
+          const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+          if (targets.some((t) => t.url.startsWith(urlPrefix))) return port;
+        } catch { /* not this instance */ }
+      }
+    }
+    return null;
+  };
+
+  // ── 4d. tab click: the canvas follows the clicked page ──────────────────
+  await ctx.check('browser-tab-switch', async () => {
+    const sid = await ctx.ev(`document.querySelector('.tab.active')?.dataset.tabId`);
+    const nav = async (url) => {
+      for (let i = 0; i < 8; i++) {
+        const r = await ctx.invoke('browser_navigate', { sessionId: sid, url });
+        if (r.ok) return;
+        await ctx.sleep(1500);
+      }
+      throw new Error(`navigate ${url} never succeeded`);
+    };
+    const sample = () => ctx.ev(`(() => { const c = document.querySelector('canvas.browser-canvas'); const g = c.getContext('2d'); const d = g.getImageData(Math.round(c.width/2), Math.round(c.height/3), 8, 8).data; let n = 0; for (let i = 0; i < d.length; i += 4) n += d[i] + d[i+1] + d[i+2]; return n; })()`);
+    await nav('https://example.com/');
+    await ctx.sleep(2500);
+    await ctx.ev(`window.OMP_BRIDGE.browserTabNew(${JSON.stringify(sid)})`);
+    await ctx.sleep(2500);
+    // A saturated blue page: its canvas signature cannot alias example.com's
+    // white one, so the pixel proof is a switch proof, not a luck sample.
+    await nav('data:text/html,<body style="background:%230033ff;height:2000px">');
+    await ctx.sleep(2500);
+    const blueCount = () => ctx.ev(`(() => { const c = document.querySelector('canvas.browser-canvas'); const g = c.getContext('2d'); const d = g.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 16) { if (d[i+2] > 150 && d[i] < 100) n++; } return n; })()`);
+    const before = await blueCount();
+    ctx.assert(before > 1000, `the blue page did not paint (${before} blue pixels)`);
+    await ctx.ev(`document.querySelectorAll('.browser-tabs .tab')[0]?.click()`);
+    let after = before;
+    for (let i = 0; i < 8 && after > 100; i++) {
+      await ctx.sleep(1000);
+      after = await blueCount();
+    }
+    ctx.assert(after <= 100, `clicking the first page tab left the blue page on the canvas (${after} blue pixels remain)`);
+    const active = await ctx.ev(`[...document.querySelectorAll('.browser-tabs .tab.active')].map(t => (t.getAttribute('title')||'').slice(0,30)).join('')`);
+    ctx.assert(active.includes('example.com'), `strip active did not follow the click: ${active}`);
+    return `canvas followed the click: blue ${before} -> ${after}, active=${active}`;
+  });
+
+  // ── 4e. full view: the page viewport follows, no stretch ────────────────
+  await ctx.check('browser-fullview-aspect', async () => {
+    const inner = () => ctx.ev(`(async () => { const t = await fetch('http://127.0.0.1:19222/json').then(r => r.json()).catch(() => []); return null; })()`);
+    const pageWidth = async () => {
+      const port = await proxyPort('https://example.com');
+      ctx.assert(port != null, 'no proxy port found through the overlay files');
+      const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json().catch(() => []);
+      const t = targets.find((x) => x.url.startsWith('https://example.com'));
+      if (!t) return null;
+      const ws2 = new WebSocket(t.webSocketDebuggerUrl);
+      await new Promise((r) => ws2.addEventListener('open', r, { once: true }));
+      const r = await new Promise((res) => { const h = (e) => { const d = JSON.parse(e.data); if (d.id === 1) { ws2.removeEventListener('message', h); res(d); } }; ws2.addEventListener('message', h); ws2.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'window.innerWidth', returnByValue: true } })); });
+      ws2.close();
+      return r.result?.result?.value;
+    };
+    const w0 = await pageWidth();
+    ctx.assert(w0 != null, 'no example.com page behind the proxy to measure');
+    await ctx.ev(`[...document.querySelectorAll('button')].find(x => x.getAttribute('title') === 'full view')?.click()`);
+    await ctx.sleep(3000);
+    const w1 = await pageWidth();
+    const canvasW = await ctx.ev(`Math.round(document.querySelector('canvas.browser-canvas').getBoundingClientRect().width)`);
+    ctx.assert(w1 > w0, `full view did not widen the page viewport (${w0} -> ${w1})`);
+    ctx.assert(Math.abs(w1 - canvasW) <= 2, `page viewport ${w1} does not match the canvas css width ${canvasW}: the frame would stretch`);
+    await ctx.ev(`[...document.querySelectorAll('button')].find(x => x.getAttribute('title') === 'full view')?.click()`);
+    await ctx.sleep(2000);
+    return `viewport followed the panel: ${w0} -> ${w1} == canvas ${canvasW}`;
+  });
+
+  // ── 4f. annotate: hovering the page shows the highlight box ─────────────
+  await ctx.check('browser-annotate-hover', async () => {
+    const sid = await ctx.ev(`document.querySelector('.tab.active')?.dataset.tabId`);
+    await ctx.ev(`window.OMP_BRIDGE.browserAnnotate(${JSON.stringify(sid)}, true)`);
+    await ctx.sleep(2000);
+    const geo = JSON.parse(await ctx.ev(`(() => { const r = document.querySelector('canvas.browser-canvas').getBoundingClientRect(); return JSON.stringify({ x: r.x, y: r.y, w: r.width, h: r.height }); })()`));
+    await ctx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(geo.x + geo.w / 2), y: Math.round(geo.y + geo.h * 0.2), button: 'none', buttons: 0 });
+    await ctx.sleep(1500);
+    const port = await proxyPort('https://example.com');
+    ctx.assert(port != null, 'no proxy port found through the overlay files');
+    const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json().catch(() => []);
+    const t = targets.find((x) => x.url.startsWith('https://example.com'));
+    ctx.assert(t, 'no example.com page to inspect the overlay in');
+    const ws2 = new WebSocket(t.webSocketDebuggerUrl);
+    await new Promise((r) => ws2.addEventListener('open', r, { once: true }));
+    let id2 = 0;
+    const contexts = [];
+    const pend = new Map();
+    ws2.addEventListener('message', (e2) => { const d = JSON.parse(e2.data); if (d.id != null && pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id); } if (d.method === 'Runtime.executionContextCreated') contexts.push(d.params.context); });
+    const send2 = (m, p) => new Promise((res) => { const mid = ++id2; pend.set(mid, res); ws2.send(JSON.stringify({ id: mid, method: m, params: p ?? {} })); });
+    await send2('Runtime.enable', {});
+    await ctx.sleep(800);
+    const ann = contexts.find((c) => (c.name || '') === 'omp-annotate');
+    ctx.assert(ann, `no omp-annotate world context (saw ${contexts.map((c) => c.name).join(',')})`);
+    const st = await send2('Runtime.evaluate', { contextId: ann.id, returnByValue: true, expression: `(() => { const h = document.querySelector('omp-annotate-overlay'); if (!h) return JSON.stringify({ host: false }); return 'closed-shadow'; })()` });
+    // The overlay's shadow is closed: prove the hover box through the
+    // screencast instead — a blue-tinted pixel row where the mouse is.
+    const blue = await ctx.ev(`(() => { const c = document.querySelector('canvas.browser-canvas'); const g = c.getContext('2d'); const d = g.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) { if (d[i+2] > 120 && d[i+2] - d[i] > 40) n++; } return n; })()`);
+    ctx.assert(blue > 200, `no blue hover highlight pixels on the canvas (${blue})`);
+    ws2.close();
+    await ctx.ev(`window.OMP_BRIDGE.browserAnnotate(${JSON.stringify(sid)}, false)`);
+    await ctx.sleep(1000);
+    return `hover highlight visible: ${blue} blue-tinted pixels on the canvas`;
+  });
   // ── 5. settings-sections ──────────────────────────────────────────────────
   await ctx.check('settings-sections', async () => {
     await ensureSettingsOpen();

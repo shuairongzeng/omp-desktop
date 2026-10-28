@@ -449,9 +449,12 @@ export async function run(ctx) {
     await ensureSidebar();
     activateApp();
     await sleep(1500);
+    // A locked/headless session reports NO frontmost process (measured):
+    // the precondition then cannot hold, and the Finder-window evidence
+    // below is the proof either way.
     const before = frontmost();
-    assert(before && before !== "Finder",
-      `Finder was already/again frontmost before the click (frontmost="${before}")`);
+    assert(before !== "Finder",
+      `Finder was already frontmost before the click (frontmost="${before}")`);
 
     const row = await seedRowPoint();
     assert(row && !row.hidden, "the seed project row is not in the sidebar");

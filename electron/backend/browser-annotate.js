@@ -236,8 +236,17 @@ class Annotate extends EventEmitter {
       worldName: WORLD,
       runImmediately: true,
     });
+    // Chromium creates the named world but (measured on this build) does
+    // not run the injected source in it; evaluate it ourselves into every
+    // context we know. The overlay's own guard makes repeats a no-op.
+    for (const contextId of [...this.contexts]) this._bootstrap(contextId);
     this.installed = true;
     return this;
+  }
+
+  /** Run the overlay source once in `contextId` (its guard deduplicates). */
+  _bootstrap(contextId) {
+    this._notify('Runtime.evaluate', { expression: OVERLAY, contextId }); // _notify swallows its own errors
   }
 
   _listen() {
@@ -263,6 +272,7 @@ class Annotate extends EventEmitter {
       const context = params?.context ?? {};
       if (context.name !== WORLD || !Number.isInteger(context.id)) return;
       if (!this.contexts.includes(context.id)) this.contexts.push(context.id);
+      this._bootstrap(context.id);
       // Notifications stay ordered: a release or toggle cannot be followed by a stale enable.
       if (this.enabled) this._notify('Runtime.evaluate', setParams(true, context.id));
       return;

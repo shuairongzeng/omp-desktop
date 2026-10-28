@@ -31,7 +31,6 @@ const annotateMod = require("./browser-annotate");
 const { PipeClient } = require("./browser-pipe-client");
 const { startProxy } = require("./browser-proxy");
 
-const PROXY_PORT = 19222; // placeholder port written into every omp overlay
 const MAX_URL_LEN = 4096; // Rust view::MAX_URL_LEN
 
 function checkedUrl(url) {
@@ -80,10 +79,26 @@ class BrowserManager extends EventEmitter {
     await this.pipe.send("Browser.getVersion", {}); // handshake, like waitForBrowser
     this.broker = await connect({ from: spawn.from, to: spawn.to });
     this.spawn = spawn;
-    if (!this.proxy) {
-      this.proxy = await startProxy({ broker: this.broker, port: PROXY_PORT });
-    }
     return spawn;
+  }
+
+  /** The placeholder port omp's overlay points at. Binding port 0 lets two
+   *  instances coexist (a hardcoded port made the second die EADDRINUSE);
+   *  the broker is deferred, so this may run before Chromium exists. */
+  async ensureProxy() {
+    if (!this.proxy) {
+      this.proxy = await startProxy({ broker: () => this._ensureBrokerForProxy(), port: 0 });
+    }
+    return this.proxy.port;
+  }
+
+  async _ensureBrokerForProxy() {
+    if (!this.broker) await this._ensureBrowser();
+    return this.broker;
+  }
+
+  get proxyPort() {
+    return this.proxy?.port ?? null;
   }
 
   /** `browser_open_panel`: allocate the tab's view, start the screencast. */
@@ -96,6 +111,18 @@ class BrowserManager extends EventEmitter {
       view.on("message", (m) => this.emit("channel", sessionId, m));
       // Agent-follow: a page the agent opened becomes the shown page; the
       // view only decides WHICH target, attaching its session is here.
+      // The shown page died under us (middle click, tab_close): hand over
+      // to the survivor like Rust's on_target_destroyed does.
+      view.on("lost-active", async (targetId) => {
+        try {
+          if (targetId == null) {
+            const created = await this.pipe.send("Target.createTarget", { url: "about:blank" });
+            targetId = created?.targetId;
+            await view.discover();
+          }
+          await this.tabActivate(sessionId, targetId);
+        } catch { /* the tab is closing anyway */ }
+      });
       view.on("show", async (targetId) => {
         try {
           const session = await this.pipe.sessionFor(targetId);
@@ -184,8 +211,11 @@ class BrowserManager extends EventEmitter {
   async tabNew(sessionId) {
     const v = this.view(sessionId);
     const target = await v.call("Target.createTarget", { url: "about:blank" });
-    await v.call("Target.activateTarget", { targetId: target?.targetId });
-    return null;
+    // Rust's tab_new = create_page + switch_to: the new page must actually
+    // be shown (screencast follows), or the strip marks it active while the
+    // canvas keeps the old page and the next navigate hits the wrong one.
+    await this.tabActivate(sessionId, target?.targetId);
+    return target?.targetId ?? null;
   }
 
   async tabClose(sessionId, targetId) {
@@ -201,11 +231,34 @@ class BrowserManager extends EventEmitter {
   async tabActivate(sessionId, targetId) {
     const v = this.view(sessionId);
     if (!v.pages().some(p => p.targetId === targetId)) throw new Error("unknown tab");
-    await v.call("Target.activateTarget", { targetId });
+    // Rust's switch_locked: the OLD page's screencast stops and its session
+    // detaches before the new one takes over, else frames keep arriving
+    // from the old generation and the canvas never follows the click.
+    const old = v.active && v.active.targetId !== targetId ? v.active.sessionId : null;
+    if (old) {
+      v.releaseOverlay?.(old);
+      this._notify(old, "Page.stopScreencast", {});
+      this._notify(null, "Target.detachFromTarget", { sessionId: old });
+    }
     const session = await this.pipe.sessionFor(targetId);
     v.setActive(targetId, session);
+    this._lastShown.set(sessionId, targetId);
+    this._notify(null, "Target.activateTarget", { targetId });
     await this.pipe.send("Page.enable", {}, { sessionId: session }).catch(() => {});
+    await this._retargetAnnotate(sessionId, targetId);
+    // apply_viewport parity: the new page gets the panel's size and a fresh
+    // screencast; without it the canvas keeps the old page's frames.
+    await v.startScreencast(
+      this.pipe,
+      (frame) => this.emit("channel", sessionId, { b64: frame.wire().toString("base64") }),
+      { width: v.size.w, height: v.size.h, dpr: v.size.dpr },
+    );
+    await v.syncAfterAttach();
     return null;
+  }
+
+  _notify(sessionId, method, params) {
+    this.pipe.send(method, params ?? {}, sessionId ? { sessionId } : undefined).catch(() => {});
   }
 
   input(sessionId, event) {
@@ -225,6 +278,11 @@ class BrowserManager extends EventEmitter {
   resize(sessionId, width, height, dpr) {
     const v = this.view(sessionId);
     v.setSize(width, height, dpr ?? 1);
+    // Rust's resize_shown_page: the page's viewport follows the panel, or
+    // the old-size JPEG stretches across the new canvas (full view).
+    if (v.active) {
+      v.applyViewport().catch(() => {});
+    }
     return null;
   }
 
@@ -232,7 +290,18 @@ class BrowserManager extends EventEmitter {
    *  panel channel exactly like the Rust emit (use-browser.jsx consumes
    *  `{type:"pick", value}`), and the view state carries `annotate` so the
    *  next state message does not self-cancel the mode. */
-  async _ensureAnnotate(sessionId) {
+  /** A switch moves the overlay to the new page (Rust releases the old
+   *  page's overlay on switch); only while annotate mode is on. */
+  async _retargetAnnotate(sessionId, targetId) {
+    const ann = this.annotates.get(sessionId);
+    if (!ann || !ann.enabled) return;
+    ann.close();
+    this.annotates.delete(sessionId);
+    const fresh = await this._ensureAnnotate(sessionId, targetId);
+    await fresh.setOn(true);
+  }
+
+  async _ensureAnnotate(sessionId, targetId = this.view(sessionId).active?.targetId) {
     let ann = this.annotates.get(sessionId);
     if (!ann) {
       const v = this.view(sessionId);
@@ -310,4 +379,4 @@ class BrowserManager extends EventEmitter {
   }
 }
 
-module.exports = { BrowserManager, PROXY_PORT, checkedUrl };
+module.exports = { BrowserManager, checkedUrl };

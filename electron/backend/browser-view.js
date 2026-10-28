@@ -584,8 +584,15 @@ class View extends EventEmitter {
       const targetId = params.targetId;
       if (typeof targetId !== 'string') return null;
       this.removePage(targetId);
-      // A closed page that was shown leaves the view with no page.
-      if (this.active && this.active.targetId === targetId) this.active = null;
+      // Rust's on_target_destroyed: a closed page that was shown hands the
+      // view to the last remaining page (or a fresh one), never to nothing.
+      if (this.active && this.active.targetId === targetId) {
+        this.active = null;
+        const rest = this.pages();
+        this._publishTabs();
+        this.emit('lost-active', rest.length ? rest[rest.length - 1].targetId : null);
+        return null;
+      }
       this._publishTabs();
       return null;
     }
@@ -688,6 +695,20 @@ class View extends EventEmitter {
       },
       { sessionId },
     );
+  }
+
+  /** Rust's `apply_viewport`: the shown page's viewport follows the panel
+   *  size and its screencast restarts (resize, full view, tab switch). */
+  async applyViewport() {
+    const sessionId = this.activeSession();
+    if (sessionId == null) return this.state;
+    await this.call(
+      'Emulation.setDeviceMetricsOverride',
+      { width: this.size.w, height: this.size.h, deviceScaleFactor: this.size.dpr, mobile: false },
+      { sessionId },
+    );
+    this._notify('Emulation.setFocusEmulationEnabled', { enabled: true }, { sessionId });
+    return this.restartScreencast(sessionId);
   }
 
   /** The panel painted or dropped frame `seq`: the next one may follow. */

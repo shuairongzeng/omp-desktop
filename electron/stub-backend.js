@@ -96,9 +96,14 @@ const EXPLICIT = {
   // ── M3 agent bridge (parity-tested; real-omp smoke green) ──────────────
   // The tab's shell slot is registered before omp spawns, exactly like
   // Tauri's start_session does (TerminalManager::register_tab).
-  start_session: (a) => {
+  start_session: async (a) => {
     const args = a?.args ?? a ?? {};
     if (args.sessionId) terminal.registerTab(args.sessionId, args.cwd ?? "");
+    // Rust hands every spawn the tab's placeholder proxy port so omp's
+    // browser tool reaches THIS instance's Chromium (allocate_if_available).
+    if (args.browserPort == null && args.cdpUrl == null && args.sessionId) {
+      args.browserPort = await browser.ensureProxy();
+    }
     // Rust resolves the mode HERE, never in the frontend (repo invariant):
     // project override wins, else the global default. agent.js's own default
     // (write) must never decide it.
