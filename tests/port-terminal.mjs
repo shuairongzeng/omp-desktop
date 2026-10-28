@@ -11,7 +11,7 @@
 
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
@@ -232,6 +232,17 @@ function ttyOf(pid) {
     if (Number.parseInt(pidText, 10) === pid) return tty;
   }
   return null;
+}
+
+/** The process group of `pid` as `ps` prints it (0 when it is gone). */
+function groupOf(pid) {
+  try {
+    const out = execFileSync('/bin/ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' });
+    const pgid = Number.parseInt(out.trim(), 10);
+    return Number.isInteger(pgid) ? pgid : 0;
+  } catch {
+    return 0;
+  }
 }
 
 // ── ring.rs ────────────────────────────────────────────────────────────────
@@ -991,4 +1002,46 @@ test('a failed spawn leaves the slot idle and reports the error', async () => {
   manager.write('fail', 'echo RE""COVERED\n');
   await waitUntil(20_000, () => out.text().includes('RECOVERED'));
   checks += 1;
+});
+
+test('a re-grouped job dies with its exited shell without any close', async () => {
+  // `a_background_job_dies_with_its_exited_shell_without_any_close` for a job
+  // that moved itself into its own process group (`sleep 1000 &` under job
+  // control): the natural exit hangs the pty up and the kernel drops the job's
+  // tty, so the scan alone cannot see it. The anchor (`ANCHOR_SCRIPT`) runs the
+  // sweep while it still leads the session, which is how Rust's `getsid`
+  // reaches the same job.
+  const { manager, out } = openWith(managerWith(PLAIN_SHELL), 'regrouped');
+  // A process of another group, with no tie to the terminal: the sweep must
+  // leave it alone.
+  const bystander = spawn('/bin/sleep', ['30'], { stdio: 'ignore' });
+  try {
+    manager.write('regrouped', 'echo SH=$$\n');
+    manager.write('regrouped', 'sleep 1000 & echo JOB=$!\n');
+    await waitUntil(
+      20_000,
+      () => out.numberAfter('SH=') !== null && out.numberAfter('JOB=') !== null,
+      'shell and job pids',
+    );
+    const shellPid = out.numberAfter('SH=');
+    const job = out.numberAfter('JOB=');
+    assert.equal(processAlive(job), true, 'background job did not start');
+    assert.equal(groupOf(job), job, `job ${job} is not its own group leader`);
+    assert.notEqual(groupOf(job), groupOf(shellPid), 'job stayed in the shell group');
+
+    manager.write('regrouped', 'exit\n');
+    await waitUntil(20_000, () => out.exits.length > 0, 'no exit event');
+    assert.deepEqual(out.exitCodes(), [0], 'the anchor did not pass the status through');
+
+    // Nobody closes or replaces the terminal: the exit alone ends the job.
+    await waitUntil(2_000, () => !processAlive(job), `job ${job} outlived its shell`);
+    assert.equal(processAlive(bystander.pid), true, `unrelated process ${bystander.pid} was killed`);
+    checks += 1;
+  } finally {
+    try {
+      bystander.kill('SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  }
 });

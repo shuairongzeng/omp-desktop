@@ -52,12 +52,18 @@ export async function run(ctx) {
 
   /** Pty shells (node-pty children of the app main) — never another instance's. */
   const shellPids = () => {
+    // The port's pty child is the ANCHOR (/bin/sh running the sweep script,
+    // terminal.js), with the real shell one level below it; on Windows the
+    // shell is the direct child. Count the anchor as "the shell": it is the
+    // process the app owns and the one that dies with the tab.
     const parent = mainPid();
     return ps()
       .filter((p) => p.ppid === parent)
       .filter((p) => {
-        const exe = p.command.trim().split(/\s+/)[0] ?? "";
-        return exe === "zsh" || exe.endsWith("/zsh");
+        const cmd = p.command.trim();
+        const exe = cmd.split(/\s+/)[0] ?? "";
+        if (exe === "zsh" || exe.endsWith("/zsh")) return true;
+        return exe === "/bin/sh" && cmd.includes("st=0");
       })
       .map((p) => p.pid);
   };

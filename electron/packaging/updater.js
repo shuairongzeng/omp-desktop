@@ -61,13 +61,21 @@
      with a clear error instead of being overwritten: `install()` requires
      `…/X.app/Contents/Resources/app/package.json`, the marker this port's
      `build-app.mjs` writes.
-   - The feed endpoint is the upstream one, whose artifacts are *Tauri* builds.
-     A real Electron release must publish its own `latest.json` (same schema)
-     pointing at its own `.app.tar.gz`; `check()` takes the feed URL as its
-     first argument so the caller decides. `DEFAULT_FEED` exists only so the
-     unwired module has a parity default.
+   - The feed endpoint is upstream by default (its artifacts are *Tauri*
+     builds). A real Electron release publishes its own `latest.json` (same
+     schema) pointing at its own `.app.tar.gz` or `.dmg`; `check()` takes the
+     feed URL as its first argument so the caller decides.
+   - Build-time key injection: `port:build` regenerates
+     `electron/backend/updater-keys.js` from `PORT_UPDATER_PUBKEY`. When that
+     module carries a key, the defaults below switch to the fork's own feed
+     (https://github.com/shuairongzeng/omp-desktop/releases/latest/download/
+     latest.json) and that key; without it the upstream Tauri feed and key stay
+     in effect. `resolveDefaults()` is the only place that decides, so tests
+     exercise both arms by passing `keys`/`env` instead of regenerating the
+     module.
 
-   Public surface: { check, verifySignature, compareVersions, install }. */
+   Public surface: { check, verifySignature, compareVersions, install,
+   resolveDefaults, generateMinisignKeypair, publicKeyForSecret, signMinisign }. */
 
 "use strict";
 
@@ -81,13 +89,65 @@ const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 
 /** Same feed the Tauri build ships with (`tauri.conf.json` `plugins.updater`). */
-const DEFAULT_FEED =
+const UPSTREAM_FEED =
   "https://github.com/apoc/omp-desktop/releases/latest/download/latest.json";
 
 /** Base64 of `minisign.pub` as committed in `src-tauri/tauri.conf.json`. */
-const DEFAULT_PUBLIC_KEY =
+const UPSTREAM_PUBLIC_KEY =
   "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUwRTg1QkEyNjE2NjVEREYK" +
   "UldUZlhXWmhvbHZvVUJzQkROakpTdHhvcWdQdVRoMnNZNDl3T3ZKeEZJenNzc1p4RzArekIrcnoK";
+
+/** The fork's own feed, used only when a port release key is embedded. */
+const FORK_FEED =
+  "https://github.com/shuairongzeng/omp-desktop/releases/latest/download/latest.json";
+
+/**
+ * Read the key module `port:build` regenerates. The checked-in placeholder is
+ * empty, so dev runs and the test suite keep the upstream identity. A missing
+ * or unreadable module is the same as no embedded key.
+ */
+function loadGeneratedKeys() {
+  try {
+    // eslint-disable-next-line global-require
+    const keys = require("../backend/updater-keys.js");
+    return keys && typeof keys === "object" ? keys : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decide which feed and signing key this build trusts.
+ *
+ * Precedence: the generated key module (a packaged app's identity) wins over
+ * `PORT_UPDATER_PUBKEY` (the same value during a build), which wins over the
+ * upstream key. A non-upstream key means the feed must be the fork's own;
+ * anything else would fetch upstream artifacts this key cannot verify.
+ *
+ * @param {{ keys?: { publicKey?: string, feed?: string }|null,
+ *           env?: Record<string, string|undefined> }} [options]
+ * @returns {{ feed: string, publicKey: string, custom: boolean }}
+ */
+function resolveDefaults(options = {}) {
+  const keys = options.keys === undefined ? loadGeneratedKeys() : options.keys;
+  const env = options.env || process.env;
+  const fromKeys = keys && typeof keys.publicKey === "string" ? keys.publicKey.trim() : "";
+  const fromEnv = typeof env.PORT_UPDATER_PUBKEY === "string" ? env.PORT_UPDATER_PUBKEY.trim() : "";
+  const publicKey = fromKeys || fromEnv || UPSTREAM_PUBLIC_KEY;
+  const custom = publicKey !== UPSTREAM_PUBLIC_KEY;
+  const keyFeed = keys && typeof keys.feed === "string" ? keys.feed.trim() : "";
+  return {
+    feed: keyFeed || (custom ? FORK_FEED : UPSTREAM_FEED),
+    publicKey,
+    custom,
+  };
+}
+
+const RESOLVED = resolveDefaults();
+/** Feed used when `check()` is called without one. */
+const DEFAULT_FEED = RESOLVED.feed;
+/** Key `install()` verifies against when the caller passes none. */
+const DEFAULT_PUBLIC_KEY = RESOLVED.publicKey;
 
 /** Upper bound for the feed request (mirrors `updater::CHECK_TIMEOUT`). */
 const CHECK_TIMEOUT_MS = 30_000;
@@ -321,6 +381,128 @@ function signedVersionOf(trustedComment) {
   return null;
 }
 
+// ── minisign signing (release tooling) ──────────────────────────────────────
+// The framing below is the exact inverse of decodeSignature: `scripts/
+// port-feed.mjs` signs `release/latest.json` artifacts with it, and
+// `tests/port-pack-mac.mjs` proves the round trip through verifySignature.
+// Nothing in the running app calls these; the private key never leaves
+// `~/.omp-port/release-signing/`.
+
+const MINISIGN_SECRET_COMMENT = "untrusted comment: OMP Desktop port secret key";
+const MINISIGN_SIGNATURE_COMMENT = "untrusted comment: signature from OMP Desktop port secret key";
+/** PKCS#8 DER prefix for a raw 32-byte Ed25519 seed (RFC 8410). */
+const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
+
+/**
+ * A fresh Ed25519 keypair in Minisign framing.
+ *
+ * The public half is the standard `minisign.pub` text (base64 it for the
+ * `PORT_UPDATER_PUBKEY` build variable). The secret half is this port's own
+ * container — `Ed` + key id + 32-byte seed, base64'd behind a comment line —
+ * because encrypted Minisign secret keys need a scrypt KDF that belongs in
+ * `minisign` itself, not in an update checker.
+ *
+ * @returns {{ keyId: Buffer, rawKey: Buffer, seed: Buffer,
+ *             publicKeyText: string, secretKeyText: string }}
+ */
+function generateMinisignKeypair({ keyId } = {}) {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const rawKey = Buffer.from(publicKey.export({ format: "jwk" }).x, "base64url");
+  const seed = Buffer.from(privateKey.export({ format: "jwk" }).d, "base64url");
+  if (rawKey.length !== 32 || seed.length !== 32) {
+    throw new Error("unexpected ed25519 key material from node:crypto");
+  }
+  const id = keyId ? Buffer.from(keyId) : crypto.randomBytes(8);
+  if (id.length !== 8) throw new Error("a minisign key id is 8 bytes");
+  const publicBlob = Buffer.concat([Buffer.from("Ed", "latin1"), id, rawKey]);
+  const secretBlob = Buffer.concat([Buffer.from("Ed", "latin1"), id, seed]);
+  const idHex = id.toString("hex").toUpperCase();
+  return {
+    keyId: id,
+    rawKey,
+    seed,
+    publicKeyText: `untrusted comment: minisign public key: ${idHex}\n${publicBlob.toString("base64")}\n`,
+    secretKeyText: `${MINISIGN_SECRET_COMMENT}\n${secretBlob.toString("base64")}\n`,
+  };
+}
+
+/** Parse a secret-key object or the port's secret-key file text. */
+function parseMinisignSecretKey(input) {
+  if (input && Buffer.isBuffer(input.seed) && Buffer.isBuffer(input.keyId)) return input;
+  const text = Buffer.isBuffer(input) ? input.toString("utf8") : String(input);
+  const line = text.split(/\r?\n/).find((entry) => entry.trim() && !entry.startsWith("untrusted comment:"));
+  if (!line) throw signatureError("ERRFORMAT", "secret key has no key line");
+  const raw = decodeBase64Strict(line, "secret key line");
+  if (raw.length !== 42) {
+    throw signatureError(
+      "ERRFORMAT",
+      `unsupported secret key: expected 42 bytes, got ${raw.length} ` +
+        "(encrypted minisign secret keys are not supported; generate a port key instead)",
+    );
+  }
+  if (!isKeyAlgorithm(raw.subarray(0, 2))) {
+    throw signatureError("ERRFORMAT", "unsupported secret key algorithm");
+  }
+  return { keyId: raw.subarray(2, 10), seed: raw.subarray(10, 42) };
+}
+
+/** The `minisign.pub` text that verifies signatures made with `secretKey`. */
+function publicKeyForSecret(secretKey) {
+  const key = parseMinisignSecretKey(secretKey);
+  const privateKey = crypto.createPrivateKey({
+    key: Buffer.concat([ED25519_PKCS8_PREFIX, key.seed]),
+    format: "der",
+    type: "pkcs8",
+  });
+  const rawKey = Buffer.from(crypto.createPublicKey(privateKey).export({ format: "jwk" }).x, "base64url");
+  const blob = Buffer.concat([Buffer.from("Ed", "latin1"), key.keyId, rawKey]);
+  return `untrusted comment: minisign public key: ${key.keyId.toString("hex").toUpperCase()}\n${blob.toString("base64")}\n`;
+}
+
+/**
+ * Sign `data` in Minisign form ("ED" prehashed by default, like
+ * `tauri signer sign`). Returns both the `.sig` file text and the base64 of it
+ * that a `latest.json` entry carries.
+ *
+ * @param {Buffer|Uint8Array|string} data
+ * @param {string|Buffer|{ keyId: Buffer, seed: Buffer }} secretKey
+ * @param {{ trustedComment?: string, file?: string, version?: string,
+ *           prehashed?: boolean }} [options]  `version` lands in the trusted
+ *        comment, which `verifySignature(..., { version })` binds against.
+ * @returns {{ text: string, feed: string, comment: string, algorithm: string }}
+ */
+function signMinisign(data, secretKey, options = {}) {
+  const key = parseMinisignSecretKey(secretKey);
+  const privateKey = crypto.createPrivateKey({
+    key: Buffer.concat([ED25519_PKCS8_PREFIX, key.seed]),
+    format: "der",
+    type: "pkcs8",
+  });
+  const prehashed = options.prehashed !== false;
+  const message = Buffer.from(data);
+  const signed = prehashed
+    ? crypto.createHash("blake2b512").update(message).digest()
+    : message;
+  const signature = crypto.sign(null, signed, privateKey);
+  const fields = [`timestamp:${Math.floor(Date.now() / 1000)}`];
+  if (options.file) fields.push(`file:${options.file}`);
+  if (options.version) fields.push(`version:${options.version}`);
+  const comment = options.trustedComment || fields.join("\t");
+  const line = Buffer.concat([
+    Buffer.from(prehashed ? "ED" : "Ed", "latin1"),
+    key.keyId,
+    signature,
+  ]).toString("base64");
+  const global = crypto.sign(null, Buffer.concat([signature, Buffer.from(comment, "utf8")]), privateKey);
+  const text = `${MINISIGN_SIGNATURE_COMMENT}\n${line}\ntrusted comment: ${comment}\n${global.toString("base64")}\n`;
+  return {
+    text,
+    feed: Buffer.from(text, "utf8").toString("base64"),
+    comment,
+    algorithm: prehashed ? "ED" : "Ed",
+  };
+}
+
 // ── check ───────────────────────────────────────────────────────────────────
 
 /**
@@ -330,9 +512,11 @@ function signedVersionOf(trustedComment) {
  * order. The artifact is not downloaded here (the plugin doesn't either); its
  * signature is verified by `install()` once the bytes are in hand.
  *
- * @param {string} [feedUrl]
+ * @param {string} [feedUrl]  overrides the resolved default feed; tests pass a
+ *        local URL here (or `options.feedUrl`) and a mock `fetchImpl`.
  * @param {{ currentVersion: string, publicKey?: string, platform?: string,
- *           target?: string, fetchImpl?: Function, timeoutMs?: number }} options
+ *           target?: string, feedUrl?: string, fetchImpl?: Function,
+ *           timeoutMs?: number }} options
  *        `platform` overrides the derived key (e.g. `"darwin-aarch64"`);
  *        `target` behaves like the plugin's `updater_target` (looked up
  *        verbatim). `fetchImpl` exists for tests; it defaults to `fetch`.
@@ -340,12 +524,13 @@ function signedVersionOf(trustedComment) {
  *   version: string, notes: string, date: string|null, url: string,
  *   signature: string, target: string }>}
  */
-async function check(feedUrl = DEFAULT_FEED, options = {}) {
+async function check(feedUrl, options = {}) {
   const currentVersion = options.currentVersion;
   if (!currentVersion) throw new Error("check() needs options.currentVersion");
   // Validate up front: a garbage local version would otherwise make every
   // comparison silently wrong.
   parseVersion(currentVersion);
+  if (feedUrl === undefined || feedUrl === null) feedUrl = options.feedUrl ?? DEFAULT_FEED;
   if (!feedUrl) throw new Error("check() needs a feed URL");
 
   const fetchImpl = options.fetchImpl || globalThis.fetch;
@@ -552,4 +737,18 @@ rm -rf ${shQuote(workDir)}
 `;
 }
 
-module.exports = { check, verifySignature, compareVersions, install, DEFAULT_FEED };
+module.exports = {
+  check,
+  verifySignature,
+  compareVersions,
+  install,
+  resolveDefaults,
+  generateMinisignKeypair,
+  publicKeyForSecret,
+  signMinisign,
+  DEFAULT_FEED,
+  DEFAULT_PUBLIC_KEY,
+  UPSTREAM_FEED,
+  UPSTREAM_PUBLIC_KEY,
+  FORK_FEED,
+};

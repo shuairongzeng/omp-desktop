@@ -53,20 +53,47 @@
  *   bounded LCS fallback, not gix's histogram algorithm. Counts and hunks
  *   agree on unambiguous edits; when several equally short edit scripts
  *   exist the placement of removals/additions may differ.
- * - Rename detection is exact-content (a rename whose destination was edited
- *   after `git mv` shows as add+delete). gix uses similarity detection.
- * - Global excludes (`core.excludesFile`) are not honoured by the status
- *   walk; `.gitignore` files and `.git/info/exclude` are.
- * - A blob bigger than MAX_SIDE_BYTES is inflated before the cap is applied
- *   (isomorphic-git has no header-size read); the work-tree side is stat'ed
- *   first, as in Rust.
- * - The status comparison trusts the index's stat data (that is what keeps it
- *   fast); an edit that keeps a file's size and leaves its timestamps equal to
- *   the index entry's is not noticed until the file is touched again. Git
- *   re-hashes such a "racily clean" entry, isomorphic-git does not.
+ * - Global excludes (`core.excludesFile`, or git's `$XDG_CONFIG_HOME/git/ignore`
+ *   default) are compiled by this module: isomorphic-git's own matcher reads
+ *   only `.gitignore` and `.git/info/exclude`. Anchoring, `!` re-inclusion and
+ *   directory-only rules follow git, but config `include.path` files are not
+ *   followed and cross-source precedence is not modelled — a `.gitignore`
+ *   negation cannot re-include a path the global file excludes.
+ * - Rename detection is exact-content, in status and in a commit: only a
+ *   rename that leaves the blob untouched is paired. A commit that renames
+ *   and edits in one step (or a `git mv` whose destination edit is also
+ *   staged) is therefore reported as two rows — `old` Deleted and `new`
+ *   Added — instead of one Renamed with a source baseline: the tree counts two
+ *   changes and `git_browser_commit_file` has no source to diff the new path
+ *   against. An unstaged edit after `git mv` still shows as Renamed in status
+ *   (the staged blob is identical), but the same content in a commit is
+ *   Add+Delete. gix's similarity detection keeps the single Renamed row.
+ *   Untouched renames (the common `git mv` + commit case) are detected exactly.
+ * - The log walk has no commit-graph early stop: `logView` reads every commit
+ *   object reachable from `HEAD` and the ref tips before it emits the first
+ *   row, so opening the log costs O(history) even though only MAX_COMMITS rows
+ *   are kept — on a 20,000-commit history the view reads ~20,000 commits to
+ *   paint 500 rows. The Rust walk seeds gix's topological walk with
+ *   commit-graph generation numbers, whose in-degree pass stops early; the
+ *   visible difference is first-paint latency on a deep history, not row
+ *   content.
+ * - A blob bigger than MAX_SIDE_BYTES is inflated before the cap is applied;
+ *   the work-tree side is stat'ed first, as in Rust. isomorphic-git exposes no
+ *   cheap object size: a loose object's size lives in its zlib stream (only
+ *   inflating reveals it), the pack index stores offsets rather than sizes, and
+ *   a packed entry's size needs the pack header or its delta chain decoded.
+ *   Refusing to read past the cap would therefore take a hand-rolled pack
+ *   parser here; the current path inflates once and drops the bytes, so the
+ *   cost is bounded by the size of the one file being opened.
+ * - The status comparison trusts the index's stat data except inside the racy
+ *   window: when a work-tree entry's size and mtime (whole seconds, the
+ *   granularity the index stores) both equal the index entry's, the file is
+ *   re-hashed instead of trusting the recorded oid. Outside that window the
+ *   stat cache answers unchanged files without hashing them, as in Rust.
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const git = require('isomorphic-git');
 
@@ -104,7 +131,8 @@ const RANK = { Untracked: 4, Added: 3, Deleted: 2, Renamed: 1, Modified: 0 };
 // ── repository discovery ────────────────────────────────────────────────────
 
 /**
- * The nearest repository containing `dir`: `{ workDir, gitdir }`.
+ * The nearest repository containing `dir`: work dir, git dir, common dir, a
+ * per-command object cache, `filemode` and the compiled `excludes` rules.
  *
  * Rust's `git_browser::open` (via `workspace::discover` + `spawn_gate`) also
  * strips the repository's own filter drivers; isomorphic-git runs no filters
@@ -126,7 +154,293 @@ async function openRepo(dir) {
   const commonDir = path.resolve(gitdir, readCommonDir(gitdir) ?? '.');
   // One object cache per command: isomorphic-git re-parses a pack index on
   // every uncached read, which turns a history walk into seconds.
-  return { workDir, gitdir, commonDir, cache: {} };
+  const repo = { workDir, gitdir, commonDir, cache: {} };
+  // Both reads are repository-wide, so they happen once per command: the
+  // exec-bit rule the status comparison applies, and the global excludes the
+  // walk prunes with (`core.excludesFile`, or git's XDG default).
+  const [filemode, excludesText] = await Promise.all([
+    readRepoConfig(repo, 'core.filemode'),
+    readExcludesText(repo),
+  ]);
+  repo.filemode = filemode !== false;
+  repo.excludes = compileExcludes(excludesText);
+  return repo;
+}
+
+/** One repository-config value; unset or unreadable reads as `undefined`. */
+async function readRepoConfig(repo, key) {
+  try {
+    return await git.getConfig({
+      fs,
+      dir: repo.workDir,
+      gitdir: repo.commonDir,
+      path: key,
+      cache: repo.cache,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The text of the excludes file git would consult (`core.excludesFile`), or
+ * `''` when there is none.
+ *
+ * The repository's own config wins. isomorphic-git reads only
+ * `<gitdir>/config`, so the global side is read here: `GIT_CONFIG_GLOBAL`,
+ * `$XDG_CONFIG_HOME/git/config`, then `~/.gitconfig` (later wins), and when
+ * none sets `core.excludesFile`, git's default `$XDG_CONFIG_HOME/git/ignore`
+ * (`~/.config/git/ignore`). Config includes (`include.path`) are not followed.
+ */
+async function readExcludesText(repo) {
+  const local = await readRepoConfig(repo, 'core.excludesFile');
+  let configured = typeof local === 'string' && local.trim() !== '' ? local.trim() : undefined;
+  if (configured === undefined) {
+    configured = globalConfigValue('core', 'excludesfile');
+  }
+  const file = configured ?? defaultIgnoreFile();
+  if (!file) return '';
+  try {
+    // A relative `core.excludesFile` resolves against the work tree (the
+    // directory `git status` is usually run from), not this process's cwd.
+    return fs.readFileSync(path.resolve(repo.workDir, expandHome(file)), 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/** `$XDG_CONFIG_HOME/git/ignore`, defaulting to `~/.config/git/ignore`. */
+function defaultIgnoreFile() {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  return xdg && xdg !== ''
+    ? path.join(xdg, 'git', 'ignore')
+    : path.join(os.homedir(), '.config', 'git', 'ignore');
+}
+
+/** `~/…` → the home directory, as git expands config path values. */
+function expandHome(file) {
+  if (file === '~') return os.homedir();
+  if (file.startsWith('~/') || file.startsWith('~\\')) {
+    return path.join(os.homedir(), file.slice(2));
+  }
+  return file;
+}
+
+/**
+ * One value from the user's global config, read without a subprocess.
+ *
+ * `GIT_CONFIG_GLOBAL` replaces the usual files when set. The parser handles
+ * the subset a `core` lookup needs: section headers, `key = value` lines,
+ * quoted values and trailing `#`/`;` comments.
+ */
+function globalConfigValue(section, key) {
+  const explicit = process.env.GIT_CONFIG_GLOBAL;
+  const files = explicit
+    ? [explicit]
+    : [
+        process.env.XDG_CONFIG_HOME
+          ? path.join(process.env.XDG_CONFIG_HOME, 'git', 'config')
+          : path.join(os.homedir(), '.config', 'git', 'config'),
+        path.join(os.homedir(), '.gitconfig'),
+      ];
+  let value;
+  for (const file of files) {
+    const found = configValueFromFile(file, section, key);
+    if (found !== undefined) value = found;
+  }
+  return value;
+}
+
+/** Last `key` in `[section]` of one config file, lowercased matching, or `undefined`. */
+function configValueFromFile(file, wantedSection, wantedKey) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+  let section = '';
+  let value;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === '' || line.startsWith('#') || line.startsWith(';')) continue;
+    const header = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"(?:[^"\\]|\\.)*")?\s*\]$/.exec(line);
+    if (header) {
+      section = header[1].toLowerCase();
+      continue;
+    }
+    if (section !== wantedSection) continue;
+    const entry = /^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$/.exec(line);
+    if (!entry || entry[1].toLowerCase() !== wantedKey) continue;
+    value = unquoteConfigValue(entry[2]);
+  }
+  return value;
+}
+
+/** A gitconfig value with its quotes and trailing comment removed. */
+function unquoteConfigValue(raw) {
+  if (raw === undefined) return 'true';
+  const text = raw.trim();
+  if (text.startsWith('"')) {
+    let out = '';
+    for (let i = 1; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '\\' && i + 1 < text.length) {
+        out += text[++i];
+      } else if (ch === '"') {
+        break;
+      } else {
+        out += ch;
+      }
+    }
+    return out;
+  }
+  const comment = text.search(/[#;]/);
+  return (comment < 0 ? text : text.slice(0, comment)).trim();
+}
+
+/**
+ * Compile a gitignore-format excludes file into ordered rules.
+ *
+ * The global excludes file uses the same syntax as `.gitignore`, rooted at the
+ * work tree: blank lines and `#` comments are skipped, `!` re-includes,
+ * a trailing `/` restricts a rule to directories, and a rule is anchored to
+ * the root only when it carries a `/` beyond the trailing one (a leading `/`
+ * anchors too). `*`, `?`, `[...]` and `**` are supported.
+ */
+function compileExcludes(text) {
+  const rules = [];
+  if (!text) return rules;
+  for (let line of text.split(/\r?\n/)) {
+    while (line.endsWith(' ') && !line.endsWith('\\ ')) line = line.slice(0, -1);
+    if (line === '' || line.startsWith('#')) continue;
+    let negate = false;
+    if (line.startsWith('!')) {
+      negate = true;
+      line = line.slice(1);
+    } else if (line.startsWith('\\!') || line.startsWith('\\#')) {
+      line = line.slice(1);
+    }
+    let dirOnly = false;
+    if (line.endsWith('/')) {
+      dirOnly = true;
+      line = line.slice(0, -1);
+    }
+    if (line === '') continue;
+    const anchored = line.startsWith('/') || line.includes('/');
+    if (line.startsWith('/')) line = line.slice(1);
+    if (line === '') continue;
+    rules.push({ negate, dirOnly, regex: globRegex(line, anchored) });
+  }
+  return rules;
+}
+
+/** A glob's regex, rooted at the work tree or matched against basenames. */
+function globRegex(pattern, anchored) {
+  const body = globSource(pattern);
+  return new RegExp(anchored ? `^${body}$` : `^(?:.*/)?${body}$`);
+}
+
+/** Translate one gitignore glob to a regex source (no anchors). */
+function globSource(pattern) {
+  let source = '';
+  let i = 0;
+  while (i < pattern.length) {
+    const ch = pattern[i];
+    if (ch === '*') {
+      if (pattern[i + 1] === '*') {
+        if (pattern[i + 2] === '/') {
+          source += '(?:.*/)?';
+          i += 3;
+        } else {
+          source += '.*';
+          i += 2;
+        }
+      } else {
+        source += '[^/]*';
+        i += 1;
+      }
+    } else if (ch === '?') {
+      source += '[^/]';
+      i += 1;
+    } else if (ch === '[') {
+      const parsed = globClass(pattern, i);
+      if (parsed === null) {
+        source += '\\[';
+        i += 1;
+      } else {
+        source += parsed.source;
+        i = parsed.next;
+      }
+    } else if (ch === '\\' && i + 1 < pattern.length) {
+      source += escapeRegexChar(pattern[i + 1]);
+      i += 2;
+    } else {
+      source += escapeRegexChar(ch);
+      i += 1;
+    }
+  }
+  return source;
+}
+
+/** A `[...]` class; `null` when the bracket never closes (a literal `[`). */
+function globClass(pattern, start) {
+  let i = start + 1;
+  let negate = false;
+  if (pattern[i] === '!' || pattern[i] === '^') {
+    negate = true;
+    i += 1;
+  }
+  let body = '';
+  let closed = false;
+  for (; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === ']' && body !== '') {
+      closed = true;
+      i += 1;
+      break;
+    }
+    if (ch === '\\' && i + 1 < pattern.length) {
+      body += `\\${pattern[++i]}`;
+    } else if (ch === '\\' || ch === ']' || ch === '^') {
+      body += `\\${ch}`;
+    } else {
+      body += ch;
+    }
+  }
+  if (!closed) return null;
+  return { source: negate ? `[^/${body}]` : `[${body}]`, next: i };
+}
+
+function escapeRegexChar(ch) {
+  return /[.*+?^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
+}
+
+/**
+ * Whether the global excludes rules ignore `relPath` — a file, or a directory
+ * when `isDir` says so (the walk prunes such a subtree). A rule matches a
+ * directory prefix or the path itself; the last matching rule for a prefix
+ * wins, and an ignored directory cannot be re-included below it (git's rule).
+ */
+function globallyExcluded(rules, relPath, isDir = false) {
+  if (rules.length === 0) return false;
+  const parts = relPath.split('/');
+  for (let depth = 1; depth <= parts.length; depth++) {
+    const prefix = parts.slice(0, depth).join('/');
+    const last = depth === parts.length;
+    const prefixIsDir = !last || isDir;
+    let ignored = false;
+    for (const rule of rules) {
+      if (rule.dirOnly && !prefixIsDir) continue;
+      if (rule.regex.test(prefix)) ignored = !rule.negate;
+    }
+    if (!last) {
+      if (ignored) return true; // an ignored ancestor ignores everything below
+      continue;
+    }
+    return ignored;
+  }
+  return false;
 }
 
 /** `<workDir>/.git`, following a `.git` file (worktree, submodule). */
@@ -345,6 +659,11 @@ function parseId(sha) {
   return sha.toLowerCase();
 }
 
+/**
+ * The blob's bytes. isomorphic-git exposes no object size before decoding it
+ * (see the header), so the MAX_SIDE_BYTES cap is applied to the inflated bytes
+ * by the caller; at most one over-sized blob is held at a time.
+ */
 async function readBlobBytes(repo, oid) {
   try {
     const { blob } = await git.readBlob({
@@ -989,6 +1308,7 @@ async function scanChanges(repo) {
     tracked,
     trackedDirs(tracked),
     new Set(gitlinks.keys()),
+    indexEntries,
   );
 
   const events = [];
@@ -1021,7 +1341,10 @@ async function scanChanges(repo) {
       events.push({ path: relPath, kind: StatusKind.Deleted, oid: head.oid, mode: head.mode });
       continue;
     }
-    const modeDiffers = stage.mode != null && work.mode != null && stage.mode !== work.mode;
+    // On a filesystem that cannot represent the executable bit (or with
+    // `core.filemode=false`), git ignores a mode-only difference; so does this.
+    const modeDiffers =
+      repo.filemode && stage.mode != null && work.mode != null && stage.mode !== work.mode;
     if (work.oid !== stage.oid || modeDiffers) {
       if (!modeDiffers && stage.oid && (await crlfOnlyChange(repo, relPath, stage.oid))) {
         continue; // line endings only: the filters gix would run agree
@@ -1105,7 +1428,14 @@ async function listIndexEntries(repo) {
       }
       if (type === TYPE_TREE) return undefined;
       try {
-        entries.set(relPath, { oid: await entry.oid(), mode: await entry.mode(), type });
+        entries.set(relPath, {
+          oid: await entry.oid(),
+          mode: await entry.mode(),
+          type,
+          // The index's recorded stat data: the racy window compares it with
+          // the work-tree entry's (mtime and size, whole seconds).
+          stat: await entry.stat(),
+        });
       } catch {
         // A broken index entry: ignored, as git would want it re-added.
       }
@@ -1127,10 +1457,12 @@ function trackedDirs(tracked) {
 
 /**
  * The work tree's files: path → `{ mode, oid }`, the oid only for tracked
- * paths (the index stat cache answers those without re-hashing). Ignored paths
- * are pruned and a submodule's directory is never descended into.
+ * paths (the index stat cache answers those without re-hashing, except inside
+ * the racy window). Ignored paths — `.gitignore`, `.git/info/exclude` and the
+ * global excludes file — are pruned, and a submodule's directory is never
+ * descended into.
  */
-async function listWorktree(repo, tracked, dirs, gitlinks) {
+async function listWorktree(repo, tracked, dirs, gitlinks, indexEntries) {
   const files = new Map();
   const { workDir, gitdir } = repo;
   await git.walk({
@@ -1150,6 +1482,7 @@ async function listWorktree(repo, tracked, dirs, gitlinks) {
       }
       if (type === TYPE_TREE) {
         if (dirs.has(relPath)) return undefined;
+        if (globallyExcluded(repo.excludes, relPath, true)) return null;
         const ignored = await git.isIgnored({
           fs,
           dir: workDir,
@@ -1160,13 +1493,15 @@ async function listWorktree(repo, tracked, dirs, gitlinks) {
       }
       if (type !== 'blob') return null; // socket, fifo: not a file git lists
       const isTracked = tracked.has(relPath);
-      const ignored =
-        !isTracked &&
-        (await git.isIgnored({ fs, dir: workDir, gitdir: repo.commonDir, filepath: relPath }));
-      if (ignored) return null;
+      if (!isTracked) {
+        if (globallyExcluded(repo.excludes, relPath)) return null;
+        if (await git.isIgnored({ fs, dir: workDir, gitdir: repo.commonDir, filepath: relPath })) {
+          return null;
+        }
+      }
       try {
         const mode = await entry.mode();
-        const oid = isTracked ? await entry.oid() : null;
+        const oid = isTracked ? await worktreeOid(repo, entry, relPath, indexEntries) : null;
         files.set(relPath, { mode, oid });
       } catch {
         return null; // vanished or unreadable: treated as absent
@@ -1175,6 +1510,27 @@ async function listWorktree(repo, tracked, dirs, gitlinks) {
     },
   });
   return files;
+}
+
+/**
+ * The blob oid of one tracked work-tree entry.
+ *
+ * The index's stat cache answers the usual case. Inside the racy window — the
+ * entry's size and whole-second mtime both equal the index's — the stat data
+ * cannot distinguish an edit made in the same second the index was written, so
+ * the content is hashed as git does.
+ */
+async function worktreeOid(repo, entry, relPath, indexEntries) {
+  const stage = indexEntries.get(relPath);
+  const stats = stage && stage.stat ? await entry.stat() : null;
+  const racy =
+    stats !== null &&
+    stage.stat.size === stats.size &&
+    stage.stat.mtimeSeconds === stats.mtimeSeconds;
+  if (!racy) return entry.oid();
+  const content = await entry.content();
+  if (content === undefined) return stage.oid;
+  return (await git.hashBlob({ object: content })).oid;
 }
 
 /** Whether a work-tree file differs from its staged blob only in line endings. */

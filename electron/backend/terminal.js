@@ -38,29 +38,34 @@
       session id — stays reserved while it signals the session. node-pty's
       native waiter reaps the shell (`waitpid`) before JS sees `exit`, so
       that reservation is impossible here. The Node equivalent used below:
-      - while the leader is alive: `process.kill(-sid, signal)` (the shell is
-        a session *and group* leader thanks to forkpty, so this is exactly
-        Rust's `kill(-sid, …)`), then `/bin/ps -A -o pid= -o sess=` scans,
-        killing every pid whose session is `sid`, up to `MAX_PASSES` times;
-      - at a natural exit the leader is already reaped, so only the
-        membership-validated per-pid passes run, and the leader's own pid is
-        never signalled; the session id is forgotten at once afterwards.
+      - while the leader is alive: `process.kill(-pgid, signal)` (the anchor
+        below is a session *and group* leader thanks to forkpty, so this is
+        exactly Rust's `kill(-sid, …)`), then `/bin/ps -A -o pid= -o sess=`
+        scans on Linux, killing every pid the scan attributes to the
+        terminal, up to `MAX_PASSES` times — always *before* the leader's
+        own group is signalled, because the tty the scan uses to recognise
+        the members is dropped by the kernel when the leader exits;
+      - at a natural exit the leader is already gone, so only the
+        membership-validated per-pid passes run, against the process group
+        recorded at spawn, and the leader's own pid is never signalled.
       Residual risk (documented, not eliminated): a pid reissued as a *new*
       session leader within the same millisecond would make its children
-      indistinguishable from ours. Rust's zombie hold exists to remove this
-      window; node-pty's early reap makes it unavoidable in JS.
-   2. **What a session look like.** macOS `ps` reports `sess` as the *audit*
-      session (0 for a pty child of an app launched from a daemon) and
-      `pgrep` has no `-s` here, so the Node scan finds a live terminal's
-      session by the leader's process *group* plus the pty's controlling
-      *tty* — enough to reach an interactive shell's background jobs, which
-      get their own group but keep the tty. Known gap, macOS only: once the
-      shell exits the pty hangs up and the kernel drops the tty association
-      (`ps` shows `??`), so a job that had put itself in its own process
-      group survives a *natural* exit (Rust kills it through `getsid`).
-      `closeTab`/`closeTabs`/`shutdownAll` are unaffected (the leader is
-      alive when the scan runs), and Linux uses the real session id either
-      way.
+      indistinguishable from ours, and a job that called `setsid` itself
+      leaves the session outright (Rust cannot reach it either).
+   2. **An anchor keeps the session — and so the tty — alive.** The pty
+      child is not the shell but `/bin/sh` running `ANCHOR_SCRIPT` with the
+      shell as its child (`shell.rs` spawns the shell directly because Rust
+      holds its zombie and asks the kernel for `getsid`; `ps` has no session
+      column on macOS, and a reaped leader takes the tty down with it: every
+      process still on the terminal then shows `??`). The anchor outlives
+      the shell by exactly the sweep, so the tty is still readable when the
+      leftover jobs are found — the same set Rust reaches through `getsid`,
+      which is how a job that moved itself into its own process group is
+      reached at a *natural* exit. `closeTab`/`closeTabs`/`shutdownAll`
+      hang the members up by pid for the same reason: SIGHUP to the leader's
+      group would end the anchor first and take the tty with it. Cost: one
+      idle `sh` per terminal, and a shell killed by a signal reports its
+      status through the anchor, which re-raises it so `code` stays null.
    3. **Backpressure.** Rust's bounded 64-chunk reader queue blocks the
       reader. Here the pty's read stream is paused (`pty.pause()`, a
       `tty.ReadStream` pause) while a full `MAX_EVENT` frame waits or while
@@ -555,12 +560,18 @@ function listSessionMembers(sid, tty) {
 }
 
 /**
- * SIGKILL every process of session `sid` (`kill::kill_sessions`): first the
- * leader's process group when the leader is still ours to signal, then every
- * listed member, repeating (up to `MAX_PASSES`) until a pass finds none that
- * was not signalled before — a job may fork between listing and signal.
+ * SIGKILL every process of session `sid` (`kill::kill_sessions`): the members
+ * the scan attributes to the terminal, repeating (up to `MAX_PASSES`) until a
+ * pass finds none that was not signalled before — a job may fork between
+ * listing and signal — then, when the leader is still ours to signal, the
+ * leader's process group.
  *
- * `leaderAlive: false` (a natural exit, the leader already reaped) skips the
+ * The members go first on purpose: the scan recognises them by the leader's
+ * group and by the controlling tty, and the kernel drops the tty the moment
+ * the leader dies, so a group signal sent first would hide everything the
+ * scan has not listed yet.
+ *
+ * `leaderAlive: false` (a natural exit, the leader already gone) skips the
  * group signal and never signals the leader's pid: it may belong to someone
  * else now. Returns how many pids were signalled.
  */
@@ -568,20 +579,9 @@ function killSession(sid, { leaderAlive = true, tty = null } = {}) {
   if (isWindows) return 0;
   if (!(sid > 1) || sid === process.pid) return 0;
   const killed = new Set();
-  if (leaderAlive) {
-    // SAFETY-analogue: `sid > 1` names a session we started, so `-sid` names
-    // only its process group; a failure (ESRCH, the group is empty) is not
-    // actionable.
-    try {
-      process.kill(-sid, 'SIGKILL');
-    } catch {
-      // The group is gone; the per-pid passes below still reach what is left.
-    }
-    killed.add(sid);
-  }
   for (let pass = 0; pass < MAX_PASSES; pass += 1) {
     const members = listSessionMembers(sid, tty).filter(
-      (pid) => pid !== process.pid && !killed.has(pid),
+      (pid) => pid !== process.pid && pid !== sid && !killed.has(pid),
     );
     if (members.length === 0) break;
     for (const pid of members) {
@@ -593,16 +593,47 @@ function killSession(sid, { leaderAlive = true, tty = null } = {}) {
     }
     for (const pid of members) killed.add(pid);
   }
+  if (leaderAlive) {
+    // SAFETY-analogue: `sid > 1` names a session we started, so `-sid` names
+    // only its process group; a failure (ESRCH, the group is empty) is not
+    // actionable.
+    try {
+      process.kill(-sid, 'SIGKILL');
+    } catch {
+      // The group is gone; the per-pid passes above reached what was left.
+    }
+    killed.add(sid);
+  }
   return killed.size;
 }
 
 /**
- * Hang the terminal up: SIGHUP the session leader's process group, as a
+ * Hang the terminal up: SIGHUP every process the scan puts on it, as a
  * closing terminal emulator does, so the shell can save its history and hang
  * up its jobs before the kill. Returns whether a signal went out.
+ *
+ * The pids come from the scan rather than from `kill(-sid, …)`: the leader is
+ * the anchor (`ANCHOR_SCRIPT`), and ending it first would drop the tty — and
+ * with it the only handle on the shell the signal is meant for. A foreground
+ * job of an interactive shell is in its own process group anyway, so the
+ * leader's group was never the whole set.
  */
-function hangUpSession(sid) {
+function hangUpSession(sid, tty = null) {
   if (!(sid > 1) || sid === process.pid) return false;
+  let signalled = false;
+  for (const pid of listSessionMembers(sid, tty)) {
+    if (pid === process.pid || pid === sid) continue;
+    try {
+      process.kill(pid, 'SIGHUP');
+      signalled = true;
+    } catch {
+      // Just exited; not actionable.
+    }
+  }
+  if (signalled) return true;
+  // Nothing listed (the scan failed, or the terminal is already empty): fall
+  // back to the leader's group, the pre-anchor behaviour. It ends the anchor —
+  // and with it the tty — but a hang-up is better than none.
   try {
     process.kill(-sid, 'SIGHUP');
   } catch {
@@ -625,6 +656,78 @@ function killWindowsTree(pid) {
   } catch {
     // Already gone.
   }
+}
+
+// ── the session anchor (pty.rs's direct child, Node's way) ─────────────────
+
+/** `$0` of the anchor: the name a shell error message would report for it. */
+const ANCHOR_NAME = 'omp-terminal';
+
+/**
+ * The pty's direct child on POSIX: a shell that runs the terminal's shell as
+ * its own child and sweeps what the shell left behind *before* exiting.
+ *
+ * Why not spawn the shell directly, as `Pty::spawn` does? The pty child is
+ * the session (and process group) leader; when it exits the kernel hangs the
+ * pty up and drops the terminal from the session members, after which `ps`
+ * shows `??` for their tty — the one handle macOS's `ps` gives on a session
+ * (there is no session column; Rust asks the kernel for `getsid` instead).
+ * An interactive shell's jobs move into their own process group and keep only
+ * the tty, so they became unreachable at a natural exit. This anchor
+ * outlives the shell by exactly the sweep below, so the tty is still there
+ * when the survivors are listed — the same set Rust reaches through
+ * `getsid`.
+ *
+ * `$@` is the shell and its arguments (`ANCHOR_NAME` is `$0`), the exit status
+ * passes through, and a status above 128 — how `sh` reports a child killed by
+ * signal `status - 128` — is re-raised on this process so node-pty still
+ * reports a signal death (`code` null) instead of an exit code.
+ */
+const ANCHOR_SCRIPT = `st=0
+"$@"
+st=$?
+tt=$(tty 2>/dev/null)
+case $tt in
+  /dev/*) tt=\${tt##*/} ;;
+  *) tt= ;;
+esac
+if [ -n "$tt" ]; then
+  for p in $(ps -A -o pid= -o tty= | awk -v t="$tt" -v me="$$" '$2 == t && $1 != me { print $1 }'); do
+    kill -9 "$p" 2>/dev/null
+  done
+fi
+if [ "$st" -ge 129 ] && [ "$st" -le 192 ]; then
+  kill -$((st - 128)) $$ 2>/dev/null
+fi
+exit $st`;
+
+/** What `pty.spawn` gets on POSIX: the anchor, the shell and its arguments. */
+function anchorSpec(program, args) {
+  if (isWindows) return { program, args };
+  return {
+    program: '/bin/sh',
+    args: ['-c', ANCHOR_SCRIPT, ANCHOR_NAME, program, ...(args || [])],
+  };
+}
+
+/**
+ * The process group `pid` leads (`getpgid`; Node has no binding), else 0.
+ * forkpty makes the child a session *and* group leader, so this is normally
+ * the pid itself; the scan verifies it rather than assuming it.
+ */
+function processGroupOf(pid) {
+  if (isWindows || !(pid > 1)) return 0;
+  let text;
+  try {
+    text = execFileSync('/bin/ps', ['-o', 'pgid=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return 0;
+  }
+  const pgid = Number.parseInt(text.trim(), 10);
+  return pgid > 1 ? pgid : 0;
 }
 
 // ── one shell: spawn, pump, exit, kill (pty.rs, threads.rs, pump.rs) ───────
@@ -682,10 +785,14 @@ class Shell {
     this.closePromise = null;
     this.pty = null;
     this.sid = 0;
+    this.pgid = 0;
 
     let child;
     try {
-      child = pty.spawn(spec.program, spec.args, {
+      // POSIX: the pty's child is the anchor, which runs `spec.program` as its
+      // own child (see `ANCHOR_SCRIPT`); Windows keeps the program itself.
+      const anchored = anchorSpec(spec.program, spec.args);
+      child = pty.spawn(anchored.program, anchored.args, {
         name: 'xterm-256color',
         cols: spec.cols,
         rows: spec.rows,
@@ -700,8 +807,13 @@ class Shell {
     }
     this.pty = child;
     this.sid = child.pid > 1 ? child.pid : 0;
+    // The group the pty child leads, read back rather than assumed: the kill
+    // scan runs against it after a natural exit, when the leader — hence the
+    // session id — is no longer there to ask.
+    const group = processGroupOf(this.sid);
+    this.pgid = group > 1 ? group : this.sid;
     // The controlling terminal's short name (`ttys012`): how the Darwin kill
-    // scan finds the session's processes once the leader is gone.
+    // scan finds the terminal's processes.
     this.tty = (child.ptsName || '').replace(/^\/dev\//, '') || null;
     // node-pty rethrows a socket error unless two 'error' listeners are
     // attached (`listeners('error').length < 2`). Any error here means the
@@ -795,9 +907,10 @@ class Shell {
     // Before the pump hears of it, as in Rust: `status()` is current once the
     // exit event is out.
     this.stream.setExit(this.exitCode);
-    // node-pty reaps the shell before this callback, so the session id is no
-    // longer reserved: end what the shell left behind right away (the pty has
-    // already reached EOF, so no output is lost) and forget the id.
+    // node-pty reaps the pty child before this callback, and on POSIX that
+    // child is the anchor, which already swept the terminal on its way out
+    // (`ANCHOR_SCRIPT`): the scan below re-checks what the shell left behind
+    // against the group recorded at spawn, then forgets both ids.
     this._cleanupAfterExit();
     this._schedule(0);
   }
@@ -916,15 +1029,23 @@ class Shell {
     });
   }
 
-  /** After a natural exit: end what the shell left behind, forget the id. */
+  /**
+   * After a natural exit: end what the shell left behind, forget the ids.
+   * The anchor has already swept the terminal (see `ANCHOR_SCRIPT`); this
+   * pass repeats it against the process group recorded at spawn, for the
+   * pty's own child on Windows or when the anchor is not there to run. The
+   * leader's pid is never signalled: it may belong to someone else now.
+   */
   _cleanupAfterExit() {
     if (isWindows) {
       killWindowsTree(this.sid);
       this.sid = 0;
+      this.pgid = 0;
       return;
     }
-    killSession(this.sid, { leaderAlive: false, tty: this.tty });
+    killSession(this.pgid > 1 ? this.pgid : this.sid, { leaderAlive: false, tty: this.tty });
     this.sid = 0;
+    this.pgid = 0;
   }
 
   // ── close ───────────────────────────────────────────────────────────────
@@ -964,14 +1085,15 @@ class Shell {
       this.closePromise = Promise.resolve();
       return this.closePromise;
     }
-    if (!this.exitObserved) hangUpSession(sid);
+    if (!this.exitObserved) hangUpSession(sid, this.tty);
     this.closePromise = new Promise((resolve) => {
       const finish = () => {
         const leaderAlive = !this.exitObserved;
         killSession(sid, { leaderAlive, tty: this.tty });
         if (leaderAlive) {
-          // Belt and braces: the group kill covers the session leader, but a
-          // pty that ignores SIGKILL (uninterruptible) must not keep the fd.
+          // Belt and braces: the group kill covers the session leader (the
+          // anchor), but a pty that ignores SIGKILL (uninterruptible) must
+          // not keep the fd.
           try {
             if (this.pty) this.pty.kill('SIGKILL');
           } catch {
@@ -979,6 +1101,7 @@ class Shell {
           }
         }
         this.sid = 0;
+        this.pgid = 0;
         resolve();
       };
       if (this.exitObserved) {

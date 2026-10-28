@@ -199,9 +199,41 @@ stub.remote.on("event", (name, payload) => {
 // nothing, matching a quiet desktop.
 ipcMain.handle("omp:subscribe", (_e, _name) => 0);
 
+// ── external open: launch argv, second instance, macOS open-file ──────────
+// Mirrors external_open.rs: positional args (and macOS `open-file` URLs)
+// resolve to canonical folders, queue, and one `open://project` event wakes
+// the frontend's drain (live.js:2144 → take_pending_open_projects).
+const announceOpenProjects = () => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("omp:event", "open://project", null);
+  }
+};
+const ingestArgv = (argv, cwd) => {
+  const base = cwd ?? process.cwd();
+  const outcomes = stub.externalOpen.positionalArgs(argv).map((arg) =>
+    stub.externalOpen.folderFromArg(base, arg));
+  if (stub.externalOpen.ingest(stub.openProjects, outcomes, (m) => console.error(m))) {
+    announceOpenProjects();
+  }
+};
+// Tauri's single-instance plugin forwards a second launch's argv; Electron
+// needs the lock explicitly (external_open.rs's forwarded-argv path).
+if (!app.requestSingleInstanceLock()) {
+  app.quit(); // an instance already owns this config dir
+}
+app.on("second-instance", (_e, argv, cwd) => ingestArgv(argv, cwd));
+app.on("open-file", (_e, file) => {
+  if (stub.externalOpen.ingest(stub.openProjects, [stub.externalOpen.folderFromPath(file)],
+    (m) => console.error(m))) announceOpenProjects();
+});
+
 app.whenReady().then(() => {
   setupHotkeyTray();
+  ingestArgv(process.argv, process.cwd());
   createWindow();
+  // No boot announce needed: live.js's _setupExternalOpens drains the
+  // queue once at setup, which covers a launch-argv batch queued before
+  // any window existed (its announce would have had no listener).
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

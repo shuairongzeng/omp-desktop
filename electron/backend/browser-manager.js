@@ -56,6 +56,7 @@ class BrowserManager extends EventEmitter {
     this.views = new Map(); // sessionId -> View
     this.annotates = new Map(); // sessionId -> Annotate
     this.channels = new Map(); // sessionId -> channel id (webview Channel)
+    this._firstFrameAt = new Map(); // sessionId -> epoch of first frame (0 = none yet)
   }
 
   alive() {
@@ -118,11 +119,22 @@ class BrowserManager extends EventEmitter {
       await this.pipe.send("Page.enable", {}, { sessionId: cdpSession }).catch(() => {});
     }
     view.setSize(width, height, dpr ?? 1);
-    await view.startScreencast(
-      this.pipe,
-      (frame) => this.emit("channel", sessionId, { b64: frame.wire().toString("base64") }),
-      { width, height, dpr: dpr ?? 1 },
-    );
+    const onFrame = (frame) => {
+      this._firstFrameAt.set(sessionId, Date.now());
+      this.emit("channel", sessionId, { b64: frame.wire().toString("base64") });
+    };
+    await view.startScreencast(this.pipe, onFrame, { width, height, dpr: dpr ?? 1 });
+    // Headless Chromium occasionally accepts Page.startScreencast and then
+    // sends nothing (measured: first open after a long idle, and an open
+    // onto an already-screencasting view). One watchdog restart per open
+    // turns that silent dead panel into frames; a panel that paints needs
+    // no restart.
+    this._firstFrameAt.set(sessionId, 0);
+    setTimeout(() => {
+      if (!this._firstFrameAt.get(sessionId) && this.views.has(sessionId)) {
+        this.views.get(sessionId).restartScreencast().catch(() => {});
+      }
+    }, 4000).unref?.();
     return null;
   }
 

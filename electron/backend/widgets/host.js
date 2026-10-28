@@ -13,6 +13,7 @@ const snapshot = require("./snapshot");
 const run = require("./run");
 const context = require("./context");
 const schedule = require("./schedule");
+const { createGitWatch } = require("../git-watch");
 
 const TICK_MS = 250;
 
@@ -31,6 +32,7 @@ class WidgetHost {
     this.view = { sessionId: null, railVisible: true, windowVisible: true, hidden: [] };
     this.sessions = new Map(); // sessionId -> { project }
     this.runs = new Map(); // keyId -> { handle, seq, key, pluginId }
+    this.watches = new Map(); // sessionId -> git HEAD watch
     this.seqs = new Map(); // keyId -> next seq
     this.lastRuns = new Map(); // keyId -> RunView
     this.scheduler = schedule.createScheduler({
@@ -125,6 +127,10 @@ class WidgetHost {
 
   sessionStarted(sessionId, project) {
     this.sessions.set(sessionId, { project: project ?? null });
+    // The branch trigger needs the repo's HEAD to move: watch it per
+    // session (git_watcher.rs), close on sessionClosed.
+    this.watches?.get(sessionId)?.close?.();
+    this.watches.set(sessionId, createGitWatch(project ?? "", () => this.branchChanged(sessionId)));
     // Rust computes the git context on the scheduler thread; the port sends
     // the project now and refreshes branch/remote when they resolve.
     this.scheduler.handle({
@@ -142,6 +148,8 @@ class WidgetHost {
 
   sessionClosed(sessionId) {
     this.sessions.delete(sessionId);
+    this.watches.get(sessionId)?.close?.();
+    this.watches.delete(sessionId);
     this.scheduler.handle({ type: "session_closed", session: sessionId }, this._now());
     this._publishActive();
   }
@@ -157,6 +165,8 @@ class WidgetHost {
   /** Updater relaunch / app exit: every plugin process tree dies. */
   killAll() {
     clearInterval(this._timer);
+    for (const watch of this.watches.values()) watch?.close?.();
+    this.watches.clear();
     for (const entry of this.runs.values()) entry.handle?.cancel?.();
     this.runs.clear();
   }

@@ -20,6 +20,7 @@ const nativeShell = require("./backend/native-shell");
 const workspace = require("./backend/workspace");
 const projectFiles = require("./backend/project-files");
 const { WidgetHost } = require("./backend/widgets/host");
+const externalOpen = require("./backend/external-open");
 const savedMutate = require("./backend/saved-sessions-mutate");
 const profilesMutate = require("./backend/profiles-mutate");
 const agentStats = require("./backend/agent-stats");
@@ -63,7 +64,7 @@ const EXPLICIT = {
   open_tabs_save: (a) => stores.openTabsSave(a?.layout),
   // Must be an array or null; any other truthy value throws in a detached
   // async (unhandled rejection).
-  take_pending_open_projects: () => [],
+  take_pending_open_projects: () => openProjects.takePending(),
   "plugin:app|version": () => "0.11.0",
   keybindings_list: (a) => keybindings.keybindingsList(a?.profile ?? ""),
   keybindings_set: (a) => keybindings.keybindingsSet(a?.profile ?? "", a?.action, a?.keys),
@@ -235,7 +236,8 @@ async function handle(name, args) {
 // The widget host's `widgets://` events ride the same omp:event channel as
 // every other Tauri event; main.js installs the sink once windows exist.
 let widgetEmitSink = () => {};
+const openProjects = new externalOpen.OpenProjectState();
 const widgetsHost = new WidgetHost({ emit: (event, payload) => widgetEmitSink(event, payload) });
 const setWidgetEmit = (fn) => { widgetEmitSink = fn; };
 
-module.exports = { handle, EXPLICIT, agent, terminal, browser, remote, widgetsHost, setWidgetEmit };
+module.exports = { handle, EXPLICIT, agent, terminal, browser, remote, widgetsHost, setWidgetEmit, openProjects, externalOpen };

@@ -1037,3 +1037,90 @@ test('limits_match_the_rust_constants', () => {
   assert.equal(MAX_COMMITS, 500);
   assert.equal(MAX_LANES, 12);
 });
+
+// ── status.rs: global excludes, core.filemode, racy entries ─────────────────
+
+test('status_applies_the_configured_global_excludes_file', async () => {
+  const repo = initRepo('status-excludes-file');
+  write(repo, 'keep.txt', 'keep\n');
+  runGit(repo, ['add', '.']);
+  commit(repo, 'init', 1_700_000_000);
+
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-git-excludes-'));
+  scratch.push(configDir);
+  const excludes = path.join(configDir, 'ignore');
+  fs.writeFileSync(excludes, '*.log\n!keep.log\nbuild/\n');
+  runGit(repo, ['config', 'core.excludesFile', excludes]);
+
+  write(repo, 'noise.log', 'noise\n');
+  write(repo, 'keep.log', 'kept\n');
+  write(repo, 'build/out.o', 'object\n');
+  write(repo, 'src/app.txt', 'app\n');
+
+  const result = await gitBrowserStatus(repo);
+  assert.equal(find(result.tree, 'noise.log'), null, 'wildcard pattern ignores the file');
+  assert.equal(find(result.tree, 'build'), null, 'directory-only pattern prunes the dir');
+  assert.equal(statusOf(result.tree, 'keep.log'), StatusKind.Untracked, '! re-includes');
+  assert.equal(statusOf(result.tree, 'src/app.txt'), StatusKind.Untracked);
+  assert.equal(result.changed, 2);
+});
+
+test('core_filemode_false_ignores_a_chmod_only_change', { skip: process.platform === 'win32' }, async () => {
+  const repo = initRepo('status-filemode');
+  write(repo, 'run.sh', '#!/bin/sh\necho hi\n');
+  runGit(repo, ['add', '.']);
+  commit(repo, 'init', 1_700_000_000);
+  fs.chmodSync(path.join(repo, 'run.sh'), 0o755);
+
+  const strict = await gitBrowserStatus(repo);
+  assert.equal(statusOf(strict.tree, 'run.sh'), StatusKind.Modified);
+
+  runGit(repo, ['config', 'core.filemode', 'false']);
+  const loose = await gitBrowserStatus(repo);
+  assert.equal(statusOf(loose.tree, 'run.sh'), null);
+  assert.equal(loose.changed, 0);
+});
+
+test('a_racy_same_size_same_mtime_edit_is_re_hashed', async () => {
+  const repo = initRepo('status-racy');
+  // Start just after a wall-clock second boundary so the commit's index entry
+  // and the edit share a whole second: size, mtime and ctime all compare equal
+  // and the stat cache alone cannot see the edit. The walk must re-hash.
+  const now = Date.now();
+  await new Promise((resolve) => setTimeout(resolve, 1000 - (now % 1000) + 10));
+
+  write(repo, 'f.txt', 'AAAA\n');
+  runGit(repo, ['add', '.']);
+  commit(repo, 'init', 1_700_000_000);
+
+  const abs = path.join(repo, 'f.txt');
+  const before = fs.statSync(abs);
+  write(repo, 'f.txt', 'BBBB\n');
+  fs.utimesSync(abs, before.atime, before.mtime);
+  const after = fs.statSync(abs);
+  assert.equal(after.size, before.size, 'same byte count');
+  assert.equal(
+    Math.floor(after.mtimeMs / 1000),
+    Math.floor(before.mtimeMs / 1000),
+    'same mtime second, so the stat cache says clean',
+  );
+
+  const result = await gitBrowserStatus(repo);
+  assert.equal(statusOf(result.tree, 'f.txt'), StatusKind.Modified);
+});
+
+test('an_edited_rename_is_not_paired_by_exact_content', async () => {
+  const repo = initRepo('status-rename-edit');
+  write(repo, 'old.txt', 'one\ntwo\n');
+  runGit(repo, ['add', '.']);
+  commit(repo, 'init', 1_700_000_000);
+  runGit(repo, ['mv', 'old.txt', 'new.txt']);
+  write(repo, 'new.txt', 'one\ntwo!\n');
+  runGit(repo, ['add', 'new.txt']);
+
+  // The documented boundary: a rename whose blob also changed is Add+Delete.
+  const result = await gitBrowserStatus(repo);
+  assert.equal(statusOf(result.tree, 'old.txt'), StatusKind.Deleted);
+  assert.equal(statusOf(result.tree, 'new.txt'), StatusKind.Added);
+  assert.equal(find(result.tree, 'new.txt').path, 'new.txt');
+});
