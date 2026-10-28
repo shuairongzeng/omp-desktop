@@ -64,8 +64,8 @@ shared harness `tools/deep/ctx.mjs`) SEQUENTIALLY against one instance.
 Every check proves its feature by an external consequence — open-tabs.json
 / recent-projects.json / session jsonl on disk, scoped `pgrep` of omp and
 pty children, `pbpaste`, Finder's front-window target — or a DOM change a
-no-op could not produce. Latest run: **31/33 pass, 2 skipped** (widgets
-rail and summon hotkey/tray are the documented unported gaps), 0 failed;
+no-op could not produce. Latest run: **33/33 pass, 0 skipped, 0 failed** — the widgets
+rail and the summon hotkey/tray were ported in full (bb735d3);
 results + screenshots in `docs/port/sweep/deep-e2e.json` and
 `/tmp/deep-shots-final2/`.
 
