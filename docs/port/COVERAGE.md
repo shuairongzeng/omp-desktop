@@ -95,3 +95,16 @@ showed URLs, never titles).
   hand to verify the attach chip.
 - `window-bounds`: `window-bounds.json` in the config dir persists
   geometry + maximized across launches (cross-display validated on read).
+
+## Remote (2026-10-28, measured against the production relay)
+
+`remote_get_state` returns Rust's RemoteStateView field for field
+(`enabled, server, device_id, status, pinned_cert, device_name`); the
+Settings row's `device_id.slice(0, 12)` crashed on the old renamed shape.
+The relay's cert is a self-signed LEAF (Basic Constraints CA:FALSE): rustls
+accepts it as its own anchor, OpenSSL rejects it as `ca`
+(UNABLE_TO_VERIFY_LEAF_SIGNATURE), so tlsOptions pins such a leaf by DER
+equality in checkServerIdentity (regression test with a real openssl
+CA:FALSE leaf). `tools/deep/remote-relay.mjs` walks enable → device-id row
+→ TOFU trust prompt → trust → online → disable against the live relay with
+a temporary registered device (revoked afterwards).

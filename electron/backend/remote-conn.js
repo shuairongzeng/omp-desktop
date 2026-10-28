@@ -103,7 +103,32 @@ function tlsOptions(pinnedCertPem) {
   } catch {
     return { rejectUnauthorized: true };
   }
+  const der = Buffer.from(body, 'base64');
+  // rustls accepts a pinned LEAF as its own trust anchor; OpenSSL does not
+  // (CA:FALSE leaves fail UNABLE_TO_VERIFY_LEAF_SIGNATURE as `ca`). Pin the
+  // leaf by DER equality instead: same security, Node-shaped.
+  const selfSignedLeaf = isSelfSignedLeaf(der);
+  if (selfSignedLeaf) {
+    return {
+      rejectUnauthorized: false,
+      checkServerIdentity: (_host, cert) =>
+        cert && cert.raw && cert.raw.equals(der)
+          ? undefined
+          : new Error('pinned certificate mismatch'),
+    };
+  }
   return { ca: [pem], rejectUnauthorized: true };
+}
+
+/** issuer == subject and Basic Constraints CA:FALSE (or absent): a leaf
+ *  that signed itself — the relay's cert shape. */
+function isSelfSignedLeaf(der) {
+  try {
+    const cert = new (require('node:crypto').X509Certificate)(der);
+    return cert.issuer === cert.subject && !/CA:TRUE/.test(cert.toString());
+  } catch {
+    return false;
+  }
 }
 
 /** OpenSSL codes that all mean rustls's `CertificateError::UnknownIssuer`. */
@@ -148,7 +173,7 @@ function errorChain(err) {
  * directly), but the chain walk also covers `cause`/`nativeError` for the
  * `ERR_TLS_*` family, mirroring Rust's two match arms.
  */
-function tlsFailureReason(err) {
+function tlsFailureReason(err, optsPinned = false) {
   if (!err) return null;
   for (const node of errorChain(err)) {
     if (typeof node === 'string') continue;
@@ -162,6 +187,12 @@ function tlsFailureReason(err) {
       }
     }
     const message = typeof node.message === 'string' ? node.message : '';
+    // A pinned `ca` that does not match the served cert fails as
+    // ERR_TLS_CERT_ALTNAME_INVALID / DEPTH_ZERO_SELF_SIGNED_CERT against the
+    // PIN, not the roots: naming it "not trusted" would re-offer the trust
+    // prompt for a cert the user already pinned (retrust wording needs the
+    // status to say certificate, but a wrong pin must not loop the prompt).
+    if (optsPinned && /ALTNAME|CERT_HAS_EXPIRED|ERR_TLS/.test(String(node.code ?? ''))) continue;
     if (/self[- ]signed certificate/i.test(message)
       || /unable to verify the first certificate/i.test(message)
       || /unable to get (local )?issuer certificate/i.test(message)) {

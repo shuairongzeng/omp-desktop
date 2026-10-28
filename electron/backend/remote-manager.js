@@ -25,14 +25,17 @@ class RemoteManager extends EventEmitter {
     this.status = this.settings?.enabled ? "connecting" : "off";
   }
 
+  /** Rust's RemoteStateView (remote/mod.rs::view), field for field: the
+   *  Settings page reads `device_id.slice(0, 12)`, `pinned_cert` and
+   *  `device_name` off it — a renamed or missing field crashes the row. */
   view() {
     return {
-      status: this.connector?.status ?? this.status,
-      server: this.settings?.server ?? null,
       enabled: this.settings?.enabled === true,
-      deviceName: this.settings?.device_name ?? "",
-      pinnedCert: this.settings?.pinned_cert_pem ? true : false,
-      phones: Object.keys(this.settings?.phones ?? {}),
+      server: this.settings?.server ?? "",
+      device_id: this.settings?.device_id ?? "",
+      status: this.connector?.status ?? this.status,
+      pinned_cert: Boolean(this.settings?.pinned_cert_pem?.trim()),
+      device_name: this.settings?.device_name ?? "",
     };
   }
 
@@ -111,7 +114,11 @@ class RemoteManager extends EventEmitter {
       socket.on("error", reject);
       socket.setTimeout(10000, () => { socket.destroy(); reject(new Error("certificate fetch timed out")); });
     });
-    this.settings = remoteFiles.remoteSettingsSave({ pinned_cert_pem: pem });
+    const next = remoteFiles.remoteSettingsSave({ pinned_cert_pem: pem });
+    if (!next || typeof next.pinned_cert_pem !== "string") {
+      throw new Error("the trust pin did not reach remote.json");
+    }
+    this.settings = next;
     await this._restartConnector();
     return this.view();
   }
