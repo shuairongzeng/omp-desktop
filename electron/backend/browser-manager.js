@@ -56,7 +56,7 @@ class BrowserManager extends EventEmitter {
     this.views = new Map(); // sessionId -> View
     this.annotates = new Map(); // sessionId -> Annotate
     this.channels = new Map(); // sessionId -> channel id (webview Channel)
-    this._firstFrameAt = new Map(); // sessionId -> epoch of first frame (0 = none yet)
+    this._lastShown = new Map(); // sessionId -> targetId the user last saw
   }
 
   alive() {
@@ -100,7 +100,9 @@ class BrowserManager extends EventEmitter {
         try {
           const session = await this.pipe.sessionFor(targetId);
           view.setActive(targetId, session);
+          this._lastShown.set(sessionId, targetId);
           await this.pipe.send("Page.enable", {}, { sessionId: session }).catch(() => {});
+          await view.syncAfterAttach();
         } catch { /* page gone between event and attach */ }
       });
       this.views.set(sessionId, view);
@@ -110,31 +112,43 @@ class BrowserManager extends EventEmitter {
     // "no page open" forever.
     if (channelId != null) this.channels.set(sessionId, channelId);
     if (view.pages().length === 0 || !view.active) {
-      const target = await this.pipe.send("Target.createTarget", { url: "about:blank" });
+      // A fresh view has not looked at Chromium yet: discover BEFORE
+      // deciding what to show, or a reopen would create a new about:blank
+      // instead of returning to the pages that are still open.
       await view.discover();
+      // A reopened panel returns to the page the user was looking at when
+      // it closed, not to whichever target discover() listed first.
+      const remembered = this._lastShown.get(sessionId);
+      const known = remembered && view.page(remembered) ? remembered : null;
+      const target = known
+        ? { targetId: known }
+        : view.pages().length
+          ? { targetId: view.pages()[0].targetId }
+          : await this.pipe.send("Target.createTarget", { url: "about:blank" });
+      if (!known && !view.page(target?.targetId)) await view.discover();
       // Rust's switch_to attaches the flattened CDP session and marks the
       // page active; the View throws "no page open" until setActive runs.
-      const cdpSession = await this.pipe.sessionFor(target?.targetId);
+      let cdpSession = await this.pipe.sessionFor(target?.targetId);
+      // A cached session can still be dead (Chromium detached it between
+      // the event and this attach): re-attach once on the stale-id error.
+      try {
+        await this.pipe.send("Target.getTargetInfo", { targetId: target?.targetId }, { sessionId: cdpSession });
+      } catch (error) {
+        if (!/Session with given id not found/.test(String(error.message))) throw error;
+        cdpSession = await this.pipe.reattach(target?.targetId);
+      }
       view.setActive(target?.targetId, cdpSession);
+      this._lastShown.set(sessionId, target?.targetId);
       await this.pipe.send("Page.enable", {}, { sessionId: cdpSession }).catch(() => {});
+      await view.syncAfterAttach();
     }
     view.setSize(width, height, dpr ?? 1);
     const onFrame = (frame) => {
-      this._firstFrameAt.set(sessionId, Date.now());
       this.emit("channel", sessionId, { b64: frame.wire().toString("base64") });
     };
+    // The silent-screencast watchdog lives in View.startScreencast now, so
+    // every start (open, reopen, page switch) is covered, not just opens.
     await view.startScreencast(this.pipe, onFrame, { width, height, dpr: dpr ?? 1 });
-    // Headless Chromium occasionally accepts Page.startScreencast and then
-    // sends nothing (measured: first open after a long idle, and an open
-    // onto an already-screencasting view). One watchdog restart per open
-    // turns that silent dead panel into frames; a panel that paints needs
-    // no restart.
-    this._firstFrameAt.set(sessionId, 0);
-    setTimeout(() => {
-      if (!this._firstFrameAt.get(sessionId) && this.views.has(sessionId)) {
-        this.views.get(sessionId).restartScreencast().catch(() => {});
-      }
-    }, 4000).unref?.();
     return null;
   }
 
@@ -154,12 +168,16 @@ class BrowserManager extends EventEmitter {
 
   async history(sessionId, delta) {
     const v = this.view(sessionId);
-    const h = await v.call("Page.getNavigationHistory", {});
+    // Page.getNavigationHistory is a PAGE-domain command: it must ride the
+    // active page's flattened session (Rust's call_active), not the
+    // browser-level one, where Chromium answers "wasn't found".
+    const { sessionId: pageSession } = v.activation();
+    const h = await v.call("Page.getNavigationHistory", {}, { sessionId: pageSession });
     const current = Number(h?.currentIndex ?? 0);
     const entries = Array.isArray(h?.entries) ? h.entries : [];
     const entry = entries[current + Number(delta ?? 0)];
     if (!entry) return null;
-    await v.call("Page.navigateToHistoryEntry", { entryId: entry.id });
+    await v.call("Page.navigateToHistoryEntry", { entryId: entry.id }, { sessionId: pageSession });
     return null;
   }
 

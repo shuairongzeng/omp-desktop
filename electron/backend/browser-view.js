@@ -639,6 +639,26 @@ class View extends EventEmitter {
     this.frames?.close();
     this.frames = new FrameFlow({ ackTimeoutMs: options.ackTimeoutMs ?? this.ackTimeoutMs });
     this.screencast = { client, onFrame };
+    // Headless Chromium occasionally accepts Page.startScreencast and then
+    // sends nothing (measured: first open after a long idle, an open onto
+    // an already-screencasting view). One watchdog restart per start turns
+    // that silent dead panel into frames; a painting panel needs none.
+    this._frameSeen = false;
+    // The token keeps a later start's watchdog from restarting twice.
+    const token = (this._screencastToken += 1);
+    // Headless Chromium occasionally accepts Page.startScreencast and then
+    // sends nothing (measured on Chrome-for-Testing 150 and, rarely, system
+    // Chrome; a stop+start always healed it). Retry the start until a frame
+    // arrives, at most SCREENCAST_HEALS times.
+    const probe = (tries) => {
+      setTimeout(() => {
+        if (this._screencastToken !== token || this._frameSeen || this.closed) return;
+        if (tries <= 0) return;
+        this.restartScreencast().catch(() => {});
+        probe(tries - 1);
+      }, 2500).unref?.();
+    };
+    probe(3);
     await this.call(
       'Emulation.setDeviceMetricsOverride',
       { width: this.size.w, height: this.size.h, deviceScaleFactor: this.size.dpr, mobile: false },
@@ -731,6 +751,16 @@ class View extends EventEmitter {
     }
   }
 
+  /** A page that finished loading before this session's `Page.enable`
+   *  never emits `loadEventFired`/`frameStoppedLoading` to it, so its title
+   *  and history would stay at discovery values forever (measured: a
+   *  data: page's strip showed the raw URI, a reloaded page kept a stale
+   *  title). Pull both once right after the attach. */
+  async syncAfterAttach() {
+    await Promise.allSettled([this.refreshHistory(), this.refreshTitle()]);
+    return this.state;
+  }
+
   /** `canBack`/`canForward` and the URL, from the navigation history. */
   async refreshHistory() {
     if (this.active == null) return this.state;
@@ -758,9 +788,12 @@ class View extends EventEmitter {
     return this.state;
   }
 
+  _screencastToken = 0;
+
   _onFrame(session, params) {
     const frames = this.frames;
     if (!frames || !this.screencast) return;
+    this._frameSeen = true;
     const ack = chromiumAck(session, params);
     const data = params.data;
     if (typeof data !== 'string') {

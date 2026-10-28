@@ -51,6 +51,11 @@ class PipeClient extends EventEmitter {
       } catch {
         continue;
       }
+      if (v.method === "Target.detachedFromTarget" && typeof v.params?.sessionId === "string") {
+        for (const [target, sid] of this._sessions) {
+          if (sid === v.params.sessionId) this._sessions.delete(target);
+        }
+      }
       if (v.id != null && this._pending.has(v.id)) {
         const p = this._pending.get(v.id);
         this._pending.delete(v.id);
@@ -91,6 +96,11 @@ class PipeClient extends EventEmitter {
   async sessionFor(targetId) {
     const cached = this._sessions.get(targetId);
     if (cached) return cached;
+    return this.reattach(targetId);
+  }
+
+  /** Attach fresh, bypassing the cache (a cached id Chromium detached). */
+  async reattach(targetId) {
     const r = await this.send("Target.attachToTarget", { targetId, flatten: true });
     const sessionId = r?.sessionId;
     if (!sessionId) throw new Error("attach reply has no sessionId");

@@ -43,8 +43,14 @@ export async function run(ctx) {
 
   /** This instance's Electron main: the OMP Desktop process carrying OUR CDP port. */
   const mainPid = () => {
+    // The launch line now carries --user-data-dir after the port flag and
+    // the renderer helpers repeat the port flag: match the MAIN process by
+    // its executable path and the port flag, excluding helpers.
     const hit = ps().find(
-      (p) => p.command.includes("OMP Desktop") && p.command.trim().endsWith(`--remote-debugging-port=${ctx.port}`),
+      (p) =>
+        p.command.includes("OMP Desktop.app/Contents/MacOS/OMP Desktop") &&
+        !p.command.includes("Helper") &&
+        p.command.includes(`--remote-debugging-port=${ctx.port}`),
     );
     if (!hit) throw new Error(`no OMP Desktop main process for port ${ctx.port}`);
     return hit.pid;

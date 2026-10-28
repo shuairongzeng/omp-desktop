@@ -2,27 +2,27 @@
   {
     "name": "tab-switch",
     "ok": true,
-    "detail": "tabs session-1793168581940 ⇄ session-1793168599675; header \"📝 QUIZ: 给娃出题\" ⇄ \"deep-cfg-tabs-sidebar-proj\"; /status user row landed in deep-cfg-tabs-sidebar-proj's jsonl (-1→5960 bytes); seed jsonl 470970→470970"
+    "detail": "tabs session-1793179689847 ⇄ session-1793179712210; header \"📝 QUIZ: 给娃出题\" ⇄ \"deep-cfg-tabs-sidebar-proj\"; /status user row landed in deep-cfg-tabs-sidebar-proj's jsonl (-1→5358 bytes); seed jsonl 542039→542039"
   },
   {
     "name": "tab-close",
     "ok": true,
-    "detail": "tab session-1793168599675 closed via its × (aria-label \"close deep-cfg-tabs-sidebar-proj\"); open-tabs.json 2→1 entries; scoped pgrep 1→0"
+    "detail": "tab session-1793179712210 closed via its × (aria-label \"close deep-cfg-tabs-sidebar-proj\"); open-tabs.json 2→1 entries; scoped pgrep 1→0"
   },
   {
     "name": "reopen-closed",
     "ok": true,
-    "detail": "Ctrl+Shift+T: tabs 1→2, conversation 2026-10-28T06-23-19-980Z_01a1812d-6bac-74c2-8881-9cc2a908c5c9.jsonl resumed (tab session-1793168613119)"
+    "detail": "Ctrl+Shift+T: tabs 1→2, conversation 2026-10-28T09-28-32-477Z_01a181d6-fbdd-7506-8feb-28c31ece3e6e.jsonl resumed (tab session-1793179727218)"
   },
   {
     "name": "tab-rename",
     "ok": true,
-    "detail": "double-click → typed \"deep-renamed-mvrqalb7\" → open-tabs.json name = \"deep-renamed-mvrqalb7\""
+    "detail": "double-click → typed \"deep-renamed-mvrwwt07\" → open-tabs.json name = \"deep-renamed-mvrwwt07\""
   },
   {
     "name": "middle-click-close",
     "ok": true,
-    "detail": "middle click closed tab session-1793168613119: tabs 2→1, scoped pgrep 1→0, conversation kept on disk (2026-10-28T06-23-19-980Z_01a1812d-6bac-74c2-8881-9cc2a908c5c9.jsonl, 6141→6141 bytes)"
+    "detail": "middle click closed tab session-1793179727218: tabs 2→1, scoped pgrep 1→0, conversation kept on disk (2026-10-28T09-28-32-477Z_01a181d6-fbdd-7506-8feb-28c31ece3e6e.jsonl, 5539→5539 bytes)"
   },
   {
     "name": "sidebar-recent-remove",
@@ -42,17 +42,17 @@
   {
     "name": "send-roundtrip",
     "ok": true,
-    "detail": "deep-composer-send-1793168627887 in .user-text and in 2026-10-26T12-31-15-604Z_01a17831-8c94-7647-88ec-dec231e169a5.jsonl (bash approval granted: true)"
+    "detail": "deep-composer-send-1793179742240 in .user-text and in 2026-10-26T12-31-15-604Z_01a17831-8c94-7647-88ec-dec231e169a5.jsonl (bash approval granted: true)"
   },
   {
     "name": "queue-while-streaming",
     "ok": true,
-    "detail": ".queue-row kind=follow-up text=deep-composer-queue-1793168636326; delivered after idle (DOM + jsonl)"
+    "detail": ".queue-row kind=follow-up text=deep-composer-queue-1793179750901; delivered after idle (DOM + jsonl)"
   },
   {
     "name": "abort",
     "ok": true,
-    "detail": "streaming stopped 20ms after abort; follow-up deep-composer-afterabort-1793168652488 ran to idle"
+    "detail": "streaming stopped 4ms after abort; follow-up deep-composer-afterabort-1793179770409 ran to idle"
   },
   {
     "name": "plan-mode",
@@ -82,7 +82,7 @@
   {
     "name": "terminal-write-kill",
     "ok": true,
-    "detail": "marker TERM-DEEP-1793168686129 in xterm DOM; pty 78812 spawned and gone (0->0 zsh children); tab session-1793168685992 closed"
+    "detail": "marker TERM-DEEP-1793179804957 in xterm DOM; pty 21572 spawned and gone (0->0 zsh children); tab session-1793179804613 closed"
   },
   {
     "name": "git-file-diff",
@@ -97,12 +97,12 @@
   {
     "name": "conversation-tree",
     "ok": true,
-    "detail": "81 tree rows vs 81 host \"type\":\"message\",\"role\":\"user\" lines (±2); head \"81 prompts | cache lifetime unknown\""
+    "detail": "97 tree rows vs 97 host \"type\":\"message\",\"role\":\"user\" lines (±2); head \"97 prompts · 2 branches | cache lifetime unknown\""
   },
   {
     "name": "history-search-restore",
     "ok": true,
-    "detail": "Ctrl+H → 60 sessions, \"QUIZ\" → 1; clicking it focused the open tab (2 tabs unchanged, active \"chuti·📝 QUIZ: 给娃出题\")"
+    "detail": "Ctrl+H → 64 sessions, \"QUIZ\" → 2; clicking it focused the open tab (2 tabs unchanged, active \"chuti·📝 QUIZ: 给娃出题\")"
   },
   {
     "name": "subagents-panel",
@@ -112,7 +112,7 @@
   {
     "name": "usage-stats",
     "ok": true,
-    "detail": "requests card 3973 vs ctx.invoke usage_stats.overall.totalRequests 3973 (exact); cards [\"3,973\",\"$0.00\",\"13.19M in / 3.33M out\",\"72 t/s\"]"
+    "detail": "requests card 3796 vs ctx.invoke usage_stats.overall.totalRequests 3796 (exact); cards [\"3,796\",\"$0.00\",\"12.97M in / 3.10M out\",\"73 t/s\"]"
   },
   {
     "name": "browser-navigate",
@@ -122,7 +122,7 @@
   {
     "name": "browser-page-tabs",
     "ok": true,
-    "detail": "2 page tabs → 3 after new-tab → 2 after closing it"
+    "detail": "1 page tabs → 2 after new-tab → 1 after closing it"
   },
   {
     "name": "browser-annotate",
@@ -132,17 +132,27 @@
   {
     "name": "browser-reopen",
     "ok": true,
-    "detail": "close → open again: running page, 14005 sampled painted pixels, strip [\"about:blank\",\"Example Domain\",\"about:blank\"]"
+    "detail": "close → open again: running page, 14005 sampled painted pixels, strip [\"Example Domain\"]"
+  },
+  {
+    "name": "browser-history",
+    "ok": true,
+    "detail": "back -> /a, forward -> /b (strip transitions, buttons enabled)"
+  },
+  {
+    "name": "browser-reopen-activation",
+    "ok": true,
+    "detail": "reopen restored the shown page (http://127.0.0.1:8899/b)"
   },
   {
     "name": "settings-sections",
     "ok": true,
-    "detail": "12 sections walked: Appearance1 12r/4g, Remote 2r/2g, Layout 4r/1g, Chat 4r/2g, Composer 3r/3g, Rail 7r/2g, Terminal 4r/2g, Browser 3r/2g, Agent 4r/3g, Session 7r/2g, Approvals 2r/2g, Shortcuts 38r/1g"
+    "detail": "12 sections walked: Appearance 12r/4g, Remote 2r/2g, Layout 4r/1g, Chat 4r/2g, Composer 3r/3g, Rail 7r/2g, Terminal 4r/2g, Browser 3r/2g, Agent 4r/3g, Session 7r/2g, Approvals 2r/2g, Shortcuts 38r/1g"
   },
   {
     "name": "key-history",
     "ok": true,
-    "detail": "Ctrl+H opened the modal (60 saved-session row(s) listed), Escape closed it"
+    "detail": "Ctrl+H opened the modal (64 saved-session row(s) listed), Escape closed it"
   },
   {
     "name": "key-sidebar",

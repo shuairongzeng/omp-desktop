@@ -29,7 +29,14 @@ JSON
 cat > "$CFG/global-hotkey.json" <<'JSON'
 { "chord": "ctrl+alt+k" }
 JSON
+# Chrome-for-Testing 150's headless=new intermittently emits zero
+# screencast frames (docs/architecture/browser.md, measured); the deep
+# matrix must exercise the supported browser, like the Tauri app's
+# browser.json does.
+cat > "$CFG/browser.json" <<'JSON'
+{ "path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" }
+JSON
 cd "$(dirname "$0")/.."
 OMP_PORT_CONFIG_DIR="$CFG" nohup "release/OMP Desktop.app/Contents/MacOS/OMP Desktop" \
-  --remote-debugging-port="$PORT" > /tmp/deep-launch.log 2>&1 &
+  --remote-debugging-port="$PORT" --user-data-dir="$CFG/userdata" > /tmp/deep-launch.log 2>&1 &
 echo "launched on port $PORT (pid $!); log /tmp/deep-launch.log"

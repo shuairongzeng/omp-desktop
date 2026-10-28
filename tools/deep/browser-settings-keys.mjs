@@ -262,6 +262,64 @@ export async function run(ctx) {
     return `close → open again: running page, ${painted} sampled painted pixels, strip ${JSON.stringify(tabs)}`;
   });
 
+  // ── 4b. history: back/forward ride the page session (defect 1) ──────────
+  // Evidence: the active page tab's title (the URL the strip shows, which
+  // follows Page.getNavigationHistory) transitions /a -> back -> /a's
+  // predecessor... here: two navigations then back/forward, asserted on the
+  // strip after each commit. The oracle server's load hits are NOT used:
+  // bfcache restores fire neither load nor pageshow beacons reliably under
+  // headless Chromium (measured), so they cannot prove a transition the
+  // user can see in the strip.
+  await ctx.check('browser-history', async () => {
+    const sid = await ctx.ev(`document.querySelector('.tab.active')?.dataset.tabId`);
+    const nav = async (url) => {
+      for (let i = 0; i < 8; i++) {
+        const r = await ctx.invoke('browser_navigate', { sessionId: sid, url });
+        if (r.ok) return;
+        await ctx.sleep(1500);
+      }
+      throw new Error(`navigate ${url} never succeeded`);
+    };
+    const active = () => ctx.ev(`[...document.querySelectorAll('.browser-tabs .tab.active')].map(t => (t.getAttribute('title')||'').slice(0,40)).join('')`);
+    await nav('http://127.0.0.1:8899/a');
+    await nav('http://127.0.0.1:8899/b');
+    for (let i = 0; i < 10 && !(await active()).includes('/b'); i++) await ctx.sleep(1000);
+    ctx.assert((await active()).includes('/b'), 'second navigation never committed');
+    const backEnabled = await ctx.ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.getAttribute('title') === 'back'); return b ? !b.disabled : null; })()`);
+    ctx.assert(backEnabled === true, 'back button disabled after two navigations');
+    let strip = '';
+    for (let i = 0; i < 4 && !strip.includes('/a'); i++) {
+      await ctx.ev(`[...document.querySelectorAll('button')].find(x => x.getAttribute('title') === 'back')?.click()`);
+      await ctx.sleep(3000);
+      strip = await active();
+    }
+    ctx.assert(strip.includes('/a'), `back did not return to /a: ${strip}`);
+    const fwdEnabled = await ctx.ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => x.getAttribute('title') === 'forward'); return b ? !b.disabled : null; })()`);
+    ctx.assert(fwdEnabled === true, 'forward disabled after going back');
+    let strip2 = '';
+    for (let i = 0; i < 4 && !strip2.includes('/b'); i++) {
+      await ctx.ev(`[...document.querySelectorAll('button')].find(x => x.getAttribute('title') === 'forward')?.click()`);
+      await ctx.sleep(3000);
+      strip2 = await active();
+    }
+    ctx.assert(strip2.includes('/b'), `forward did not return to /b: ${strip2}`);
+    return `back -> /a, forward -> /b (strip transitions, buttons enabled)`;
+  });
+
+  // ── 4c. reopen: the panel returns to the page the user was on ───────────
+  await ctx.check('browser-reopen-activation', async () => {
+    const before = await ctx.ev(`[...document.querySelectorAll('.browser-tabs .tab.active')].map(t => (t.getAttribute('title')||'').slice(0,40)).join('')`);
+    ctx.assert(before.length > 0, `precondition: a page is active, got ${before || 'nothing'}`);
+    await ctx.ev(`[...document.querySelectorAll('button')].find(x => x.getAttribute('title') === 'close browser')?.click()`);
+    await ctx.sleep(2000);
+    await ctx.ev(`[...document.querySelectorAll('button')].find(b => ((b.getAttribute('title')||'').startsWith('browser panel')))?.click()`);
+    for (let i = 0; i < 10 && !(await ctx.ev(`!!document.querySelector('.browser-panel')`)); i++) await ctx.sleep(1000);
+    await ctx.sleep(3000);
+    const after = await ctx.ev(`[...document.querySelectorAll('.browser-tabs .tab.active')].map(t => (t.getAttribute('title')||'').slice(0,40)).join('')`);
+    ctx.assert(after === before, `reopen activated ${after || 'nothing'}, not the page the user left on (${before})`);
+    return `reopen restored the shown page (${after.slice(0, 40)})`;
+  });
+
   // ── 5. settings-sections ──────────────────────────────────────────────────
   await ctx.check('settings-sections', async () => {
     await ensureSettingsOpen();

@@ -21,7 +21,10 @@ export const run = async (ctx) => {
     // A second instance forwards its argv to the running one (Electron's
     // single-instance behaviour via requestSingleInstanceLock in main).
     const appPath = "/Users/jackey/GitHub/omp-desktop-electron/release/OMP Desktop.app/Contents/MacOS/OMP Desktop";
-    const child = spawn(appPath, [`--remote-debugging-port=${ctx.port + 500}`, dir], {
+    // Same userData dir as the running instance: Electron's single-instance
+    // lock is per userData, so a differently-configured second launch would
+    // start its own app instead of forwarding argv.
+    const child = spawn(appPath, [`--remote-debugging-port=${ctx.port + 500}`, `--user-data-dir=${cfg}/userdata`, dir], {
       detached: true, stdio: "ignore",
       env: { ...process.env, OMP_PORT_CONFIG_DIR: cfg },
     });
