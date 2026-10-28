@@ -56,7 +56,9 @@ const BUNDLE = path.join(RELEASE_DIR, "OMP Desktop.app");
 const CONTENTS = path.join(BUNDLE, "Contents");
 const PAYLOAD = path.join(CONTENTS, "Resources", "app");
 const ELECTRON_APP = path.join(ROOT, "node_modules", "electron", "dist", "Electron.app");
-const ICON = path.join(ROOT, "src-tauri", "icons", "icon.icns");
+// The port's own mark (electron/packaging/icon.svg, rasterized to icns):
+// the Tauri checkout's upstream icon is not this product's brand.
+const ICON = path.join(path.dirname(fileURLToPath(import.meta.url)), "icon.icns");
 const APP_NAME = "OMP Desktop";
 const BUNDLE_ID = "dev.ohMyPi.desktop.electron";
 /** Electron 45 ships `LSMinimumSystemVersion` 13.0; keep it explicit. */
