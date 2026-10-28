@@ -1,0 +1,62 @@
+[
+  {
+    "name": "boot",
+    "ok": true,
+    "detail": "shim ok, boundaries 0"
+  },
+  {
+    "name": "tab-restore",
+    "ok": true,
+    "detail": "tab session-1793147624280"
+  },
+  {
+    "name": "recents",
+    "ok": true,
+    "detail": "13 rows"
+  },
+  {
+    "name": "open-folder-command",
+    "ok": true,
+    "detail": "canonical /private/tmp"
+  },
+  {
+    "name": "history-modal",
+    "ok": true,
+    "detail": "1 rows"
+  },
+  {
+    "name": "composer-send",
+    "ok": true,
+    "detail": "marker on disk in 2026-10-26T12-31-15-604Z_01a17831-8c94-7647-88ec-dec231e169a5.jsonl"
+  },
+  {
+    "name": "open-folder-dialog",
+    "ok": true,
+    "detail": "dialog expected on screen (see screenshot)"
+  },
+  {
+    "name": "terminal-panel",
+    "ok": true,
+    "detail": "xterm mounted"
+  },
+  {
+    "name": "git-browser",
+    "ok": true,
+    "detail": "panel rendered"
+  },
+  {
+    "name": "browser-panel",
+    "ok": true,
+    "detail": "40000 non-zero px"
+  },
+  {
+    "name": "settings",
+    "ok": true,
+    "detail": "16 sections"
+  },
+  {
+    "name": "tab-menu",
+    "ok": true,
+    "detail": "4 rows"
+  }
+]

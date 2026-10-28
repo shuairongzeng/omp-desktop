@@ -45,7 +45,18 @@
     core: {
       // JSON round-trip honours toJSON (structured clone does not), which
       // is what reduces a Channel to its id on the wire.
-      invoke: (name, args) => P.invoke(name, JSON.parse(JSON.stringify(args ?? {}))),
+      //
+      // The dispatcher answers unimplemented/failed commands with the
+      // single-key envelope {error}; Tauri turns a Rust Err into an IPC
+      // rejection, so the shim throws and _invokeSafe/_invokeResult behave
+      // exactly as against the real backend.
+      invoke: (name, args) =>
+        P.invoke(name, JSON.parse(JSON.stringify(args ?? {}))).then((r) => {
+          if (r && typeof r === "object" && typeof r.error === "string" && Object.keys(r).length === 1) {
+            throw new Error(r.error);
+          }
+          return r;
+        }),
       Channel,
     },
     event: {

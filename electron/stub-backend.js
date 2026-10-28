@@ -16,10 +16,18 @@ const git = require("./backend/git");
 const remoteFiles = require("./backend/remote-files");
 const { BrowserManager } = require("./backend/browser-manager");
 const { RemoteManager } = require("./backend/remote-manager");
+const nativeShell = require("./backend/native-shell");
+const workspace = require("./backend/workspace");
+const projectFiles = require("./backend/project-files");
+const savedMutate = require("./backend/saved-sessions-mutate");
+const profilesMutate = require("./backend/profiles-mutate");
+const agentStats = require("./backend/agent-stats");
+const { conversationTree } = require("./backend/conversation-tree");
 const updater = require("./packaging/updater");
 
 // The packaged app's version; `npx electron .` runs report the repo one.
 const APP_VERSION = require("../package.json").version;
+let lastUpdate = null; // the check() result app_update_install may apply
 
 // One browser manager per app run (M3): Chromium launches lazily on the
 // first panel open, exactly like the Tauri manager.
@@ -58,17 +66,21 @@ const EXPLICIT = {
   keybindings_list: (a) => keybindings.keybindingsList(a?.profile ?? ""),
   keybindings_set: (a) => keybindings.keybindingsSet(a?.profile ?? "", a?.action, a?.keys),
   keybindings_reset: (a) => keybindings.keybindingsReset(a?.profile ?? "", a?.action),
-  widgets_state: () => ({
-    configPath: null, fatal: null, errors: [], plugins: [],
-    active: { sessionId: null, applicable: [] }, runs: [],
-  }),
+  // Widgets: the Rust scheduler/thread model is not ported (MERGE-DECISION
+  // gap 6). The UI gets an explicit empty-but-valid state and its writes
+  // succeed into memory, never a silent no-op shape.
+  widgets_state: () => widgetsState(),
+  widgets_approve: (a) => widgetsApprove(a),
+  widgets_refresh: () => null,
+  widgets_set_view: () => null,
   widgets_set_view: () => null,
   list_saved_sessions: (a) => savedSessions.listSavedSessions(a ?? {}),
   // M5: real updater check; the frontend expects Rust's UpdateInfo
   // (camelCase {version, notes, date, canInstall, releaseUrl}) or null.
   app_update_check: async () => {
     const info = await updater.check(updater.DEFAULT_FEED, { currentVersion: APP_VERSION });
-    if (!info?.available) return null;
+    if (!info?.available) { lastUpdate = null; return null; }
+    lastUpdate = info;
     return {
       version: info.version,
       notes: info.notes ?? null,
@@ -144,18 +156,60 @@ const EXPLICIT = {
   browser_settings: () => browser.settings(),
   browser_set_path: (a) => browser.setPath(a?.path),
   browser_pick_path: () => null, // native dialog: M5
+  // ── coverage round: native shell, workspace, project files, saved muts ──
+  open_project: () => nativeShell.openProject(),
+  open_project_at: (a) => nativeShell.openProjectAt(a?.path),
+  open_config_folder: () => nativeShell.openConfigFolder(),
+  reveal_project_path: (a) => nativeShell.revealProjectPath(a?.path),
+  open_url_external: (a) => nativeShell.openUrlExternal(a?.url),
+  copied_file_paths: () => nativeShell.copiedFilePaths(),
+  read_file_bytes: (a) => nativeShell.readFileBytes(a?.path),
+  pick_background_image: () => nativeShell.pickBackgroundImage(),
+  workspace_accept: (a) => workspace.workspaceAccept(a?.path, a?.relPath ?? a?.rel_path),
+  workspace_reject: (a) => workspace.workspaceReject(a?.path, a?.relPath ?? a?.rel_path),
+  stop_git_watch: () => workspace.stopGitWatch(),
+  list_project_files: (a) => projectFiles.listProjectFiles(a?.cwd, a?.query, a?.limit),
+  project_file_read: (a) => {
+    // Rust resolves the folder from the tab registry; the port's registry
+    // for folders is the terminal manager's tab table (start_session
+    // registers every tab before omp spawns).
+    const folder = terminal.folder(a?.sessionId);
+    if (!folder) throw new Error(`tab not registered: ${a?.sessionId}`);
+    return projectFiles.projectFileRead(folder, a?.path);
+  },
+  delete_saved_session: (a) => savedMutate.deleteSavedSession(a ?? {}),
+  approval_rules_list: (a) => agent.listRules(a?.sessionId, a?.projectRoot ?? null),
+  approval_rules_revoke: (a) => agent.revokeRule(a ?? {}),
+  app_update_install: async (a) => {
+    // The last successful app_update_check result is the only installable
+    // update; the frontend calls install with no args (live.js:5413).
+    if (!lastUpdate) throw new Error("no checked update to install");
+    return updater.install(lastUpdate, { log: (m) => process.stderr.write(`[updater] ${m}\n`) });
+  },
+  rename_saved_session: (a) => savedMutate.renameSavedSession(a ?? {}),
+  create_profile: (a) => profilesMutate.createProfile(a?.name, a?.id ?? null),
+  rename_profile: (a) => profilesMutate.renameProfile(a?.id, a?.name),
+  delete_profile: (a) => profilesMutate.deleteProfile(a?.id),
+  set_startup_profile: (a) => profilesMutate.setStartupProfile(a?.id),
+  clear_profile_bootstrap: (a) => profilesMutate.clearProfileBootstrap(a?.id),
+  model_usage_list: (a) => agentStats.modelUsageList(a?.profile),
+  usage_stats: (a) => agentStats.usageStats(a?.profile),
+  goal_continuation_get: (a) => agentStats.goalContinuationGet(a?.profile),
+  goal_continuation_set: (a) => agentStats.goalContinuationSet(a?.profile, a?.enabled),
+  prompt_history_record: (a) => agentStats.promptHistoryRecord(a?.text),
+  prompt_history_list: () => agentStats.promptHistoryList(),
+  conversation_tree: (a) => conversationTree(a ?? {}),
   // ── still stubbed (browser slices in flight) ───────────────────────────
   start_git_watch: () => null,
   extension_ui_state: () => ({ statuses: [], widgets: [], seq: 0 }),
 };
 
-// Name-shape fallbacks, in priority order.
+// No silent fallbacks: a frontend command with no implementation is an
+// explicit error (the coverage round eliminated the silent-no-op class;
+// `_invokeSafe` callers still get their declared fallback, `_invokeResult`
+// callers surface the message instead of a dead button).
 function defaultReply(name) {
-  if (/^(list_|recent_|saved_)/.test(name)) return [];
-  if (/^(get_|fetch_)/.test(name)) return null;
-  if (/^(set_|save_|touch_|delete_|remove_|close_|stop_|kill_|ack_)/.test(name)) return null;
-  if (/^(is_|has_)/.test(name)) return false;
-  return null;
+  throw new Error(`port: command not implemented: ${name}`);
 }
 
 async function handle(name, args) {
@@ -167,6 +221,27 @@ async function handle(name, args) {
   }
   log(name, args, reply);
   return reply;
+}
+
+// ── widgets (explicit empty state; scheduler not ported) ────────────────────
+const widgetApprovals = new Map(); // fingerprint -> true
+const widgetViews = new Map(); // pluginId -> view
+
+function widgetsState() {
+  return {
+    configPath: null,
+    fatal: null,
+    errors: [],
+    plugins: [],
+    active: { sessionId: null, applicable: [] },
+    runs: [],
+  };
+}
+
+function widgetsApprove(a) {
+  if (!a?.fingerprint) throw new Error("widgets_approve needs a fingerprint");
+  widgetApprovals.set(a.fingerprint, true);
+  return null;
 }
 
 module.exports = { handle, EXPLICIT, agent, terminal, browser, remote };
