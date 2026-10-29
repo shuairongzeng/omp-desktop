@@ -52,5 +52,21 @@
     return { added, ids };
   }
 
-  window.OMP_REMOTE_TABS = Object.freeze({ mergeSnapshot });
+  /** Does the active tab need its transcript window re-fetched?
+   *  omp only reports a tab's `sessionFile` in `get_state` once the file
+   *  exists, so the first window fetch can race it and come back empty.
+   *  `prevFile` is the session file the phone last fetched for that tab,
+   *  `nextFile` the freshly reported one. True iff `nextFile` is a usable
+   *  path and it is not the one already fetched: a null/undefined/""
+   *  `prevFile` with a real `nextFile` counts (first sight of the file),
+   *  while an unchanged or absent `nextFile` never does. Pure. */
+  function refetchWindow(prevFile, nextFile) {
+    return (
+      typeof nextFile === "string" &&
+      nextFile.length > 0 &&
+      nextFile !== prevFile
+    );
+  }
+
+  window.OMP_REMOTE_TABS = Object.freeze({ mergeSnapshot, refetchWindow });
 })();

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="t-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141b26"/>
+      <stop offset="1" stop-color="#05070c"/>
+    </linearGradient>
+    <radialGradient id="t-glow" cx="0.66" cy="0.36" r="0.3">
+      <stop offset="0" stop-color="#ffb257" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#ffb257" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#t-bg)"/>
+  <rect width="1024" height="1024" fill="url(#t-glow)"/>
+  <rect x="24" y="24" width="976" height="976" rx="72" fill="none" stroke="#28323f" stroke-width="10"/>
+  <circle cx="512" cy="512" r="252" fill="none" stroke="#33404f" stroke-width="10"/>
+  <circle cx="512" cy="512" r="366" fill="none" stroke="#ffb257" stroke-width="26" opacity="0.6"
+          stroke-dasharray="9 86.82" transform="rotate(7.5 512 512)"/>
+  <circle cx="512" cy="512" r="366" fill="none" stroke="#ffb257" stroke-width="44" opacity="0.9"
+          stroke-dasharray="16 558.91"/>
+  <circle cx="512" cy="512" r="380" fill="none" stroke="#ffb257" stroke-width="40"/>
+  <circle cx="512" cy="512" r="12" fill="#33404f"/>
+  <path d="M 512 512 Q 640 560 724 664" stroke="#33404f" stroke-width="14" fill="none"
+        stroke-dasharray="18 22" stroke-linecap="round"/>
+  <path d="M 296 720 C 398 720 452 646 506 574 C 566 490 610 414 640 392"
+        stroke="#eef3ff" stroke-width="68" fill="none" stroke-linecap="round"/>
+  <circle cx="688" cy="352" r="96" fill="#ffb257" opacity="0.2"/>
+  <circle cx="688" cy="352" r="56" fill="#ffb257"/>
+</svg>

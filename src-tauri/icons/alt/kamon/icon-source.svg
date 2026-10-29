@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="k-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232c52"/>
+      <stop offset="1" stop-color="#151b38"/>
+    </linearGradient>
+    <radialGradient id="k-vig" cx="0.5" cy="0.5" r="0.75">
+      <stop offset="0.7" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.35"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#k-bg)"/>
+  <circle cx="512" cy="512" r="424" fill="none" stroke="#f2eee2" stroke-width="46"/>
+  <circle cx="512" cy="512" r="390" fill="none" stroke="#f2eee2" stroke-width="8" opacity="0.7"/>
+  <g fill="#f2eee2">
+    <rect x="336" y="292" width="84" height="440"/>
+    <rect x="604" y="292" width="84" height="440"/>
+    <rect x="292" y="336" width="440" height="84"/>
+    <rect x="292" y="604" width="440" height="84"/>
+  </g>
+  <circle cx="512" cy="512" r="52" fill="#ff8a4c"/>
+  <rect width="1024" height="1024" fill="url(#k-vig)"/>
+</svg>

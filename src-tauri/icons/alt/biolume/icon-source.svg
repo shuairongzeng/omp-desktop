@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="bio-bg" cx="0.5" cy="0.5" r="0.72">
+      <stop offset="0" stop-color="#0a2c44"/>
+      <stop offset="0.65" stop-color="#03141f"/>
+      <stop offset="1" stop-color="#010810"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bio-bg)"/>
+  <circle cx="512" cy="512" r="320" fill="#58e6ff" opacity="0.16"/>
+  <circle cx="512" cy="512" r="190" fill="#8feeff" opacity="0.4"/>
+  <circle cx="512" cy="512" r="118" fill="#f0ffff"/>
+  <g fill="#9df1ff">
+    <circle cx="756" cy="330" r="46"/>
+    <circle cx="318" cy="392" r="34"/>
+    <circle cx="672" cy="742" r="40"/>
+    <circle cx="300" cy="700" r="28" opacity="0.85"/>
+  </g>
+  <g fill="none" stroke="#9df1ff" stroke-width="16" opacity="0.35" stroke-linecap="round">
+    <path d="M 512 512 Q 640 400 756 330"/>
+    <path d="M 512 512 Q 400 440 318 392"/>
+    <path d="M 512 512 Q 600 640 672 742"/>
+    <path d="M 512 512 Q 380 620 300 700"/>
+  </g>
+</svg>

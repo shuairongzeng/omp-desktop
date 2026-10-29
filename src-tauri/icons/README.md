@@ -1,67 +1,55 @@
 # OMP Desktop — Application Icon
 
-Drop the contents of `app-icons/` into your Tauri project at `src-tauri/icons/`.
-
-## ⚠️ Manual rename after copy
-
-This sandbox can't write `@` in filenames. **Rename one file** after extracting:
-
-```
-256x256.png  →  128x128@2x.png
-```
-
-(Tauri specifically looks for that `@2x` filename.)
-
-## Required Tauri files (already provided)
-
-| File              | Size       | Purpose                          |
-|-------------------|------------|----------------------------------|
-| `32x32.png`       | 32×32      | Tauri default                    |
-| `128x128.png`     | 128×128    | Tauri default                    |
-| `128x128@2x.png`* | 256×256    | Tauri @2x — **rename from `256x256.png`** |
-| `icon.png`        | 1024×1024  | Source for icns/ico generation   |
-
-## To generate icns + ico (macOS + Windows binaries)
-
-The fastest path is Tauri's CLI:
-
-```bash
-npx @tauri-apps/cli icon ./app-icons/icon.png
-```
-
-That command takes the 1024 source and produces:
-- `icon.icns` (macOS app bundle)
-- `icon.ico` (Windows installer)
-- All Square*Logo.png Windows Store sizes
-- The PNG ladder
-
-It writes everything into `src-tauri/icons/` automatically. Use the `icon.png` from this pack as the input.
-
-## tauri.conf.json snippet
-
-```json
-{
-  "tauri": {
-    "bundle": {
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ]
-    }
-  }
-}
-```
+The icon's source of truth is **`icon-source.svg`** (hand-authored, 1024×1024 grid).
+Everything else in this directory is generated from it — never edit the PNGs/ico/icns by hand.
 
 ## Design notes
 
-- **Squircle** (Apple superellipse) — matches macOS Big Sur+ icon language
-- **Deep blue-black gradient** with a **warm orange glow** climbing from the bottom-right — echoes the app's accent
-- **Mark:** thick rounded chevron `>` — terminal/agent prompt visual
-- **Signature dot** — orange accent dot above-right of the chevron, a "cursor blink" / status pip. Same dot motif as the in-app icon pack.
-- **Faint scan-grid** texture — readable as technical only at large sizes, invisible at 16px
-- **Inner border + top highlight** — Apple-style depth without being skeuomorphic
+- **Mark: the pulse line.** A bold white throughput pulse — the live sparkline
+  of an agent at work — running left to right across a deep blue-black squircle
+  and ending in the orange **cursor dot** (`#ff8a4c`, the app's accent). The line
+  is a single polyline (stroke 96/1024, round caps and joins), tuned to stay
+  readable at 16px.
+- **Squircle** (Apple superellipse) container with the deep blue-black gradient,
+  the warm orange glow climbing from the bottom-right, and a faint top
+  highlight. Corners outside the squircle are transparent.
+- Chosen from a seven-direction exploration board (`design/logo/`, gitignored):
+  it beat a monospace π, a block-cursor, a swarm cluster, an `omp` lettermark, a
+  neon π and a pixel-art π on small-size legibility + container consistency.
 
-The mark is tuned to hold up at 16×16 (favicon, taskbar, alt-tab) — chevron + dot read clearly.
+## Regenerating all assets
+
+```bash
+# 1. Rasterise the SVG to a 1024×1024 PNG with transparent corners
+#    (Chrome headless; wrap the SVG in a full-viewport <img>):
+chrome --headless --disable-gpu --default-background-color=00000000 \
+  --window-size=1024,1024 --screenshot=master.png wrap.html
+
+# 2. Tauri's icon pipeline (ico/icns/PNG ladder/Store tiles/Android/iOS):
+npx @tauri-apps/cli icon master.png -o src-tauri/icons
+
+# 3. Two committed files are NOT produced by the CLI — regenerate from the same
+#    master with a plain LANCZOS downscale:
+#    16x16.png (external/favicon use) and 512x512.png (stores and docs)
+```
+
+`tauri.conf.json` references only `32x32.png`, `128x128.png`, `128x128@2x.png`,
+`icon.icns` and `icon.ico`.
+
+**Rebuild trap:** cargo does not re-embed a changed `icon.ico` on its own —
+tauri-build's resource compiler caches on the generated `.rc` file's text (which
+holds the icon's *path*, not its bytes), so the stale icon survives full
+rebuilds and even `cargo clean -p omp-desktop`. After changing the icon, force
+the resource to recompile before `npm run build`:
+
+```bash
+rm -rf src-tauri/target/release/build/omp-desktop-* && touch src-tauri/build.rs
+```
+
+Verify the embedded result before shipping — extract the exe's icon and eyeball it:
+
+```powershell
+powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; \
+  [System.Drawing.Icon]::ExtractAssociatedIcon('src-tauri\target\release\omp-desktop.exe')\
+  .ToBitmap().Save('exe-icon.png', [System.Drawing.Imaging.ImageFormat]::Png)"
+```

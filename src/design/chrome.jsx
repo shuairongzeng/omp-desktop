@@ -45,13 +45,27 @@ function WindowChrome({
     // settings page (z-20) it just opened. Profile rows are not: their
     // popover lives inside the drawer and switching respawns the tab
     // without moving the drawer.
-    const close = (e) => { if (e.target.closest(".psb-main, .psb-hist-row, .psb-act, .psb-app-row")) setDrawer(false); };
+    const close = (e) => {
+      // A recent-folder row keeps the drawer open: opening a folder from
+      // recents lists that project's conversations right there (the group
+      // force-expands), which is the point of the click.
+      if (e.target.closest(".psb-recent")) return;
+      if (e.target.closest(".psb-main, .psb-hist-row, .psb-act, .psb-app-row")) setDrawer(false);
+    };
     document.addEventListener("click", close);
     return () => {
       document.removeEventListener("click", close);
       document.documentElement.classList.remove("mobile-sidebar-open");
     };
   }, [drawer]);
+  // The burger dispatches `omp:mobile {action:"toggle-drawer"}` instead of
+  // calling setDrawer directly so remote clients (the phone UI drives the
+  // same drawer through CDP-dispatched events) share one entry point.
+  React.useEffect(() => {
+    const onToggle = e => { if (e?.detail?.action === "toggle-drawer") setDrawer(v => !v); };
+    window.addEventListener("omp:mobile", onToggle);
+    return () => window.removeEventListener("omp:mobile", onToggle);
+  }, []);
   React.useEffect(() => {
     const win = window.__TAURI__?.window?.getCurrentWindow?.();
     if (!win) return undefined;
@@ -76,7 +90,13 @@ function WindowChrome({
           display:none; the desktop `.chrome` block below is likewise
           hidden on phones, so the two never stack. */}
       <div className="mobile-topbar">
-        <button className="mobile-topbar-menu" aria-label="projects" onClick={() => setDrawer((v) => !v)}>
+        <button className="mobile-topbar-menu" aria-label="projects" onClick={() => {
+          // The drawer's own close paths (row clicks) live in this
+          // component's effect; opening it from a remote client must go
+          // through the same single listener app-live owns, so a phone
+          // tap and a desktop ⌘B share one code path.
+          window.dispatchEvent(new CustomEvent("omp:mobile", { detail: { action: "toggle-drawer" } }));
+        }}>
           <Icon name="menu" size={16} color="var(--fg-2)" />
         </button>
         <div className="mobile-topbar-title">

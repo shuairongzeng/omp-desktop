@@ -129,6 +129,10 @@
        OMP_SLASH.LOCAL_COMMANDS for the initial/reset command list, so this
        must load before live.js too (see script order below). -->
   <script src="app/slash-commands.js"></script>
+  <!-- Frequent-slash-command usage stats (composer foot pills). Pure IIFE,
+       no deps; app-live.jsx reads OMP_SLASH_USAGE at render, so it must
+       load before the React root. -->
+  <script src="app/slash-usage.js"></script>
 
   <!-- Chat "stick to bottom" pin state machine. Dependency-free IIFE;
        design/chat/chat-view.jsx destructures window.OMP_SCROLL_PIN at

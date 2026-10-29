@@ -68,6 +68,7 @@
     },
     "windows": {
       "nsis": {
+        "installerIcon": "icons/icon.ico",
         "installerHooks": "packaging/windows-folder-verb.nsh"
       },
       "wix": {
