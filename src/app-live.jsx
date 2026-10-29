@@ -153,6 +153,10 @@ function App() {
   // Saved sessions of the active profile, for the sidebar's per-project
   // history rows; refetched by the effect below near the sidebar wiring.
   const [savedSessions, setSavedSessions] = React.useState([]);
+  // A project whose sidebar group must render expanded (the phone opens a
+  // folder from recents and expects its conversations listed at once);
+  // cleared when the user collapses any group or opens another folder.
+  const [forceExpandPath, setForceExpandPath] = React.useState(null);
   // With no tab open: the profile the next tab opens under (the menu's pick,
   // else the startup default — resolved by the bridge), and notes filed
   // while there was no transcript to hold them.
@@ -949,6 +953,12 @@ React.useEffect(() => {
     if (!bridge) return;
     try {
       await bridge.openProject(path);
+      // The new tab's group would render collapsed when the user last
+      // collapsed it (or never expanded it): opening a folder from
+      // recents is an explicit "show me this project" gesture, so force
+      // its group open and refresh the history rows it lists.
+      setForceExpandPath(path);
+      bridge.listSavedSessions().then(list => setSavedSessions(list || [])).catch(() => {});
     } catch (err) {
       // Same rejection/rollback as openSession (see handleNewProject).
       console.error("[app] failed to open recent project:", err);
@@ -1264,6 +1274,8 @@ React.useEffect(() => {
                 onResumeSession={handleResumeSession}
                 onShowAllHistory={openHistory}
                 profileLabel={profileLabel}
+                forceExpandPath={forceExpandPath}
+                onForceExpandClear={() => setForceExpandPath(null)}
                 onSelectTab={handleSelectTab}
                 onCloseTab={handleCloseTab}
                 onRenameTab={handleRenameTab}

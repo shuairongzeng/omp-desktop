@@ -2182,6 +2182,12 @@
   async function _syncRemoteTabs() {
     const snap = await _invokeSafe("js:list_tabs", {}, null);
     if (!snap || !Array.isArray(snap.tabs)) return [];
+    // A fresh tab's session file appears only when omp reports it in
+    // get_state; the switch's window fetch can race that and come back
+    // empty. Remember the active tab's file before the merge so a change
+    // the merge reveals re-fetches the window once.
+    const prevFile = activeSessionId
+      ? sessionRegistry.get(activeSessionId)?.sessionFile ?? null : null;
     const { added } = window.OMP_REMOTE_TABS.mergeSnapshot(sessionRegistry, snap.tabs);
     for (const { id, entry } of added) sessionRegistry.set(id, entry);
     // The merge only adds; a tab the desktop closed would otherwise stay
@@ -2200,6 +2206,10 @@
         console.error("[live] remote activate failed:", e);
       }
     }
+    const nextFile = activeSessionId
+      ? sessionRegistry.get(activeSessionId)?.sessionFile ?? null : null;
+    if (window.OMP_REMOTE_TABS.refetchWindow(prevFile, nextFile)
+        && state.messages.length === 0 && !state.isStreaming) _initFetch();
     notify();
     return added.map((a) => a.id);
   }
@@ -3397,6 +3407,10 @@
     const current = activeSessionId ? sessionRegistry.get(activeSessionId) : null;
     if (rpcState.sessionFile && current && current.sessionFile !== rpcState.sessionFile) {
       sessionRegistry.set(activeSessionId, { ...current, sessionFile: rpcState.sessionFile });
+      // A phone attached to this desktop may already have fetched an empty
+      // window for this tab (its file did not exist yet): the announcement
+      // makes it re-pull, and its sync refetches once the file shows up.
+      _announceTabs();
     }
 
     // ── Auto-rename (src/app/session-title.js) ──────────────────────────

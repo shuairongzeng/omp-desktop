@@ -65,6 +65,11 @@ function ProjectSidebar({
   tabs, activeId, recents, savedSessions = [], historyProfile, profileLabel,
   onSelectTab, onCloseTab, onRenameTab, onNewInProject, onOpenRecent, onForgetRecent, onOpenFolder, onHide, onReorder,
   onResumeSession, onShowAllHistory,
+  // A project path whose group must render expanded regardless of the
+  // persisted collapse choice (the phone opens a folder from recents and
+  // expects its conversations listed at once).
+  forceExpandPath = null,
+  onForceExpandClear = null,
   // Desktop-only: a project row's right-click menu (design/project-menu.jsx).
   // Bubbles (group, x, y); app-live.jsx owns the menu state and actions.
   onProjectMenu,
@@ -83,6 +88,9 @@ function ProjectSidebar({
   const toggle = key => setCollapsed(c => {
     const next = { ...c, [key]: !c[key] };
     _saveCollapsed(next);
+    // The user's own collapse ends a forced expansion: their choice wins
+    // from then on (the prop is a one-shot gesture from opening a folder).
+    if (next[key] && onForceExpandClear) onForceExpandClear();
     return next;
   });
   // Tab whose name is being edited inline (#32). Starting selects it, the
@@ -149,7 +157,8 @@ function ProjectSidebar({
           // A single-tab project with saved sessions is expandable too:
           // its chevron reveals the history rows.
           const expandable = multi || historyRows.length > 0;
-          const expanded = expandable && !collapsed[group.key];
+          const expanded = expandable && (forceExpandPath && group.path === forceExpandPath
+            ? true : !collapsed[group.key]);
           const containsActive = group.tabs.some(t => t.id === activeId);
           const profile = profileLabel(group.profile);
           // Single-tab projects: the folder row stays clean (name only);

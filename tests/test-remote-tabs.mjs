@@ -101,9 +101,30 @@ test("registry and snapshot rows are not mutated", () => {
   assert.deepEqual(tabs, before);
 });
 
+test("refetchWindow: a newly reported session file asks for a re-fetch", () => {
+  const { refetchWindow } = load();
+  assert.equal(refetchWindow(null, "/s/a.jsonl"), true);
+  assert.equal(refetchWindow(undefined, "/s/a.jsonl"), true);
+  assert.equal(refetchWindow("", "/s/a.jsonl"), true);
+});
+
+test("refetchWindow: an unchanged or missing session file does not", () => {
+  const { refetchWindow } = load();
+  assert.equal(refetchWindow("/s/a.jsonl", "/s/a.jsonl"), false);
+  assert.equal(refetchWindow(null, null), false);
+  assert.equal(refetchWindow("/s/a.jsonl", null), false);
+  assert.equal(refetchWindow("/s/a.jsonl", undefined), false);
+  assert.equal(refetchWindow("/s/a.jsonl", ""), false);
+});
+
+test("refetchWindow: a different session file asks for a re-fetch", () => {
+  const { refetchWindow } = load();
+  assert.equal(refetchWindow("/s/a.jsonl", "/s/b.jsonl"), true);
+});
+
 test("the exported object is frozen and complete", () => {
   const m = load();
-  assert.deepEqual(Object.keys(m), ["mergeSnapshot"]);
+  assert.deepEqual(Object.keys(m), ["mergeSnapshot", "refetchWindow"]);
   assert.ok(Object.isFrozen(m));
   assert.throws(() => { m.extra = 1; }, TypeError);
 });
