@@ -211,6 +211,10 @@
 }
 .composer-pill:hover { border-color: var(--line-bright); background: var(--bg-hover); }
 .composer-pill.on { border-color: color-mix(in oklab, var(--amber) 50%, var(--line)); background: color-mix(in oklab, var(--amber) 12%, transparent); }
+/* Your most-used slash commands (app/slash-usage.js): a quiet mint tint
+   sets them apart from the mode pills without shouting. */
+.composer-pill.slash-pill { border-color: color-mix(in oklab, var(--cyan) 40%, var(--line)); }
+.composer-pill.slash-pill:hover { border-color: var(--cyan); }
 
 /* The agent yielded and a background job will wake it (run state
    `background`); the dot is the tab bar's. */
@@ -432,7 +436,7 @@
   }
   .composer-foot .composer-pill { padding: 6px 11px; min-height: 34px; }
   .composer-pill span { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .composer-foot .plan-pill, .composer-foot .goal-pill { display: none; }
+  .composer-foot .plan-pill, .composer-foot .goal-pill, .composer-foot .slash-pill { display: none; }
   .cmp-mobile-mode {
     display: inline-flex; align-items: center; gap: 4px;
     margin-left: auto;

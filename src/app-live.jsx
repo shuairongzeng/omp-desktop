@@ -574,6 +574,17 @@ React.useEffect(() => {
     // a command too: it is sent as typed, like a leading `/skill:x`.
     // `routeOf` classifies the typed draft, before any page data merges.
     const route = routeOf(msg, false);
+    // Usage stats for the composer's frequent-command pills: only a draft
+    // that leads with a listed command counts (a typed path in plan prose
+    // is not a command — same predicate as routeOf).
+    if (route.isCmd) {
+      const lead = (/^\/([^\s/]+)/.exec(msg) || [])[1];
+      if (lead && data.commands.some(c => c.name === lead || (c.aliases ?? []).includes(lead))) {
+        const next = window.OMP_SLASH_USAGE.record(slashUsage, lead);
+        setSlashUsage(next);
+        window.OMP_SLASH_USAGE.save(next);
+      }
+    }
     // Goal mode (app/use-goal-mode.jsx): the typed text is the goal's
     // objective. Plan mode cannot be on at the same time; a command still
     // runs as one. Browser annotations ride along in the goal's first
@@ -686,6 +697,15 @@ React.useEffect(() => {
   const [promptInsert, setPromptInsert] = React.useState(null);
   const handlePickHistoryPrompt = (text) => setPromptInsert({ text, nonce: Date.now() });
   const handleWidgetInsert = React.useCallback(text => setPromptInsert({ text, append: true, nonce: Date.now() }), []);
+  // Your most-used slash commands (app/slash-usage.js): recorded on every
+  // send whose draft leads with a command omp actually lists, so the
+  // composer's foot row can offer the top three as one-click pills. The
+  // list re-filters on every commands update — a command omp dropped
+  // (deleted skill, renamed builtin) hides without touching the counts.
+  const [slashUsage, setSlashUsage] = React.useState(() => window.OMP_SLASH_USAGE.load());
+  React.useEffect(() => {
+    setSlashUsage(window.OMP_SLASH_USAGE.load());
+  }, [data.commands]);
 
   // Quote-into-composer: a finished selection inside the chat transcript
   // floats an "Add to prompt" pill at its end (rules and placement in
@@ -1365,6 +1385,7 @@ React.useEffect(() => {
                     draftInsert={draftInsert}
                     promptHistory={promptHistory}
                     promptInsert={promptInsert}
+                    frequentCommands={window.OMP_SLASH_USAGE.topThree(slashUsage, (data.commands || []).flatMap(c => [c.name, ...(c.aliases ?? [])]))}
                     queue={queue}
                     queueSending={queueSending}
                     onRemoveQueued={handleRemoveQueued}

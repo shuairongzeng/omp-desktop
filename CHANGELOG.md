@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Frequent slash commands as one-click pills in the composer's foot row** — the three commands you send most (count + recency, persisted in localStorage across restarts) sit beside the goal pill; a click prepends `/name ` to your draft (a draft already leading with a command is replaced, never double-prefixed) and focuses the input. A command omp no longer lists (deleted skill, renamed builtin) hides at once — its counts stay, so it returns when the command does
+
 ### Fixed
 
 - **Phone drawer clicks that looked like no-ops now always end in rendered content** — resuming a saved conversation from a project's history rows opened the tab but left the phone on an empty chat (the transcript window raced omp's session file appearing, and nothing re-fetched once the file existed), and the drawer stayed open over it; opening a folder from recents left its group collapsed with no conversations listed. The desktop now announces the tab table when a session file lands (the phone re-pulls and refetches its window once), a resumed session closes the drawer, and a recent-folder click force-expands that project's group with its on-disk conversations listed (the drawer stays open for recents — the list is the point of the click)

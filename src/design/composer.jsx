@@ -64,7 +64,7 @@ function hintKeyFor(actionId, fallback) {
 // ── The composer (input + plan/steer modes + send) ────────────────────
 // `submitKey` ("enter" | "ctrl+enter") and `pasteCollapseLines` come from the
 // tweaks (Settings › Composer); the defaults match TWEAK_DEFAULTS.
-function Composer({ sessionId, sessionIds, draftStoreKey = null, onSend, onPick, planMode, onTogglePlan, planBlocked = "", goalMode = false, goalTint = false, onToggleGoal, goalBlocked = "", goalStrip = null, onOpenCmd, onOpenModel, currentModel, thinking, onLoadThinkingLevels, onSetThinking, isStreaming, backgroundWork = false, onAbort, onApprove, annotationCount = 0, microcopy, onFollowUp, draftInsert, promptHistory = [], promptInsert, queue, queueSending, onRemoveQueued, onPromoteQueued, onSendQueuedNow, browserChips = [], onRemoveBrowserChip, onBrowserChipClick, submitKey = "enter", pasteCollapseLines = 5, approvalCell = null, exitReason = null, onRestart = null }) {
+function Composer({ sessionId, sessionIds, draftStoreKey = null, onSend, onPick, planMode, onTogglePlan, planBlocked = "", goalMode = false, goalTint = false, onToggleGoal, goalBlocked = "", goalStrip = null, onOpenCmd, onOpenModel, currentModel, thinking, onLoadThinkingLevels, onSetThinking, isStreaming, backgroundWork = false, onAbort, onApprove, annotationCount = 0, microcopy, onFollowUp, draftInsert, promptHistory = [], promptInsert, queue, queueSending, onRemoveQueued, onPromoteQueued, onSendQueuedNow, browserChips = [], onRemoveBrowserChip, onBrowserChipClick, submitKey = "enter", pasteCollapseLines = 5, approvalCell = null, exitReason = null, onRestart = null, frequentCommands = [] }) {
   // Drafts are per tab (issue #28). The composer stays mounted across tab
   // switches and keeps one draft per session id (app/session-ui.js
   // DRAFT_IDLE): text, pending image attachments (sent alongside the next
@@ -1309,6 +1309,22 @@ function Composer({ sessionId, sessionIds, draftStoreKey = null, onSend, onPick,
           <Icon name="goal" size={11} color={goalMode ? "var(--lilac)" : "var(--fg-3)"} />
           <span style={{ color: goalMode ? "var(--lilac)" : "var(--fg-2)" }}>goal</span>
         </button>
+        {/* Your three most-used slash commands (app/slash-usage.js), only
+            while omp still lists them — a deleted command hides at once.
+            A click prepends `/name ` to whatever is drafted. */}
+        {frequentCommands.map(name => (
+          <button key={name} className="composer-pill slash-pill mono"
+            title={`insert /${name} at the start of your draft`}
+            onClick={() => {
+              // Same contract as ⌘K's draftInsert: a draft that already
+              // leads with a command is replaced, never double-prefixed.
+              const trimmed = text.trim();
+              setText(trimmed && !trimmed.startsWith("/") ? `/${name} ${text}` : `/${name} `);
+              taRef.current?.focus();
+            }}>
+            <span style={{ color: "var(--fg-2)" }}>/{name}</span>
+          </button>
+        ))}
         <div style={{ flex: 1 }} />
         {backgroundWork && (
           <span className="composer-bg-note" title="omp reports background work (an async bash, task or eval job) whose result will wake the agent">
