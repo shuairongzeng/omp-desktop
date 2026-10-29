@@ -41,6 +41,11 @@ ipcRenderer.on("omp:event", (_e, name, payload) => {
 contextBridge.exposeInMainWorld("__OMP_PRIMS__", {
   invoke: (name, args) => ipcRenderer.invoke("omp:invoke", name, args ?? {}),
   winOp: (op) => ipcRenderer.invoke("omp:win", op),
+  // Tauri's event.emit reaches every listener in the app; the port's only
+  // consumers are this webview's own listeners and (through main's
+  // rebroadcast) the remote-agent's per-phone forwarding, so emit rides
+  // omp:emit to main and comes back as omp:event like every other event.
+  emit: (name, payload) => ipcRenderer.send("omp:emit", name, payload ?? null),
   channelCreate: () => nextChannelId++,
   channelHandler: (id, fn) => {
     if (fn == null) channelHandlers.delete(id);

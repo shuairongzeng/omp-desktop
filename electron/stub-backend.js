@@ -139,7 +139,9 @@ const EXPLICIT = {
   git_browser_log: (a) => git.gitBrowserLog(a?.path),
   git_browser_commit: (a) => git.gitBrowserCommit(a?.path, a?.sha),
   // ── M4 phone-facing file/relay ports (parity-tested, 35 checks) ────────
-  remote_transcript_window: (a) => remoteFiles.transcriptWindow(a?.sessionFile, a?.before ?? null, a?.limit),
+  // Rust's command arg is `path` (remote_transcript.rs); live.js sends it
+  // under that name on every client.
+  remote_transcript_window: (a) => remoteFiles.transcriptWindow(a?.path ?? a?.sessionFile, a?.before ?? null, a?.limit),
   remote_replay_events: async (a) => remoteFiles.replayProject(
     await agent.replayEvents(a?.sessionId, a?.afterSeq ?? 0), a?.afterSeq ?? 0),
   remote_list_dirs: (a) => remoteFiles.listDirs(a?.path ?? null),

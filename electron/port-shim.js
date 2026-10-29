@@ -61,7 +61,7 @@
     },
     event: {
       listen: (name, handler) => P.listen(name, handler),
-      emit: () => Promise.resolve(),
+      emit: (name, payload) => (P.emit(name, payload), Promise.resolve()),
     },
     window: {
       getCurrentWindow: () => ({

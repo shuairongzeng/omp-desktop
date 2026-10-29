@@ -259,6 +259,14 @@ stub.remote.on("event", (name, payload) => {
 // Events the frontend subscribes to ride this channel back; the stub emits
 // nothing, matching a quiet desktop.
 ipcMain.handle("omp:subscribe", (_e, _name) => 0);
+// The webview's own event.emit (port-shim): Tauri delivers app-wide, so
+// rebroadcast to every window — the remote-agent's per-phone event
+// forwarding listens through the same omp:event channel.
+ipcMain.on("omp:emit", (_e, name, payload) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("omp:event", name, payload);
+  }
+});
 
 // ── external open: launch argv, second instance, macOS open-file ──────────
 // Mirrors external_open.rs: positional args (and macOS `open-file` URLs)
